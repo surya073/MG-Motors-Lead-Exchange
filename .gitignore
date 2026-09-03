@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Catalyst generated files
+.build/
+
+# Environment files
+.env
+.env.*
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log

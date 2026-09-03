@@ -1,0 +1,179 @@
+.datepicker {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.datepicker__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 40px;
+  padding-inline: var(--space-3);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  text-align: left;
+  transition: border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+}
+
+.datepicker__trigger:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.datepicker__trigger--open {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.datepicker__trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.datepicker__icon {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.datepicker__value--placeholder {
+  color: var(--color-text-muted);
+}
+
+.datepicker__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: var(--z-dropdown);
+  width: 280px;
+  padding: var(--space-3);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: datepicker-in var(--transition-fast) var(--ease-premium);
+}
+
+@keyframes datepicker-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .datepicker__panel { animation: none; }
+}
+
+.datepicker__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.datepicker__month-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.datepicker__nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+.datepicker__nav-btn:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.datepicker__weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: var(--space-1);
+}
+
+.datepicker__weekdays span {
+  text-align: center;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+}
+
+.datepicker__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.datepicker__day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.datepicker__day:hover {
+  background-color: var(--color-surface-alt);
+}
+
+.datepicker__day--outside {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}
+
+.datepicker__day--today {
+  font-weight: var(--fw-semibold);
+  color: var(--color-primary);
+}
+
+.datepicker__day--selected {
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.datepicker__day--selected:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.datepicker__footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.datepicker__footer-btn {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-primary);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.datepicker__footer-btn:hover {
+  background-color: var(--color-primary-soft);
+}
+
+.datepicker__footer-btn--clear {
+  color: var(--color-text-muted);
+}
+
+.datepicker__footer-btn--clear:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}

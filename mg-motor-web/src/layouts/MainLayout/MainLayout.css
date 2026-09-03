@@ -1,0 +1,163 @@
+.main-layout {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+
+  background: var(--color-bg);
+
+  background-image:
+    radial-gradient(
+      circle at 100% 0%,
+      var(--color-primary-soft) 0%,
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 0% 100%,
+      rgba(47, 111, 237, 0.035) 0%,
+      transparent 30%
+    );
+}
+
+/* =========================================================
+   MAIN AREA
+   ========================================================= */
+
+.main-layout__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  overflow: hidden;
+
+  /* Important:
+     No outer card / border / radius here.
+     Sidebar + main content should feel like one dashboard.
+  */
+}
+
+/* =========================================================
+   SINGLE SCROLL REGION
+   Header + content now live in the same scroll context. The header
+   sticks to the top and lets content pass underneath it (hence the
+   glass/blur treatment below) instead of being a fixed, opaque bar
+   that content stops short of.
+   ========================================================= */
+
+.main-layout__scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  scroll-behavior: smooth;
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.main-layout__scroll::-webkit-scrollbar {
+  width: 7px;
+}
+
+.main-layout__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.main-layout__scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 20px;
+}
+
+.main-layout__scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* =========================================================
+   TOP HEADER — sticky, glass/transparent
+   ========================================================= */
+
+.main-layout__header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+
+  flex-shrink: 0;
+  height: 92px;
+
+  display: flex;
+  align-items: center;
+
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+
+
+  transition: background-color var(--transition-base) var(--ease-premium),
+    border-color var(--transition-base) var(--ease-premium);
+}
+
+/* =========================================================
+   DASHBOARD CONTENT
+   ========================================================= */
+
+.main-layout__content {
+  padding: 0 32px 40px;
+}
+
+/* =========================================================
+   LARGE DESKTOP
+   ========================================================= */
+
+@media (min-width: 1440px) {
+  .main-layout__content {
+    padding-left: 36px;
+    padding-right: 36px;
+  }
+
+  .main-layout__header {
+    height: 96px;
+  }
+}
+
+/* =========================================================
+   TABLET
+   ========================================================= */
+
+@media (max-width: 1100px) {
+  .main-layout__header {
+    height: 84px;
+  }
+
+  .main-layout__content {
+    padding: 0 24px 32px;
+  }
+}
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 900px) {
+  .main-layout__header {
+    height: 76px;
+  }
+
+  .main-layout__content {
+    padding: 0 16px 28px;
+  }
+}
+
+@media (max-width: 600px) {
+  .main-layout__header {
+    height: 70px;
+  }
+
+  .main-layout__content {
+    padding: 0 12px 24px;
+  }
+}

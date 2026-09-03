@@ -1,0 +1,703 @@
+/* ===========================================================
+   Fonts
+   For best performance, move these two families into an actual
+   <link rel="preload"/stylesheet"> in index.html instead of @import.
+   Kept as @import here so this page works standalone.
+   =========================================================== */
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap");
+
+
+
+.odd-root {
+  --odd-bg: #060607;
+  --odd-surface: #0f0f11;
+  --odd-surface-2: #151517;
+  --odd-border: rgba(255, 255, 255, 0.09);
+  --odd-border-strong: rgba(255, 255, 255, 0.22);
+  --odd-white: #f5f5f4;
+  --odd-muted: #86868c;
+  --odd-red: #b7081c;
+  --odd-red-dim: #77121e;
+  --odd-red-soft: rgba(226, 38, 59, 0.14);
+  --odd-bar-fill: rgba(255, 255, 255, 0.16);
+  --odd-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --odd-radius: 2px;       /* near-square instead of rounded glass */
+  --odd-radius-sm: 2px;
+  --odd-cut: 14px;          /* clipped-corner size, the new signature shape */
+  --odd-font-display: "Space Grotesk", var(--font-display, sans-serif);
+  --odd-font-body: "IBM Plex Sans", var(--font-body, sans-serif);
+  --odd-font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  position: relative;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  background: var(--odd-bg);
+  color: var(--odd-white);
+  font-family: var(--odd-font-body);
+  font-feature-settings: "tnum" 1;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.odd-root::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* faint film-grain texture — the main differentiator vs the typical
+   radial-glow glassmorphism look. Pure CSS, no image request. */
+.odd-root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* thin red hairline along the very top of the viewport — a constant
+   "instrumentation" accent instead of a soft ambient glow */
+.odd-root::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--odd-red) 15%, var(--odd-red) 85%, transparent);
+  opacity: 0.85;
+}
+
+.odd-root * {
+  box-sizing: border-box;
+}
+
+/* ===========================================================
+   Ambient asphalt backdrop
+   -----------------------------------------------------------
+   A slow, near-imperceptible highlight drift beneath everything,
+   independent of the interactive <RoadSurface /> canvas (see
+   components.css → .odd-road-canvas). This is the "resting" road:
+   it keeps the page from ever feeling perfectly static even before
+   the cursor has moved, and remains as a graceful fallback if
+   WebGL2 isn't available. Pure CSS, GPU-composited (background-
+   position only), no layout cost.
+   =========================================================== */
+.odd-root__asphalt-bg {
+  position: fixed;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(46% 30% at 20% 12%, rgba(255, 255, 255, 0.025), transparent 68%),
+    radial-gradient(55% 40% at 82% 78%, rgba(183, 8, 28, 0.045), transparent 64%),
+    linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.018) 50%, transparent 60%);
+  background-size: 200% 200%, 220% 220%, 260% 260%;
+  animation: odd-asphalt-drift 40s ease-in-out infinite alternate;
+  will-change: background-position;
+}
+
+@keyframes odd-asphalt-drift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 0% 50%;
+  }
+  50% {
+    background-position: 10% 6%, 90% 92%, 55% 50%;
+  }
+  100% {
+    background-position: 4% 12%, 96% 84%, 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odd-root__asphalt-bg {
+    animation: none;
+  }
+}
+
+/* Everything else in the page (rail, topbar, cards, assistant, ...)
+   is normal-flow / explicitly positioned content authored after the
+   background layers and the road canvas in the component tree, so
+   it paints on top of them automatically — no z-index bump needed
+   on existing UI. */
+
+/* ===========================================================
+   Entrance overlay
+   =========================================================== */
+.odd-entrance {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  background: #050506;
+  overflow: hidden;
+  clip-path: circle(150% at 50% 50%);
+  transition: clip-path 750ms var(--odd-ease), opacity 750ms var(--odd-ease);
+}
+
+.odd-entrance--exit {
+  clip-path: circle(0% at 50% 50%);
+  opacity: 0.96;
+}
+
+/* faint radar grid backdrop, gives depth without competing with the logo */
+.odd-entrance__grid {
+  position: absolute;
+  inset: -10%;
+  background-image:
+    linear-gradient(rgba(226, 38, 59, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(226, 38, 59, 0.08) 1px, transparent 1px);
+  background-size: 42px 42px;
+  opacity: 0;
+  transform: scale(1.1);
+  animation: odd-grid-in 1400ms var(--odd-ease) forwards;
+  mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 70%);
+}
+
+@keyframes odd-grid-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+}
+
+/* logo + rings share a stage so the rings sweep concentrically around it */
+.odd-entrance__stage {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.odd-entrance__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(226, 38, 59, 0.4);
+  opacity: 0;
+  animation: odd-ring-sweep 1600ms var(--odd-ease) 150ms 1;
+}
+
+.odd-entrance__ring--delay {
+  animation-delay: 380ms;
+  border-color: rgba(226, 38, 59, 0.22);
+}
+
+@keyframes odd-ring-sweep {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+    border-width: 2px;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.35);
+    opacity: 0;
+    border-width: 1px;
+  }
+}
+
+.odd-entrance__logo {
+  position: relative;
+  z-index: 1;
+  width: 82px;
+  height: auto;
+  display: block;
+  opacity: 0;
+  filter: invert(1) brightness(1.15) blur(8px)
+    drop-shadow(0 0 26px rgba(226, 38, 59, 0.4));
+  transform: scale(1.4);
+  animation: odd-logo-focus 900ms var(--odd-ease) 250ms forwards;
+}
+
+@keyframes odd-logo-focus {
+  0% {
+    opacity: 0;
+    transform: scale(1.4);
+    filter: invert(1) brightness(1.15) blur(8px)
+      drop-shadow(0 0 26px rgba(226, 38, 59, 0));
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: invert(1) brightness(1.15) blur(0px)
+      drop-shadow(0 0 26px rgba(226, 38, 59, 0.4));
+  }
+}
+
+.odd-entrance__text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  animation: odd-text-in 700ms var(--odd-ease) 1050ms forwards;
+}
+
+.odd-entrance__text span {
+  font-family: var(--odd-font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.42em;
+  color: var(--odd-white);
+}
+
+.odd-entrance__text em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--odd-red);
+  letter-spacing: 0.08em;
+}
+
+@keyframes odd-text-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    letter-spacing: 0.6em;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odd-entrance,
+  .odd-entrance__grid,
+  .odd-entrance__ring,
+  .odd-entrance__logo,
+  .odd-entrance__text {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1;
+    transform: none;
+    filter: invert(1) brightness(1.15)
+      drop-shadow(0 0 26px rgba(226, 38, 59, 0.35));
+  }
+  .odd-entrance--exit {
+    clip-path: circle(0% at 50% 50%);
+  }
+}
+
+
+/* ===========================================================
+   Shell layout
+   =========================================================== */
+.odd-shell {
+  position: relative;
+  z-index: 1; /* paints above .odd-root__asphalt-bg and .odd-road-canvas */
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  min-height: 100vh;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.odd-shell--visible {
+  opacity: 1;
+  transform: none;
+  transition: opacity 500ms var(--odd-ease), transform 500ms var(--odd-ease);
+}
+
+.odd-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.odd-content {
+  padding: 8px 32px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.odd-section {
+  animation: odd-section-in 600ms var(--odd-ease) both;
+  animation-delay: calc(var(--odd-reveal-delay, 0ms));
+}
+
+@keyframes odd-section-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ===========================================================
+   Nav rail
+   =========================================================== */
+.odd-rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 0;
+  background: linear-gradient(180deg, var(--odd-surface), var(--odd-bg));
+  border-right: 1px solid var(--odd-border);
+}
+
+.odd-rail__item {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  color: var(--odd-muted);
+  cursor: pointer;
+  transition: color 200ms var(--odd-ease);
+}
+
+.odd-rail__item span {
+  font-family: var(--odd-font-mono);
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.odd-rail__item:hover {
+  color: var(--odd-white);
+}
+
+.odd-rail__item--active {
+  color: var(--odd-white);
+}
+
+/* thin red underline tab instead of a soft filled pill */
+.odd-rail__item--active::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
+  height: 2px;
+  background: var(--odd-red);
+}
+
+/* ===========================================================
+   Top bar
+   =========================================================== */
+.odd-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 32px 18px 40px;
+  background: rgba(6, 6, 7, 0.9);
+  border-bottom: 1px solid var(--odd-border);
+}
+
+.odd-topbar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--odd-red) 0px,
+    var(--odd-red) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  opacity: 0.8;
+}
+
+.odd-topbar__title h1 {
+  margin: 0;
+  font-family: var(--odd-font-display);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.odd-topbar__title p {
+  margin: 4px 0 0;
+  font-family: var(--odd-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--odd-muted);
+  text-transform: uppercase;
+}
+
+.odd-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--odd-border);
+  border-bottom: 1px solid var(--odd-border-strong);
+  color: var(--odd-muted);
+  transition: border-color 200ms var(--odd-ease);
+}
+
+.odd-search:focus-within {
+  border-bottom-color: var(--odd-red);
+}
+
+.odd-search input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--odd-white);
+  font-family: var(--odd-font-mono);
+  font-size: 12.5px;
+}
+
+.odd-icon-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--odd-border);
+  color: var(--odd-white);
+  cursor: pointer;
+  transition: border-color 200ms var(--odd-ease);
+}
+
+.odd-icon-btn:hover {
+  border-color: var(--odd-red);
+}
+
+.odd-icon-btn--dot::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  background: var(--odd-red);
+}
+
+.odd-user__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--odd-red);
+  color: #fff;
+  font-family: var(--odd-font-display);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.odd-user__name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ===========================================================
+   Shared card shell + liquid cursor highlight
+   =========================================================== */
+/* ===========================================================
+   Shared card shell — angular "telemetry panel" instead of
+   rounded glass. Flat surface color, hairline border, one
+   clipped corner marked with a red tick.
+   =========================================================== */
+.odd-card {
+  position: relative;
+  background: var(--odd-surface);
+  border: 1px solid var(--odd-border);
+  border-radius: 0;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--odd-cut)) 0,
+    100% var(--odd-cut),
+    100% 100%,
+    0 100%
+  );
+  padding: 20px 22px;
+  overflow: hidden;
+  transition: border-color 250ms var(--odd-ease), background-color 250ms var(--odd-ease);
+}
+
+/* red tick marking the clipped corner — reads as an instrument
+   panel rivet/index mark rather than decoration */
+.odd-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--odd-cut);
+  height: var(--odd-cut);
+  background: linear-gradient(135deg, transparent -83%, var(--odd-red) 50%, transparent 121%);
+  opacity: 0.7;
+}
+
+.odd-card:hover {
+  border-color: var(--odd-border-strong);
+  background: var(--odd-surface-2);
+}
+
+/* cursor-follow highlight becomes a thin red edge-light, not a
+   soft radial blur — sharper, more "scanner" than "glow" */
+.odd-liquid {
+  --mx: 50%;
+  --my: 50%;
+  --mo: 0;
+}
+
+.odd-liquid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--mo);
+  background: radial-gradient(160px circle at var(--mx) var(--my), rgba(226, 38, 59, 0.1), transparent 70%);
+  mix-blend-mode: screen;
+  transition: opacity 300ms var(--odd-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .odd-liquid::before {
+    display: none;
+  }
+}
+
+/* ===========================================================
+   Grids
+   =========================================================== */
+   .odd-kpi__value {
+  font-family: var(--odd-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+
+.odd-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.odd-chart-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.odd-chart-panel--wide {
+  grid-column: span 1;
+}
+
+.odd-split-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+/* ===========================================================
+   Responsive
+   =========================================================== */
+@media (max-width: 1180px) {
+  .odd-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .odd-chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .odd-split-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .odd-shell {
+    grid-template-columns: 1fr;
+  }
+  .odd-rail {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    height: auto;
+    flex-direction: row;
+    justify-content: space-around;
+    padding: 8px 6px;
+    border-right: none;
+    border-top: 1px solid var(--odd-border);
+    z-index: 30;
+  }
+  .odd-rail__item {
+    width: 44px;
+    height: 44px;
+  }
+  .odd-content {
+    padding: 8px 18px 100px;
+  }
+  .odd-topbar {
+    padding: 16px 18px;
+    flex-wrap: wrap;
+  }
+  .odd-search {
+    width: 160px;
+  }
+}
+
+@media (max-width: 560px) {
+  .odd-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  .odd-topbar__title p {
+    display: none;
+  }
+  .odd-search {
+    display: none;
+  }
+}

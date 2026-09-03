@@ -1,0 +1,196 @@
+﻿/* =========================================================
+   OFFCANVAS
+   ========================================================= */
+
+.offcanvas__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background-color: rgba(13,13,13,0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 350ms cubic-bezier(0.22,1,0.36,1);
+  will-change: opacity;
+}
+
+.offcanvas__backdrop--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.offcanvas {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 420px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  z-index: calc(var(--z-modal) + 1);
+  transform: translate3d(100%,0,0);
+  transition: transform 420ms cubic-bezier(0.22,1,0.36,1);
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.offcanvas--open {
+  transform: translate3d(0,0,0);
+}
+
+/* ---------- Header ---------- */
+
+.offcanvas__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.offcanvas__header h2 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.2px;
+}
+
+.offcanvas__subtitle {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.offcanvas__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  transition:
+    background-color 180ms cubic-bezier(0.22,1,0.36,1),
+    border-color 180ms cubic-bezier(0.22,1,0.36,1),
+    color 180ms cubic-bezier(0.22,1,0.36,1),
+    transform 180ms cubic-bezier(0.22,1,0.36,1);
+}
+
+.offcanvas__close:hover {
+  background-color: var(--color-danger-soft);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  transform: rotate(90deg);
+}
+
+.offcanvas__close:active {
+  transform: rotate(90deg) scale(0.9);
+}
+
+.offcanvas__close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-border-strong);
+}
+
+/* ---------- Status row ---------- */
+
+.offcanvas__status-row {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+/* ---------- Body ---------- */
+
+.offcanvas__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.offcanvas__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.offcanvas__body::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+}
+
+.offcanvas__group h3 {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.offcanvas__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.offcanvas__row:not(:last-child) {
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.offcanvas__row dt {
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.offcanvas__row dd {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  text-align: right;
+  word-break: break-word;
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width:480px) {
+  .offcanvas {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* ---------- Reduced Motion ---------- */
+
+@media (prefers-reduced-motion:reduce) {
+  .offcanvas {
+    transition: none;
+  }
+
+  .offcanvas__backdrop {
+    transition: none;
+  }
+
+  .offcanvas__close {
+    transition: none;
+  }
+}

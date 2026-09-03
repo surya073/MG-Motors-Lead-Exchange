@@ -1,0 +1,172 @@
+/* =========================================================
+   DROPDOWN
+   Custom replacement for native <select> — see Dropdown.jsx header
+   comment for why. Sizing/border/radius mirrors the existing native
+   <select> styling used across the app (40px height, --radius-md,
+   --color-border) so swapping one for the other is visually seamless.
+   ========================================================= */
+
+.dropdown {
+  position: relative;
+  display: inline-block;
+  min-width: 160px;
+}
+
+.dropdown--disabled {
+  opacity: 0.5;
+}
+
+/* ---------- Trigger ---------- */
+
+.dropdown__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: 40px;
+  padding-inline: var(--space-3);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  text-align: left;
+  transition: border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+}
+
+.dropdown--sm .dropdown__trigger {
+  height: 32px;
+  padding-inline: var(--space-2) var(--space-2);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+}
+
+.dropdown__trigger:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.dropdown__trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft-strong);
+}
+
+.dropdown__trigger--open {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dropdown__trigger:disabled {
+  cursor: not-allowed;
+}
+
+.dropdown__value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__value--placeholder {
+  color: var(--color-text-muted);
+}
+
+.dropdown__chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast) var(--ease-premium);
+}
+
+.dropdown__trigger--open .dropdown__chevron {
+  transform: rotate(180deg);
+  color: var(--color-primary);
+}
+
+/* ---------- Panel ---------- */
+
+.dropdown__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: var(--z-dropdown);
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  outline: none;
+  animation: dropdown-panel-in var(--transition-fast) var(--ease-premium);
+}
+
+@keyframes dropdown-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dropdown__panel {
+    animation: none;
+  }
+}
+
+.dropdown__panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dropdown__panel::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: var(--radius-full);
+}
+
+/* ---------- Options ---------- */
+
+.dropdown__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dropdown__option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown__option--highlighted {
+  background-color: var(--color-surface-alt);
+}
+
+.dropdown__option--selected {
+  color: var(--color-primary);
+  font-weight: var(--fw-medium);
+}
+
+.dropdown__option--selected.dropdown__option--highlighted {
+  background-color: var(--color-primary-soft);
+}
+
+.dropdown__option-check {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}

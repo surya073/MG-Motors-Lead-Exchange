@@ -1,0 +1,671 @@
+/* ============================================================
+   MG Motors — Design Tokens
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Google+Sans+Flex:opsz,wght@6..144,1..1000&family=Gugi&family=Oswald:wght@200..700&family=Outfit:wght@100..900&display=swap');
+
+:root {
+  /* ---------- Brand ---------- */
+  --color-primary: #D0021B;
+  --color-primary-hover: #A80116;
+  --color-primary-soft: rgba(208, 2, 27, 0.10);
+  --color-primary-soft-strong: rgba(208, 2, 27, 0.18);
+
+  /* ---------- Charcoal scale (dark surfaces in general) ---------- */
+  --color-charcoal-900: #000000;
+  --color-charcoal-800: #121316;
+  --color-charcoal-700: #1F2126;
+  --color-charcoal-600: #2A2D33;
+  --color-charcoal-border: rgba(255, 255, 255, 0.08);
+  --color-charcoal-border-strong: rgba(255, 255, 255, 0.14);
+
+  --color-accent: var(--color-primary);
+
+  /* ---------- Light surfaces (content area) — pure white ---------- */
+  --color-bg: #FFFFFF;
+  --color-bg-elevated: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-surface-alt: #F7F7F6;
+  --color-surface-glass: rgba(255, 255, 255, 0.72);
+  --color-surface-glass-strong: rgba(255, 255, 255, 0.9);
+
+  /* ---------- Text ----------
+     Four-step scale: primary (headings/body) > secondary (supporting
+     text) > tertiary (hover states, faint icons) > muted (labels,
+     placeholders). Every step must be redefined in [data-theme="dark"]
+     below — if you add a fifth step, add it there too or it'll
+     silently fail to invert. */
+  --color-text-primary: #16181C;
+  --color-text-secondary: #55585F;
+  --color-text-tertiary: #6E717A;
+  --color-text-muted: #8A8D93;
+  --color-text-inverse: #F5F5F4;
+  --color-text-inverse-muted: rgba(245, 245, 244, 0.6);
+
+  /* ---------- Borders ----------
+     Five-tier hierarchy, all built off the same neutral (text-primary
+     alpha), so every tier stays perfectly neutral and never introduces
+     a stray hue. On pure white/black surfaces, borders are the primary
+     way cards separate from the page — kept crisper than a typical
+     scale for that reason. Don't lighten these further.
+
+     - subtle:   quiet internal dividers (table row lines, list separators)
+     - default:  standard card/input/panel border at rest
+     - strong:   emphasized borders — section containers, active tab pills
+     - hover:    what a bordered element's border becomes on :hover
+     - focus:    ring color for :focus-visible (paired with --shadow-focus-ring)
+     - selected: border for an actively-selected/checked state (chips, active filters)
+  */
+  --color-border-subtle: rgba(22, 24, 28, 0.07);
+  --color-border: rgba(22, 24, 28, 0.14);
+  --color-border-strong: rgba(22, 24, 28, 0.24);
+  --color-border-hover: rgba(22, 24, 28, 0.34);
+  --color-border-focus: var(--color-primary);
+  --color-border-selected: var(--color-primary);
+
+  /* ---------- Status ----------
+     Base colors are NOT redefined per theme (checked: both hold
+     acceptable contrast against pure white and pure black). Only the
+     soft tint variants shift, since they're used as fills where
+     opacity against the surface color matters. */
+  --color-success: #1E9E6C;
+  --color-success-soft: rgba(30, 158, 108, 0.10);
+  --color-warning: #C77E1B;
+  --color-warning-soft: rgba(199, 126, 27, 0.10);
+  --color-danger: #D23C3C;
+  --color-danger-soft: rgba(210, 60, 60, 0.10);
+  --color-info: #2F6FED;
+  --color-info-soft: rgba(47, 111, 237, 0.10);
+
+  /* True constants — NOT theme-reactive on purpose. */
+  --color-black: #000000;
+  --color-white: #FFFFFF;
+
+  /* ---------- Sidebar (inverse of app theme by design — dark rail on
+     light theme, light rail on dark theme, so the nav always reads as
+     a distinct surface from the content card. Component CSS should
+     reference --sidebar-*, never --color-charcoal-* directly.) ---------- */
+  --sidebar-bg-start: var(--color-charcoal-800);
+  --sidebar-bg-end: var(--color-charcoal-900);
+  --sidebar-border: var(--color-charcoal-border);
+  --sidebar-border-strong: var(--color-charcoal-border-strong);
+  --sidebar-surface: var(--color-charcoal-700);
+  --sidebar-surface-hover: var(--color-charcoal-600);
+  --sidebar-text: var(--color-text-inverse);
+  --sidebar-text-muted: var(--color-text-inverse-muted);
+  --sidebar-link-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-active-bg: #FFFFFF;
+  --sidebar-active-text: var(--color-charcoal-900);
+
+  /* NOTE: Sidebar.css currently hardcodes rgba(210,60,60,...) directly
+     for the logout button instead of consuming these — these tokens
+     are the intended source of truth but aren't wired up yet. */
+  --sidebar-logout-text: rgba(210, 60, 60, 0.85);
+  --sidebar-logout-text-hover: var(--color-danger);
+  --sidebar-logout-bg: var(--color-danger-soft);
+  --sidebar-logout-bg-hover: rgba(210, 60, 60, 0.16);
+  --sidebar-logout-border: rgba(210, 60, 60, 0.22);
+  --sidebar-logout-border-hover: rgba(210, 60, 60, 0.4);
+
+  --sidebar-pin-border: var(--sidebar-border-strong);
+  --sidebar-pin-border-hover: var(--color-primary);
+  --sidebar-pin-bg-hover: var(--sidebar-surface-hover);
+  --sidebar-pin-divider: var(--sidebar-border);
+
+  --sidebar-logo-invert: 1;
+
+  /* ---------- Elevation ----------
+     On pure white, shadows are the ONLY thing separating the floating
+     card from the page behind it (no bg/bg-elevated tone difference
+     anymore) — kept slightly stronger than a typical light-theme scale
+     for that reason, and nudged up a touch further here to read as
+     more "designed" without becoming heavy or glossy. */
+  --shadow-xs: 0 1px 2px rgba(16, 17, 20, 0.06);
+  --shadow-soft: 0 4px 16px rgba(16, 17, 20, 0.10), 0 1px 3px rgba(16, 17, 20, 0.06);
+  --shadow-md: 0 8px 24px rgba(16, 17, 20, 0.12), 0 2px 6px rgba(16, 17, 20, 0.07);
+  --shadow-lg: 0 16px 40px rgba(16, 17, 20, 0.18), 0 4px 12px rgba(16, 17, 20, 0.08);
+  --shadow-glow-primary: 0 8px 24px rgba(208, 2, 27, 0.22);
+
+  /* Reusable hover-lift shadow, distinct from the resting --shadow-soft
+     so a card's hover transition always reads as "lifting further",
+     not just "swapping to the next shadow in the scale". */
+  --shadow-hover: 0 10px 28px rgba(16, 17, 20, 0.14), 0 3px 8px rgba(16, 17, 20, 0.08);
+
+  /* Focus rings — one shared token instead of every component
+     redefining `box-shadow: 0 0 0 3px var(--color-primary-soft-strong)`
+     inline. Danger variant for invalid/error input states. */
+  --shadow-focus-ring: 0 0 0 3px var(--color-primary-soft-strong);
+  --shadow-focus-ring-danger: 0 0 0 3px var(--color-danger-soft);
+
+  /* ---------- Glass ---------- */
+  --glass-blur: 16px;
+  --glass-blur-sm: 8px;
+  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
+  --glass-border-dark: 1px solid rgba(255, 255, 255, 0.08);
+
+  /* ---------- Radius ---------- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 999px;
+
+  /* ---------- Spacing (4px scale) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  /* ---------- Type ---------- */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "Roboto Mono", "Menlo", monospace;
+  --tracking-wide: 0.04em;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14.5px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  --fs-3xl: 34px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --lh-tight: 1.2;
+  --lh-normal: 1.5;
+
+  /* ---------- Motion ---------- */
+  --transition-fast: 180ms;
+  --transition-base: 260ms;
+  --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ---------- Layout ---------- */
+  --sidebar-width: 264px;
+  --z-modal: 1000;
+  --z-popover: 900;
+  --z-dropdown: 800;
+}
+
+/* ============================================================
+   Dark theme
+   ============================================================ */
+[data-theme="dark"] {
+  --color-primary-soft: rgba(208, 2, 27, 0.18);
+  --color-primary-soft-strong: rgba(208, 2, 27, 0.28);
+
+  /* ---------- Dark surfaces — pure black ---------- */
+  --color-bg: #000000;
+  --color-bg-elevated: #000000;
+  --color-surface: #000000;
+  --color-surface-alt: #0A0A0A;
+  --color-surface-glass: rgba(0, 0, 0, 0.7);
+  --color-surface-glass-strong: rgba(0, 0, 0, 0.88);
+
+  --color-text-primary: #F5F5F4;
+  --color-text-secondary: #B4B7BD;
+  --color-text-tertiary: #969AA1;
+  --color-text-muted: #797D85;
+  --color-text-inverse: #16181C;
+  --color-text-inverse-muted: rgba(22, 24, 28, 0.6);
+
+  /* On pure black, borders need more opacity than the light scale to
+     stay visible at all — bumped further here (in step with the light
+     theme's increase above) so the two themes feel like a matched pair
+     rather than dark mode being comparatively flatter. */
+  --color-border-subtle: rgba(255, 255, 255, 0.09);
+  --color-border: rgba(255, 255, 255, 0.16);
+  --color-border-strong: rgba(255, 255, 255, 0.28);
+  --color-border-hover: rgba(255, 255, 255, 0.40);
+  --color-border-focus: var(--color-primary);
+  --color-border-selected: var(--color-primary);
+
+  --color-success-soft: rgba(30, 158, 108, 0.18);
+  --color-warning-soft: rgba(199, 126, 27, 0.18);
+  --color-danger-soft: rgba(210, 60, 60, 0.18);
+  --color-info-soft: rgba(47, 111, 237, 0.18);
+
+  /* On pure black, dark shadows add nothing (black-on-black is
+     invisible) — elevation here comes from a faint light glow instead,
+     paired with the stronger border above doing most of the "this is a
+     raised surface" work. Nudged up slightly alongside the light-theme
+     shadow increase so depth still reads as intentional here too. */
+  --shadow-xs: 0 1px 2px rgba(255, 255, 255, 0.04);
+  --shadow-soft: 0 4px 16px rgba(255, 255, 255, 0.05), 0 1px 3px rgba(255, 255, 255, 0.03);
+  --shadow-md: 0 8px 24px rgba(255, 255, 255, 0.06), 0 2px 6px rgba(255, 255, 255, 0.04);
+  --shadow-lg: 0 16px 40px rgba(255, 255, 255, 0.08), 0 4px 12px rgba(255, 255, 255, 0.04);
+  --shadow-hover: 0 10px 28px rgba(255, 255, 255, 0.07), 0 3px 8px rgba(255, 255, 255, 0.04);
+
+  --shadow-focus-ring: 0 0 0 3px var(--color-primary-soft-strong);
+  --shadow-focus-ring-danger: 0 0 0 3px var(--color-danger-soft);
+
+  --glass-border: 1px solid rgba(255, 255, 255, 0.12);
+
+  /* Sidebar inverts to a light rail when the app itself goes dark */
+  --sidebar-bg-start: #FFFFFF;
+  --sidebar-bg-end: #F5F5F4;
+  --sidebar-border: rgba(22, 24, 28, 0.10);
+  --sidebar-border-strong: rgba(22, 24, 28, 0.16);
+  --sidebar-surface: #ECEBE9;
+  --sidebar-surface-hover: #E1E0DC;
+  --sidebar-text: #16181C;
+  --sidebar-text-muted: rgba(22, 24, 28, 0.6);
+  --sidebar-link-hover-bg: rgba(22, 24, 28, 0.05);
+  --sidebar-active-bg: #000000;
+  --sidebar-active-text: #FFFFFF;
+
+  --sidebar-logout-text: var(--color-danger);
+  --sidebar-logout-text-hover: #A82A2A;
+  --sidebar-logout-bg: var(--color-danger-soft);
+  --sidebar-logout-bg-hover: rgba(210, 60, 60, 0.14);
+  --sidebar-logout-border: rgba(210, 60, 60, 0.28);
+  --sidebar-logout-border-hover: rgba(210, 60, 60, 0.5);
+
+  --sidebar-logo-invert: 0;
+}
+
+/* ---------- Base ---------- */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--fs-md);
+  line-height: var(--lh-normal);
+  transition: background-color var(--transition-base) var(--ease-premium),
+    color var(--transition-base) var(--ease-premium);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  margin: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+button:disabled,
+button[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.surface-glass {
+  background: var(--color-surface-glass);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: var(--glass-border);
+  box-shadow: var(--shadow-soft);
+}
+
+.surface-glass-dark {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: var(--glass-border-dark);
+}
+
+/* ============================================================
+   Button system
+   ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.btn svg {
+  flex-shrink: 0;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+  transform: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn--sm {
+  height: 32px;
+  padding: 0 var(--space-4);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+}
+
+.btn--lg {
+  height: 46px;
+  padding: 0 var(--space-6);
+  font-size: var(--fs-md);
+}
+
+.btn--primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  box-shadow: var(--shadow-glow-primary);
+}
+
+.btn--primary:focus-visible {
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.btn--secondary {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background-color: var(--color-border-subtle);
+  border-color: var(--color-border-hover);
+}
+
+.btn--outline {
+  background-color: transparent;
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.btn--outline:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-border-hover);
+}
+
+.btn--ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--color-text-secondary);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.btn--danger {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #FFFFFF;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background-color: #A82A2A;
+  border-color: #A82A2A;
+  box-shadow: 0 8px 20px rgba(210, 60, 60, 0.28);
+}
+
+.btn--danger:focus-visible {
+  box-shadow: var(--shadow-focus-ring-danger);
+}
+
+.btn--danger-outline {
+  background-color: transparent;
+  border-color: rgba(210, 60, 60, 0.35);
+  color: var(--color-danger);
+}
+
+.btn--danger-outline:hover:not(:disabled) {
+  background-color: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+.btn--success {
+  background-color: var(--color-success);
+  border-color: var(--color-success);
+  color: #FFFFFF;
+}
+
+.btn--success:hover:not(:disabled) {
+  background-color: #167A54;
+  border-color: #167A54;
+  box-shadow: 0 8px 20px rgba(30, 158, 108, 0.28);
+}
+
+.btn--success:focus-visible {
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.btn--icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--color-text-secondary);
+}
+
+.btn--icon:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.btn--icon.btn--sm {
+  width: 32px;
+  height: 32px;
+}
+
+.btn--icon.btn--lg {
+  width: 46px;
+  height: 46px;
+}
+
+.btn--icon.btn--danger-ghost {
+  color: var(--color-text-muted);
+}
+
+.btn--icon.btn--danger-ghost:hover:not(:disabled) {
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* ============================================================
+   Shared surfaces
+   Generic dashboard building blocks used outside page-specific CSS.
+   ============================================================ */
+
+.panel-card {
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.panel-card:hover {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-hover);
+}
+
+.panel-card__header {
+  margin-bottom: var(--space-4);
+}
+
+.panel-card__header h3 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.kpi-card {
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.kpi-card:hover {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-hover);
+  transform: translateY(-1px);
+}
+
+.kpi-card__label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+.kpi-card__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.kpi-card__value {
+  font-size: 24px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.3px;
+  color: var(--color-text-primary);
+}
+
+.kpi-card__delta {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.kpi-card__delta--up {
+  color: var(--color-success);
+}
+
+.kpi-card__delta--down {
+  color: var(--color-danger);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.status-pill--success {
+  background-color: var(--color-success-soft);
+  border-color: rgba(30, 158, 108, 0.35);
+  color: var(--color-success);
+}
+
+.status-pill--pending {
+  background-color: var(--color-warning-soft);
+  border-color: rgba(199, 126, 27, 0.35);
+  color: var(--color-warning);
+}
+
+.status-pill--danger {
+  background-color: var(--color-danger-soft);
+  border-color: rgba(210, 60, 60, 0.35);
+  color: var(--color-danger);
+}
+
+.text-danger {
+  color: var(--color-danger);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+table thead th {
+  text-align: left;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  background-color: var(--color-surface-alt);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-strong);
+}
+
+table tbody td {
+  padding: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------- Font size preference (set via Settings page) ---------- */
+:root[data-font-size="small"] {
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15.5px;
+  --fs-xl: 20px;
+  --fs-2xl: 25px;
+  --fs-3xl: 30px;
+}
+
+:root[data-font-size="large"] {
+  --fs-xs: 13px;
+  --fs-sm: 14.5px;
+  --fs-md: 16px;
+  --fs-lg: 19px;
+  --fs-xl: 24px;
+  --fs-2xl: 31px;
+  --fs-3xl: 38px;
+}

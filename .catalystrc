@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "37148000000359003",
+      "name": "MG-motors-au",
+      "domain": {
+        "id": "50043936167",
+        "name": "mg-motors-au-60069659585.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "60069659585",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "targets": [
+      "mg_motors_au_function"
+    ],
+    "ignore": [],
+    "source": "functions"
+  },
+  "client": {
+    "source": "mg-motor-web",
+    "plugin": "zcatalyst-cli-plugin-react"
+  }
+}

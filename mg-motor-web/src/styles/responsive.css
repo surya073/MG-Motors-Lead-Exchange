@@ -1,0 +1,4 @@
+/* Global responsive helpers — page-level responsive rules live in each page's own CSS file. */
+@media (max-width: 480px) {
+  html { font-size: 15px; }
+}

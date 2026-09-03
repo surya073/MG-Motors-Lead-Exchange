@@ -1,0 +1,752 @@
+/* =========================================================
+   DEALER LIST PAGE
+   ========================================================= */
+
+.dealer-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+}
+
+/* ---------- Header ---------- */
+
+.dealer-list__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: end;
+  gap: var(--space-4);
+}
+
+.dealer-list__header h1 {
+  font-size: var(--fs-2xl);
+  letter-spacing: -0.5px;
+}
+
+.dealer-list__header p {
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+/* Sync button — pill outline at rest, fills toward primary on hover.
+   Icon spins via --refresh-btn--spinning while a sync is in flight. */
+.dealer-list__refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-5);
+  flex-shrink: 0;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__refresh-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-glow-primary);
+  transform: translateY(-1px);
+}
+
+.dealer-list__refresh-btn:active:not(:disabled) {
+  transform: translateY(-1px) scale(0.97);
+}
+
+.dealer-list__refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.dealer-list__refresh-btn svg {
+  transition: transform var(--transition-base) var(--ease-premium);
+}
+
+.dealer-list__refresh-btn--spinning {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dealer-list__refresh-btn--spinning svg {
+  animation: dealer-list-spin 900ms linear infinite;
+}
+
+@keyframes dealer-list-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.dealer-list__add-button {
+  padding: var(--space-2) var(--space-5);
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  transition: opacity var(--transition-fast);
+}
+
+.dealer-list__add-button:hover {
+  opacity: 0.85;
+}
+
+/* ---------- Tabs ----------
+   Underline-style tabs with a sliding indicator bar. The indicator's
+   left/width come from JS (measuring the active button's offsetLeft),
+   this file only owns its visual treatment and the transition. */
+
+/* ---------- Tabs (pill segmented control) ---------- */
+
+.dealer-list__tabs {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-start;   /* stop stretching to full width under a flex/column parent */
+  width: fit-content;
+  gap: 2px;
+  padding: 4px;
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+.dealer-list__tab-indicator {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  bottom: 4px;
+  background-color: var(--color-black);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-base) var(--ease-premium),
+    width var(--transition-base) var(--ease-premium),
+    background-color var(--transition-base) var(--ease-premium);
+  z-index: 0;
+}
+
+.dealer-list__tab {
+  position: relative;
+  z-index: 1;
+  height: 38px;
+  padding: 0 var(--space-5);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  transition: color var(--transition-base) var(--ease-premium);
+}
+
+.dealer-list__tab:hover {
+  color: var(--color-text-primary);
+}
+
+.dealer-list__tab--active {
+  color: var(--color-white);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-list__tab--active:hover {
+  color: var(--color-white);
+}
+
+/* ---------- Dark theme: invert pill + active label ----------
+   --color-black/--color-white are true constants (see variables.css),
+   so the invert has to happen here rather than through a token swap. */
+[data-theme="dark"] .dealer-list__tab-indicator {
+  background-color: var(--color-white);
+}
+
+[data-theme="dark"] .dealer-list__tab--active {
+  color: var(--color-black);
+}
+
+[data-theme="dark"] .dealer-list__tab--active:hover {
+  color: var(--color-black);
+}
+/* ---------- Stat cards ---------- */
+
+.dealer-list__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.dealer-list__stat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__stat:hover {
+  box-shadow: var(--shadow-soft);
+  border-color: var(--color-border-strong);
+  transform: translateY(-1px);
+}
+
+.dealer-list__stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.dealer-list__stat:hover .dealer-list__stat-icon {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.dealer-list__stat-value {
+  display: block;
+  font-size: 22px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.4px;
+  line-height: 1.15;
+}
+
+.dealer-list__stat-label {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+}
+
+/* ---------- Banner ---------- */
+
+.dealer-list__banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  animation: dealer-list-banner-in 200ms var(--ease-premium);
+}
+
+@keyframes dealer-list-banner-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dealer-list__banner--success {
+  border-color: var(--color-success);
+  background-color: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.dealer-list__banner--error {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.dealer-list__banner span {
+  flex: 1;
+  color: var(--color-text-primary);
+}
+
+.dealer-list__banner-close {
+  color: var(--color-text-muted);
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.dealer-list__banner-close:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+/* ---------- Toolbar ---------- */
+
+.dealer-list__toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.dealer-list__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dealer-list__search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.dealer-list__search-field input {
+  height: 40px;
+  padding-left: 38px;
+  padding-right: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+  min-width: 280px;
+  transition: border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+    color: var(--color-text-primary);
+}
+
+.dealer-list__search-field input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dealer-list__search-icon {
+  position: absolute;
+  left: var(--space-3);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.dealer-list__search-clear {
+  position: absolute;
+  right: var(--space-2);
+  color: var(--color-text-muted);
+  padding: 4px;
+  border-radius: 50%;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.dealer-list__search-clear:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.dealer-list__search select {
+  height: 40px;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__search select:hover,
+.dealer-list__search select:focus {
+  outline: none;
+  border-color: var(--color-border-strong);
+}
+
+.dealer-list__clear-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dealer-list__clear-filters:hover {
+  color: var(--color-primary);
+}
+
+.dealer-list__toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+/* ---------- Switch ---------- */
+
+.dealer-list__switch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dealer-list__switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.dealer-list__switch-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  background-color: var(--color-border-strong);
+  border-radius: 999px;
+  transition: background-color var(--transition-fast) var(--ease-premium);
+  flex-shrink: 0;
+}
+
+.dealer-list__switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background-color: var(--color-white);
+  border-radius: 50%;
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__switch input:checked + .dealer-list__switch-track {
+  background-color: var(--color-primary);
+}
+
+.dealer-list__switch input:checked + .dealer-list__switch-track .dealer-list__switch-thumb {
+  transform: translateX(14px);
+}
+
+.dealer-list__switch:hover .dealer-list__switch-track {
+  box-shadow: 0 0 0 3px var(--color-border);
+}
+
+.dealer-list__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dealer-list__checkbox input {
+  accent-color: var(--color-primary);
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- Column menu ---------- */
+
+.dealer-list__column-menu {
+  position: relative;
+}
+
+.dealer-list__column-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__column-toggle:hover {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+.dealer-list__column-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  min-width: 210px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: dealer-list-dropdown-in 160ms var(--ease-premium);
+}
+
+@keyframes dealer-list-dropdown-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dealer-list__column-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dealer-list__column-dropdown-header button {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ---------- Table sort headers ----------
+   Referenced from DealerListPage.jsx via sortableLabel() — renders as
+   a plain-looking header label with a chevron that highlights on the
+   active sort column, rather than the boxed/bordered look default
+   buttons would otherwise get. */
+
+.dealer-list__sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__sort-btn:hover {
+  color: var(--color-text-primary);
+}
+
+.dealer-list__sort-btn--active {
+  color: var(--color-text-primary);
+}
+
+.dealer-list__sort-icon {
+  color: var(--color-text-muted);
+  transition: transform var(--transition-fast) var(--ease-premium), color var(--transition-fast);
+}
+
+.dealer-list__sort-btn--active .dealer-list__sort-icon {
+  color: var(--color-primary);
+}
+
+.dealer-list__sort-icon--desc {
+  transform: rotate(180deg);
+}
+
+/* ---------- Row action / cell states ---------- */
+
+.dealer-list__row-action {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dealer-list__row-action:hover {
+  color: var(--color-primary);
+}
+
+.dealer-list__cell--removed {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* ---------- Pagination ---------- */
+
+.dealer-list__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.dealer-list__page-size {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  position: absolute;
+  left: 0;
+}
+
+.dealer-list__page-size select {
+  height: 32px;
+  padding-inline: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+}
+
+.dealer-list__page-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dealer-list__page-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__page-btn:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dealer-list__page-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------- Icon primitive (used by the local <Icon /> component) ---------- */
+
+.icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+  .dealer-list__pagination {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .dealer-list__page-size {
+    position: static;
+  }
+}
+
+@media (max-width: 700px) {
+  .dealer-list__header {
+    flex-direction: column;
+  }
+
+  .dealer-list__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dealer-list__toolbar-actions {
+    justify-content: space-between;
+  }
+
+  .dealer-list__search-field input {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .dealer-list__search {
+    width: 100%;
+  }
+}
+
+/* ---------- Contact links (email / phone) ---------- */
+
+.dealer-list__contact-link--mail {
+  color: #2d75af ;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: var(--fw-medium);
+}
+
+.dealer-list__contact-link--mail:hover {
+  color: #2343ac;
+}
+
+.dealer-list__contact-badge--call {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-list__contact-badge--call:hover {
+  background-color: #dcfce7;
+  border-color: #86efac;
+  transform: translateY(-1px);
+}
+
+.dealer-list__contact-badge--call:active {
+  transform: translateY(0);
+}
+
+.dealer-list__contact-badge--call svg {
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .dealer-list__contact-badge--call {
+  color: #86efac;
+  border-color: #166534;
+  background-color: #14301f;
+}
+
+[data-theme="dark"] .dealer-list__contact-badge--call:hover {
+  background-color: #1a3b26;
+  border-color: #22c55e;
+}

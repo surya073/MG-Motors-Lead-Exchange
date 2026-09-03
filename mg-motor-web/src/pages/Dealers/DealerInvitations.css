@@ -1,0 +1,580 @@
+﻿/* =========================================================
+   DEALER INVITATIONS
+   ========================================================= */
+
+.dealer-invitations {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.dealer-invitations__notice {
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  animation: dealer-invitations-notice-in 200ms var(--ease-premium);
+}
+
+@keyframes dealer-invitations-notice-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dealer-invitations__notice--error {
+  color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+/* ---------- Toolbar ---------- */
+
+.dealer-invitations__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dealer-invitations__search input {
+  height: 40px;
+  min-width: 280px;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+  transition: border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+    margin-top: var(--space-2);
+    color: var(--color-text-primary);
+}
+
+.dealer-invitations__search input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dealer-invitations__view--refresh{
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* ---------- View toggle: icon buttons, not text pills ---------- */
+
+.dealer-invitations__view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface-alt);
+  height: 34px;
+}
+
+.dealer-invitations__view-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--color-text-muted);
+  background-color: transparent;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__view-toggle button:hover {
+  background-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.dealer-invitations__view-toggle button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-primary-soft-strong);
+}
+
+.dealer-invitations__view-btn--active {
+  background-color: var(--color-black) !important;
+  color: var(--color-white) !important;
+}
+
+.dealer-invitations__view-btn--active:hover {
+  background-color: var(--color-black);
+}
+
+[data-theme="dark"] .dealer-invitations__view-btn--active {
+  background-color: var(--color-white) !important;
+  color: var(--color-black) !important;
+}
+
+[data-theme="dark"] .dealer-invitations__view-btn--active:hover {
+  background-color: var(--color-white);
+}
+
+/* ---------- Actions ---------- */
+
+.dealer-invitations__invite-button {
+  padding: var(--space-1) var(--space-4);
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  transition: opacity var(--transition-fast), transform var(--transition-fast) var(--ease-premium);
+}
+
+[data-theme="dark"] .dealer-invitations__invite-button {
+  background-color: var(--color-white);
+  color: var(--color-black);
+}
+
+.dealer-invitations__invite-button:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.dealer-invitations__invite-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.dealer-invitations__invite-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-border-strong);
+}
+
+.dealer-invitations__invite-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dealer-invitations__remove-btn {
+  padding: var(--space-1) var(--space-4);
+  background-color: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__remove-btn:hover:not(:disabled) {
+  background-color: var(--color-danger);
+  color: var(--color-white);
+}
+
+.dealer-invitations__remove-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.dealer-invitations__remove-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-danger-soft);
+}
+
+.dealer-invitations__remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dealer-invitations__invite-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.dealer-invitations__resend-button {
+  padding: var(--space-1) var(--space-3);
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__resend-button:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dealer-invitations__resend-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.dealer-invitations__resend-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-soft-strong);
+}
+
+.dealer-invitations__resend-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dealer-invitations__sent {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+/* ---------- Grid view ---------- */
+
+.dealer-invitations__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+.dealer-invitations__grid-loading {
+  grid-column: 1 / -1;
+  padding: var(--space-6);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+}
+
+.dealer-invitations__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__card:hover {
+  box-shadow: var(--shadow-soft);
+  border-color: var(--color-border-strong);
+  transform: translateY(-1px);
+}
+
+.dealer-invitations__card--active {
+  border-color: var(--color-border-strong);
+}
+
+.dealer-invitations__card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Brand mark + code, left side of the card header */
+.dealer-invitations__card-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Circular chip housing the MG logo — reads as a premium seal rather
+   than a raw inline image. Dark theme swaps to a subtle metallic
+   charcoal gradient so the mark sits on a surface, not flat on black. */
+.dealer-invitations__card-logo-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  transition: background-color var(--transition-base) var(--ease-premium),
+    border-color var(--transition-base) var(--ease-premium),
+    box-shadow var(--transition-base) var(--ease-premium);
+}
+
+[data-theme="dark"] .dealer-invitations__card-logo-chip {
+  background: linear-gradient(135deg, var(--color-charcoal-700), var(--color-charcoal-900));
+  border-color: var(--color-charcoal-border-strong);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), var(--shadow-xs);
+}
+
+.dealer-invitations__card-logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  /* Source mark is dark — invert it to white so it reads on the
+     dark-theme chip's charcoal gradient; left uncontested on light
+     theme where the chip background is already light. */
+  filter: invert(0);
+  transition: filter var(--transition-base) var(--ease-premium);
+}
+
+[data-theme="dark"] .dealer-invitations__card-logo {
+  filter: invert(1) brightness(1.15);
+}
+
+/* Small checkmark badge overlapping the logo chip's corner — appears
+   only once the dealer's Catalyst account is confirmed (the "Confirm"
+   column from the Users API), separate from invite_status. */
+.dealer-invitations__verified-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-success);
+  color: #FFFFFF;
+  border: 2px solid var(--color-bg-elevated);
+}
+
+.dealer-invitations__card-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.dealer-invitations__card h3 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-invitations__card-email {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.dealer-invitations__card-actions {
+  margin-top: var(--space-2);
+}
+
+.dealer-invitations__card--skeleton {
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+.dealer-invitations__card--skeleton:hover {
+  box-shadow: var(--shadow-xs);
+  transform: none;
+}
+
+/* ---------- Pagination ---------- */
+
+.dealer-invitations__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.dealer-invitations__page-size {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dealer-invitations__page-size select {
+  height: 32px;
+  padding-inline: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+}
+
+.dealer-invitations__page-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dealer-invitations__page-nav button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__page-nav button:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dealer-invitations__page-nav button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dealer-invitations__page-nav button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------- Confirm remove modal ---------- */
+
+.dealer-invitations__confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(13, 13, 13, 0.5);
+  backdrop-filter: blur(2px);
+  padding: var(--space-4);
+  animation: dealer-invitations-backdrop-in 160ms var(--ease-premium);
+}
+
+@keyframes dealer-invitations-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dealer-invitations__confirm {
+  width: 100%;
+  max-width: 380px;
+  padding: var(--space-5);
+  background-color: var(--color-bg-elevated);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: dealer-invitations-modal-in 200ms var(--ease-premium);
+}
+
+@keyframes dealer-invitations-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dealer-invitations__confirm h3 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-invitations__confirm p {
+  margin-top: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.dealer-invitations__confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.dealer-invitations__confirm-cancel {
+  padding: var(--space-2) var(--space-4);
+  background-color: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__confirm-cancel:hover {
+  background-color: var(--color-surface-alt);
+}
+
+.dealer-invitations__confirm-cancel:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-border-strong);
+}
+
+@media (max-width: 600px) {
+  .dealer-invitations__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dealer-invitations__search input {
+    min-width: 0;
+  }
+
+  .dealer-invitations__pagination {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.dealer-invitations__refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-invitations__refresh-btn:hover:not(:disabled) {
+  background: var(--color-success-soft);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.dealer-invitations__refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dealer-invitations__refresh-icon--spinning {
+  animation: dealer-invitations-spin 0.8s linear infinite;
+}
+
+@keyframes dealer-invitations-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Email link (blue, matches Dealers page) ---------- */
+
+.dealer-invitations__mail-link {
+  color: #3869ee;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: var(--fw-medium);
+}
+
+.dealer-invitations__mail-link:hover {
+  color: #1e40af;
+}

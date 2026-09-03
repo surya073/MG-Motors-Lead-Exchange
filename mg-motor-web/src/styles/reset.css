@@ -1,0 +1,8 @@
+/* reset.css — add this */
+html, body, #root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  overflow: hidden; /* the page itself never scrolls — only .main-layout__content does */
+}

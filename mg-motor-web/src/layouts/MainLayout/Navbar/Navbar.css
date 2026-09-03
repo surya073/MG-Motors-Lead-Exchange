@@ -1,0 +1,346 @@
+/* =========================================================
+   NAVBAR
+   ========================================================= */
+
+.navbar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 0 32px;
+  background: transparent;
+}
+
+/* =========================================================
+   GREETING
+   ========================================================= */
+.navbar__greeting {
+  min-width: 0;
+  flex: 1;
+}
+.navbar__greeting-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.navbar__greeting-content {
+  min-width: 0;
+}
+
+.navbar__greeting-content h1 {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.45px;
+  color: var(--color-text-primary);
+}
+
+.navbar__greeting-content h1 span {
+  display: inline-block;
+  margin-left: 3px;
+  font-size: 20px;
+}
+
+.navbar__greeting-content p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+/* =========================================================
+   ACTIONS
+   ========================================================= */
+
+.navbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   SEARCH
+   ========================================================= */
+
+.navbar__search {
+  width: 330px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 16px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  color: var(--color-text-tertiary);
+  transition:
+    border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium),
+    background-color var(--transition-fast) var(--ease-premium);
+}
+
+.navbar__search:focus-within {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 0 3px var(--color-primary-soft);
+}
+
+.navbar__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.navbar__search input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.navbar__search-shortcut {
+  width: 25px;
+  height: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+/* =========================================================
+   ACTION BUTTONS
+   ========================================================= */
+
+.navbar__action-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  transition:
+    transform var(--transition-fast) var(--ease-premium),
+    background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.navbar__action-button:hover {
+  background: var(--color-surface-alt);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  transform: translateY(-1px);
+}
+
+/* =========================================================
+   SETTINGS
+   ========================================================= */
+
+.navbar__settings {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  text-decoration: none;
+  transition:
+    transform var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    background-color var(--transition-fast) var(--ease-premium);
+}
+
+.navbar__settings:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  transform: translateY(-1px);
+}
+
+/* =========================================================
+   DIVIDER
+   ========================================================= */
+
+.navbar__divider {
+  width: 1px;
+  height: 28px;
+  background: var(--color-border-strong);
+  margin: 0 4px;
+}
+
+/* =========================================================
+   MOBILE MENU
+   ========================================================= */
+
+.navbar__menu-toggle {
+  display: none;
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+}
+
+/* =========================================================
+   1200px
+   ========================================================= */
+
+@media (max-width: 1200px) {
+  .navbar {
+    padding: 0 24px;
+    gap: 20px;
+  }
+
+  .navbar__search {
+    width: 270px;
+  }
+}
+
+/* =========================================================
+   1000px
+   ========================================================= */
+
+@media (max-width: 1000px) {
+  .navbar__search {
+    width: 230px;
+  }
+
+  .navbar__greeting-content p {
+    display: none;
+  }
+}
+
+/* =========================================================
+   900px
+   ========================================================= */
+
+@media (max-width: 900px) {
+  .navbar {
+    padding: 0 20px;
+  }
+
+  .navbar__menu-toggle {
+    display: flex;
+  }
+
+  .navbar__search {
+    width: 220px;
+  }
+
+  .navbar__greeting-content h1 {
+    font-size: 19px;
+  }
+}
+
+/* =========================================================
+   700px
+   ========================================================= */
+
+@media (max-width: 700px) {
+  .navbar {
+    gap: 12px;
+  }
+
+  .navbar__search {
+    width: 42px;
+    padding: 0;
+
+    justify-content: center;
+
+    border-radius: 50%;
+  }
+
+  .navbar__search input,
+  .navbar__search-shortcut {
+    display: none;
+  }
+
+  .navbar__search svg {
+    flex-shrink: 0;
+  }
+
+  .navbar__settings,
+  .navbar__action-button {
+    width: 38px;
+    height: 38px;
+  }
+
+  .navbar__divider {
+    display: none;
+  }
+}
+
+/* =========================================================
+   500px
+   ========================================================= */
+
+@media (max-width: 500px) {
+  .navbar {
+    padding: 0 14px;
+  }
+
+  .navbar__greeting-content h1 {
+    font-size: 17px;
+  }
+
+  .navbar__greeting-content h1 span {
+    font-size: 16px;
+  }
+
+  .navbar__settings {
+    display: none;
+  }
+}
+
+/* =========================================================
+   BRAND BADGE (non-overview pages)
+   Solid black-on-white / white-on-black pill, flips with theme —
+   same invert logic used elsewhere for true black/white constants.
+   ========================================================= */
+
+.navbar__brand-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 22px;
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-radius: var(--radius-full);
+  font-size: 18px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+}
+
+[data-theme="dark"] .navbar__brand-badge {
+  background-color: var(--color-white);
+  color: var(--color-black);
+}
+
+@media (max-width: 900px) {
+  .navbar__brand-badge {
+    padding: 6px 18px;
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 500px) {
+  .navbar__brand-badge {
+    padding: 5px 14px;
+    font-size: 14px;
+  }
+}

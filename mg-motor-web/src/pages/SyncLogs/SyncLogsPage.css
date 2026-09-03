@@ -1,0 +1,283 @@
+.sync-logs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sync-logs__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sync-logs__header h1 {
+  /* font-size: var(--fs-lg); */
+  font-weight: var(--fw-semibold);
+}
+
+.sync-logs__header p {
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.sync-logs__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* =========================================================
+   SYNC BUTTONS
+   Two distinct shapes/tones so "Sync dealers" and "Sync leads" read as
+   separate actions at a glance, not two identical black pills that only
+   differ by label text. Dealers = filled (primary weight, since dealer
+   sync is the less frequent/heavier action); Leads = outlined (the more
+   routine, higher-frequency action here).
+   ========================================================= */
+
+/* =========================================================
+   SYNC BUTTONS
+   Dealers and Leads now read as genuinely different actions:
+   different accent hue, different shape, different icon
+   treatment — not just filled-vs-outline of the same color.
+   ========================================================= */
+
+.sync-logs__sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium),
+    opacity var(--transition-fast);
+}
+
+/* Dealers: solid deep-blue pill — the heavier, less frequent action */
+.sync-logs__sync-btn--dealers {
+  border-radius: var(--radius-full);
+  background-color: #1d4ed8;
+  color: #ffffff;
+  border: 1px solid #1d4ed8;
+}
+
+.sync-logs__sync-btn--dealers:hover:not(:disabled) {
+  background-color: #1e40af;
+  border-color: #1e40af;
+}
+
+/* Leads: outlined amber rectangle — the routine, higher-frequency action */
+.sync-logs__sync-btn--leads {
+  border-radius: var(--radius-md);
+  background-color: #fffbeb;
+  color: #b45309;
+  border: 1.5px solid #fde68a;
+}
+
+.sync-logs__sync-btn--leads:hover:not(:disabled) {
+  background-color: #fef3c7;
+  border-color: #fbbf24;
+}
+
+.sync-logs__sync-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sync-logs__sync-icon--spinning {
+  animation: sync-logs-spin 0.8s linear infinite;
+}
+
+@keyframes sync-logs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-logs__sync-icon--spinning {
+    animation-duration: 1.6s;
+  }
+}
+
+.sync-logs__notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+
+.sync-logs__notice--error {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.sync-logs__notice--success {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.sync-logs__notice-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 2px;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* =========================================================
+   FILTERS
+   ========================================================= */
+
+.sync-logs__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sync-logs__search {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.sync-logs__search input {
+  width: 100%;
+  height: 40px;
+  padding-inline: var(--space-3) var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+.sync-logs__search-clear {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-muted);
+}
+
+.sync-logs__search-clear:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.sync-logs__filters select {
+  height: 40px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+
+.sync-logs__clear-filters {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.sync-logs__clear-filters:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+/* =========================================================
+   PAGINATION
+   ========================================================= */
+
+.sync-logs__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.sync-logs__pagination button {
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-elevated);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.sync-logs__pagination button:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+}
+
+.sync-logs__pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .sync-logs__header {
+    flex-direction: column;
+  }
+
+  .sync-logs__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sync-logs__filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sync-logs__filters select,
+  .sync-logs__clear-filters {
+    width: 100%;
+  }
+
+  .sync-logs__pagination {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+}
+
+
+.sync-logs__header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sync-logs__page-nav {
+  gap: var(--space-3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}

@@ -1,0 +1,138 @@
+.profile-dropdown {
+  position: relative;
+}
+
+/* ---------- Trigger ----------
+   Built on .btn + .btn--ghost (focus ring, active-state scale,
+   transition timing all inherited from there). Overrides below only
+   touch height/padding/alignment, since this carries avatar + name +
+   chevron rather than .btn's default single icon or centered label. */
+.profile-dropdown__trigger {
+  height: auto;
+  padding: var(--space-1) var(--space-2);
+  padding-right: var(--space-3);
+  gap: var(--space-2);
+  justify-content: flex-start;
+  border-radius: var(--radius-md);
+}
+
+.profile-dropdown__trigger:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+  color: var(--color-text-primary);
+}
+
+.profile-dropdown__name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-dropdown__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-dropdown);
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-glass-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-2);
+  animation: navbar-dropdown-in 180ms var(--ease-premium);
+}
+
+[data-theme="dark"] .profile-dropdown__panel {
+  border: var(--glass-border-dark);
+}
+
+.profile-dropdown__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.profile-dropdown__header-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.profile-dropdown__header-email {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.profile-dropdown__divider {
+  height: 1px;
+  background-color: var(--color-border);
+  margin: var(--space-2) 0;
+}
+
+/* ---------- Menu items ----------
+   Same .btn + .btn--ghost base as the trigger. Overrides make them
+   full-width and left-aligned since .btn defaults to inline-flex,
+   centered, fixed 40px height. */
+.profile-dropdown__item {
+  height: auto;
+  width: 100%;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.profile-dropdown__item:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.profile-dropdown__item--danger {
+  color: var(--color-danger);
+}
+
+.profile-dropdown__item--danger:hover:not(:disabled) {
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* Shared with NotificationBell.css — same fade+scale entrance for every
+   chrome dropdown, so they all feel like one system. If both files ever
+   get bundled through a shared "dropdown.css", move this keyframe there
+   and drop the duplicate. */
+@keyframes navbar-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.profile-dropdown__header-role {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 1px 8px;
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}

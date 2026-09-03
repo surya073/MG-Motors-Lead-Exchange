@@ -1,0 +1,385 @@
+.sidebar {
+  --sidebar-collapsed-width: 76px;
+  --sidebar-expanded-width: var(--sidebar-width, 264px);
+
+  height: calc(100% - (var(--space-4) * 2));
+  margin: var(--space-4) 0 var(--space-4) var(--space-4);
+  flex-shrink: 0;
+  width: var(--sidebar-collapsed-width);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--sidebar-bg-start) 0%, var(--sidebar-bg-end) 100%);
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  transition: width var(--transition-base) var(--ease-premium),
+    background var(--transition-base) var(--ease-premium),
+    border-color var(--transition-base) var(--ease-premium);
+  z-index: 20;
+}
+
+.sidebar--expanded {
+  width: var(--sidebar-expanded-width);
+}
+
+/* ---------- Brand ---------- */
+.sidebar__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3) var(--space-4);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  text-align: center;
+  transition: padding var(--transition-base) var(--ease-premium);
+}
+
+.sidebar__brand .logo {
+  filter: invert(var(--sidebar-logo-invert));
+  transition: filter var(--transition-base) var(--ease-premium);
+}
+
+.sidebar__brand-text {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--sidebar-text);
+  white-space: nowrap;
+  letter-spacing: var(--tracking-wide);
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: opacity var(--transition-fast) var(--ease-premium),
+    max-height var(--transition-base) var(--ease-premium);
+}
+
+.sidebar--expanded .sidebar__brand-text {
+  opacity: 1;
+  max-height: 20px;
+}
+
+/* ---------- Nav ---------- */
+.sidebar__nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-3);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar__nav::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar__nav::-webkit-scrollbar-thumb {
+  background: var(--sidebar-border-strong);
+  border-radius: var(--radius-full);
+}
+
+/* ---------- Footer: two distinct zones, visually separated ---------- */
+.sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--sidebar-border);
+  flex-shrink: 0;
+}
+
+/* ---------- Links (nav items) ---------- */
+.sidebar__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--sidebar-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    gap var(--transition-base) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+}
+
+.sidebar:not(.sidebar--expanded) .sidebar__link {
+  justify-content: center;
+  gap: 0;
+}
+
+.sidebar__link svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), color var(--transition-fast),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.sidebar__link:hover {
+  background-color: var(--sidebar-link-hover-bg);
+  color: var(--sidebar-text);
+  transform: translateX(2px);
+}
+
+.sidebar__link:hover svg {
+  opacity: 1;
+  transform: scale(1.06);
+}
+
+.sidebar__link:active {
+  transform: translateX(2px) scale(0.97);
+}
+
+/* ---------- Active state: solid pill, high-contrast icon/text ---------- */
+.sidebar__link--active {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-text);
+  font-weight: var(--fw-semibold);
+  box-shadow: var(--shadow-xs);
+}
+
+.sidebar__link--active:hover {
+  transform: none;
+}
+
+.sidebar__link--active svg {
+  opacity: 1;
+  color: var(--sidebar-active-text);
+}
+
+.sidebar__link--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: var(--color-primary);
+}
+
+/* ---------- Logout: always-visible danger outline, its own zone ----------
+   Distinct from nav links on purpose: permanent tinted border + soft
+   background at rest (not hover-triggered) so it reads immediately as
+   "exit," not "another menu item." */
+.sidebar__logout {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 42px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  background-color: var(--color-danger-soft);
+  border: 1px solid rgba(210, 60, 60, 0.22);
+  color: var(--sidebar-logout-text);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.sidebar:not(.sidebar--expanded) .sidebar__logout {
+  justify-content: center;
+  gap: 0;
+}
+
+.sidebar__logout svg {
+  flex-shrink: 0;
+  opacity: 1;
+}
+
+.sidebar__logout:hover {
+  background-color: rgba(210, 60, 60, 0.16);
+  border-color: rgba(210, 60, 60, 0.4);
+  color: var(--color-danger);
+  transform: translateX(2px);
+}
+
+.sidebar__logout:active {
+  transform: translateX(2px) scale(0.97);
+}
+
+/* ---------- Label (collapsed <-> expanded) ---------- */
+.sidebar__label {
+  opacity: 0;
+  max-width: 0;
+  overflow: hidden;
+  transform: translateX(-4px);
+  transition: opacity var(--transition-fast) var(--ease-premium),
+    max-width var(--transition-base) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.sidebar--expanded .sidebar__label {
+  opacity: 1;
+  max-width: 200px;
+  transform: translateX(0);
+}
+
+/* ---------- Pin / collapse toggle: small neutral icon-chip, visually
+   separated from logout by a hairline divider so the two controls
+   never blur into one row of "footer buttons." ---------- */
+.sidebar__pin {
+  position: relative;
+  align-self: center;
+  width: 100%;
+  height: 34px;
+  padding: 0 var(--space-3);
+  margin-top: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px dashed var(--sidebar-border-strong);
+  color: var(--sidebar-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast) var(--ease-premium),
+    border-style var(--transition-fast),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.sidebar__pin::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 1px;
+  background: var(--sidebar-border);
+}
+
+.sidebar:not(.sidebar--expanded) .sidebar__pin {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: var(--radius-full);
+}
+
+.sidebar__pin:hover {
+  background-color: var(--sidebar-surface-hover);
+  border-color: var(--color-primary);
+  border-style: solid;
+  color: var(--sidebar-text);
+}
+
+.sidebar__pin:active {
+  transform: scale(0.93);
+}
+
+.sidebar__pin svg {
+  flex-shrink: 0;
+  transition: transform var(--transition-base) var(--ease-premium);
+}
+
+.sidebar--expanded .sidebar__pin svg {
+  transform: rotate(180deg);
+}
+
+.sidebar__scrim {
+  display: none;
+}
+
+/* ---------- Hover tooltip (collapsed rail only) ---------- */
+.sidebar__tooltip {
+  position: fixed;
+  left: calc(var(--space-4) + 76px + 10px);
+  transform: translateY(-50%);
+  background: var(--color-text-primary);
+  color: var(--color-bg-elevated);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1200;
+  animation: sidebarTooltipIn 120ms var(--ease-premium) forwards;
+}
+
+.sidebar__tooltip::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--color-text-primary);
+  border-left: 1px solid var(--color-border-strong);
+  border-bottom: 1px solid var(--color-border-strong);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+@keyframes sidebarTooltipIn {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+
+/* ---------- Mobile drawer ---------- */
+@media (max-width: 900px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    margin: 0;
+    height: 100vh;
+    width: var(--sidebar-expanded-width);
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+    z-index: var(--z-modal);
+    transition: transform var(--transition-base) var(--ease-premium);
+  }
+
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  .sidebar .sidebar__label {
+    opacity: 1;
+    max-width: none;
+    transform: translateX(0);
+  }
+
+  .sidebar .sidebar__link,
+  .sidebar .sidebar__logout,
+  .sidebar .sidebar__pin {
+    justify-content: flex-start;
+    gap: var(--space-3);
+    width: 100%;
+    border-radius: var(--radius-md);
+  }
+
+  .sidebar__link:hover,
+  .sidebar__logout:hover {
+    transform: none;
+  }
+
+  .sidebar__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 10, 12, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: calc(var(--z-modal) - 1);
+  }
+}

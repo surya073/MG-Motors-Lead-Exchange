@@ -1,0 +1,58 @@
+.loading-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background-color: var(--color-bg);
+}
+
+.loading-page__mark {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  height: 28px;
+}
+
+.loading-page__bar {
+  width: 4px;
+  height: 100%;
+  background-color: var(--color-black);
+  border-radius: var(--radius-sm);
+  animation: loading-page-bounce 0.9s var(--ease-premium) infinite;
+}
+
+.loading-page__bar:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.loading-page__bar:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+@keyframes loading-page-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.loading-page__label {
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+}
+
+/* =========================================================
+   Dark theme
+   --color-black/--color-white are true constants, so the invert
+   has to happen explicitly here rather than via a token swap —
+   same pattern used for the dealer-list tab indicator.
+   ========================================================= */
+
+[data-theme="dark"] .loading-page__bar {
+  background-color: var(--color-white);
+}

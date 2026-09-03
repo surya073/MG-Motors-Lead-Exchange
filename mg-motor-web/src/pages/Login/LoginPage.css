@@ -1,0 +1,138 @@
+.login-page {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.login-page__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: var(--space-2);
+  opacity: 0;
+  transform: translateY(10px);
+  animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
+}
+
+.login-page__eyebrow {
+  margin-top: var(--space-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: #e4002b;
+}
+
+.login-page__title {
+  font-size: 26px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.login-page__subtitle {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  max-width: 360px;
+}
+
+/* No card, no border, no shadow — the embedded form sits directly in
+   the panel so it reads as part of the app, not a widget dropped on
+   top of it. Sizing is intentionally fluid: the Catalyst iframe reports
+   its own content height, so we give it room without pinning a fixed
+   min-height that produces empty space or a scrollbar. */
+.login-page__form-area {
+  position: relative;
+  width: 100%;
+  min-height: 520px;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
+  animation-delay: 90ms;
+}
+
+
+.login-page__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  background-color: var(--color-bg);
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  z-index: 1;
+}
+
+.login-page__spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--color-border);
+  border-top-color: #e4002b;
+  border-radius: 50%;
+  animation: login-page-spin 0.8s linear infinite;
+}
+
+@keyframes login-page-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes login-page-rise-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.login-page__iframe-slot {
+  width: 100%;
+  min-height: 420px;
+  /* Removed overflow: hidden — it was clipping the iframe whenever its
+     actual rendered height exceeded 420px, producing an internal
+     scrollbar and a cut-off submit button. The slot should grow to fit
+     whatever height the injected iframe actually needs. */
+}
+
+.login-page__iframe-slot iframe {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 520px; /* Catalyst's own .signin_box content is comfortably taller than 420px once the email field + button + footnote all render */
+  border: none;
+  display: block;
+}
+
+.login-page__footnote {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  opacity: 0;
+  animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
+  animation-delay: 160ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page__brand,
+  .login-page__form-area,
+  .login-page__footnote {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-page__title {
+    font-size: 22px;
+  }
+
+  .login-page__form-area,
+  .login-page__iframe-slot {
+    min-height: 480px;
+  }
+}
