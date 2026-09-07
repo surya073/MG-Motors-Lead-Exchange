@@ -11,6 +11,7 @@ const webhookRoutes = require('./routes/webhookRoutes');
 const cronRoutes = require('./routes/cronRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const aiAssistantRoutes = require('./routes/aiAssistantRoutes');
 
 
 
@@ -383,5 +384,6 @@ app.use('/', adminDashboardRoutes);
 app.use('/', onDemandDashboardRoutes);
 app.use('/', adminUserRoutes);
 app.use('/', notificationRoutes);
+app.use('/', aiAssistantRoutes);
 
 module.exports = app;

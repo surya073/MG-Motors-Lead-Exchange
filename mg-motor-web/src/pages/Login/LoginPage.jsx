@@ -5,36 +5,16 @@ import { authService } from "../../services/api/authService";
 import { CATALYST_SIGNIN_ELEMENT_ID, CATALYST_SIGNIN_CONFIG } from "../../constants/auth.constants";
 import { SESSION_STATUS } from "../../constants/app.constants";
 import { ROUTES, APP_BASE_PATH } from "../../constants/routes.constants";
-import Logo from "../../ui/Logo/Logo";
 import LoadingPage from "../../common/LoadingPage/LoadingPage";
+import mgLogo from "../../assets/images/mg-logo-single.png";
 import "./LoginPage.css";
 
-/**
- * LoginPage.jsx
- * -----------------------------------------------------------------------
- * The MG-branded shell around Catalyst's embedded sign-in iframe. What
- * this component owns: the surrounding layout, copy, and the loading
- * state while (a) an existing session is being checked and (b) the
- * iframe itself is being injected. What it does NOT own: the actual
- * credential form — that's Catalyst's iframe, styled via
- * CATALYST_SIGNIN_CONFIG.css_url (public/embedded-auth.css) rather than
- * rebuilt from scratch, since Embedded Authentication doesn't expose a
- * way to submit credentials through your own form fields.
- */
 export default function LoginPage() {
   const { status } = useAuth();
   const location = useLocation();
   const containerRef = useRef(null);
   const [iframeLoading, setIframeLoading] = useState(true);
 
-  // Where to send the user after Catalyst's iframe completes a
-  // successful sign-in. Prefers wherever ProtectedRoute redirected them
-  // from, falling back to the dashboard. This is a full-page redirect
-  // handled by Catalyst's iframe, not client-side navigation — so unlike
-  // <Link>/<Navigate>, it has to be built as a real URL by hand: the real
-  // static file lives at {origin}/app/ (Catalyst's Web Client Hosting
-  // path), and everything after that is a hash route our HashRouter
-  // picks up client-side without ever hitting the server again.
   const targetPath = location.state?.from?.pathname || ROUTES.DASHBOARD;
   const redirectTarget = `${window.location.origin}${APP_BASE_PATH}/#${targetPath}`;
 
@@ -48,13 +28,6 @@ export default function LoginPage() {
       service_url: redirectTarget,
     });
 
-    // Catalyst injects the iframe into our container asynchronously with
-    // no callback of its own — a MutationObserver is the simplest honest
-    // way to know it actually landed, so the loading state doesn't just
-    // guess with a fixed timeout. `subtree: true` in case Catalyst inserts
-    // an empty wrapper first and populates it a moment later. A fallback
-    // timeout hides the overlay regardless, so a mutation shape we didn't
-    // anticipate can't leave it stuck forever.
     const node = containerRef.current;
     const observer = new MutationObserver(() => {
       if (node && node.childNodes.length > 0) {
@@ -72,10 +45,15 @@ export default function LoginPage() {
       clearTimeout(fallback);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    
+    // Complete the pending AI chat integration in the dashboard and verify the end-to-end flow.
+// Start reviewing the Dealer CRM configuration requirements.
+// Analyze the integration approach for Dealer CRM, including webhook/API connectivity, authentication, access-token handling, and required configuration details.
+// Review the required field mapping and data exchange flow between Dealer CRM, Catalyst middleware, and MG Zoho CRM.
+// Identify any pending requirements or dependencies needed to proceed with the Dealer CRM integration.
   }, [status]);
 
-  // Already signed in (e.g. user navigated to /login manually) — skip
-  // the form entirely instead of flashing it before redirecting away.
   if (status === SESSION_STATUS.AUTHENTICATED) {
     return <Navigate to={ROUTES.DASHBOARD} replace />;
   }
@@ -86,13 +64,12 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
+      <img src={mgLogo} alt="MG Motor" className="login-page__logo" />
+
       <div className="login-page__brand">
-        <Logo size="md" />
-        <p className="eyebrow login-page__eyebrow">Lead Exchange Platform</p>
-        <h1 className="login-page__title">Sign in to your account</h1>
+        <h1 className="login-page__title">Welcome Back</h1>
         <p className="login-page__subtitle">
-          Enter your credentials to access the dealer and lead management
-          console.
+          Sign in to your dealer account to continue.
         </p>
       </div>
 
@@ -110,9 +87,20 @@ export default function LoginPage() {
         />
       </div>
 
-      <p className="login-page__footnote">
-        Access is restricted to authorised MG dealer and admin accounts.
-      </p>
+      <div className="login-page__divider" role="presentation">
+        <span />
+        <span className="login-page__divider-text">OR</span>
+        <span />
+      </div>
+
+      {/* TODO: wire up the actual contact-admin flow (mailto, route, modal) */}
+      <button type="button" className="login-page__contact-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        Contact Admin
+      </button>
     </div>
   );
 }

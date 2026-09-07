@@ -25,4 +25,6 @@ export const ROUTES = {
   ERROR: "/error",
   USER_MANAGEMENT: "/user-management",
   ON_DEMAND_DASHBOARD: "/on-demand-dashboard",
+  DEALER_CRM_CONFIG: "/dealers/crm-config",
+
 };

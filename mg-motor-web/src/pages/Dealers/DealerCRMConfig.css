@@ -1,0 +1,459 @@
+/* =========================================================
+   DEALER CRM CONFIG
+   ========================================================= */
+
+.dealer-crm-config__layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .dealer-crm-config__layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dealer-crm-config__panel {
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-xs);
+}
+
+.dealer-crm-config__panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.dealer-crm-config__panel-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+}
+
+.dealer-crm-config__panel-header h3 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-crm-config__search input {
+  width: 100%;
+  height: 36px;
+  padding-inline: var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__search input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dealer-crm-config__panel--detail {
+  min-height: 480px;
+}
+
+.dealer-crm-config__empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 420px;
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.dealer-crm-config__detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dealer-crm-config__detail-header h2 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-crm-config__detail-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* ---------- Tabs ---------- */
+
+.dealer-crm-config__tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dealer-crm-config__tabs button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__tabs button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__tabs button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dealer-crm-config__tab--active {
+  color: var(--color-primary) !important;
+  border-bottom-color: var(--color-primary) !important;
+}
+
+/* ---------- Form ---------- */
+
+.dealer-crm-config__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dealer-crm-config__mode-toggle {
+  display: flex;
+  gap: var(--space-2);
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+  width: fit-content;
+}
+
+.dealer-crm-config__mode-toggle label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__mode-toggle input {
+  accent-color: var(--color-primary);
+}
+
+.dealer-crm-config__mode--active {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
+.dealer-crm-config__portal-note {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  line-height: 1.5;
+}
+
+.dealer-crm-config__field-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dealer-crm-config__field-row label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+}
+
+.dealer-crm-config__field-row input {
+  height: 38px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__field-row input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.dealer-crm-config__field-hint {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.dealer-crm-config__field-row-inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.dealer-crm-config__field-row-inline > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dealer-crm-config__field-row-inline label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+}
+
+.dealer-crm-config__field-row-inline input {
+  height: 38px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+}
+
+.dealer-crm-config__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.dealer-crm-config__checkbox-row--compact {
+  justify-content: center;
+}
+
+.dealer-crm-config__test-result {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  border: 1px solid var(--color-border-strong);
+}
+
+.dealer-crm-config__test-result--ok {
+  color: var(--color-success);
+  background-color: var(--color-success-soft);
+  border-color: var(--color-success);
+}
+
+.dealer-crm-config__test-result--error {
+  color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+/* ---------- Actions ---------- */
+
+.dealer-crm-config__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.dealer-crm-config__button--primary {
+  padding: var(--space-2) var(--space-5);
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  transition: opacity var(--transition-fast);
+}
+
+[data-theme="dark"] .dealer-crm-config__button--primary {
+  background-color: var(--color-white);
+  color: var(--color-black);
+}
+
+.dealer-crm-config__button--primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.dealer-crm-config__button--primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dealer-crm-config__button--outline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background-color: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__button--outline:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+}
+
+.dealer-crm-config__button--outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dealer-crm-config__spin {
+  animation: dealer-crm-config-spin 0.8s linear infinite;
+}
+
+@keyframes dealer-crm-config-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Mapping tables ---------- */
+
+.dealer-crm-config__mapping-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dealer-crm-config__mapping-header {
+  display: grid;
+  grid-template-columns: 1fr 24px 1fr 70px 28px;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.dealer-crm-config__mapping-header--status {
+  grid-template-columns: 1fr 24px 1fr;
+}
+
+.dealer-crm-config__mapping-row {
+  display: grid;
+  grid-template-columns: 1fr 24px 1fr 70px 28px;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.dealer-crm-config__mapping-row--status {
+  grid-template-columns: 1fr 24px 1fr;
+}
+
+.dealer-crm-config__mapping-row input {
+  height: 36px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-elevated);
+  font-size: var(--fs-sm);
+}
+
+.dealer-crm-config__status-source {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  padding-left: var(--space-2);
+}
+
+.dealer-crm-config__mapping-arrow {
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.dealer-crm-config__remove-mapping {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  color: var(--color-danger);
+  font-size: 18px;
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__remove-mapping:hover {
+  background-color: var(--color-danger-soft);
+}
+
+.dealer-crm-config__add-mapping {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-primary);
+}
+
+.dealer-crm-config__add-mapping:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Logs ---------- */
+
+.dealer-crm-config__log-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-danger);
+}
+
+.dealer-crm-config__retry-link {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.dealer-crm-config__skeleton-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.dealer-crm-config__row-label--selected {
+  font-weight: var(--fw-semibold);
+  color: var(--color-primary);
+}

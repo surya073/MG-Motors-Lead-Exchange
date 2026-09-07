@@ -8,6 +8,12 @@
   background-color: var(--color-bg);
 }
 
+.loading-page__logo {
+  height: 40px;
+  width: auto;
+  filter: invert(1);
+}
+
 .loading-page__mark {
   display: flex;
   align-items: flex-end;
@@ -55,4 +61,8 @@
 
 [data-theme="dark"] .loading-page__bar {
   background-color: var(--color-white);
+}
+
+[data-theme="dark"] .loading-page__logo {
+  filter: none;
 }

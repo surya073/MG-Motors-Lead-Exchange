@@ -9,3 +9,5 @@ export async function syncLeadsService() {
   const { data } = await axiosInstance.post("/mg_motors_au_function/sync/leads");
   return data;
 }
+
+

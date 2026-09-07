@@ -1,6 +1,6 @@
 ﻿import { useState } from "react";
 import { Link } from "react-router-dom";
-import { User, Palette, Bell, Users, KeyRound, LogOut, Sun, Moon, BellDot, BellRing, BellOff, ChevronRight } from "lucide-react";
+import { User, Palette, Bell, Users, KeyRound, LogOut, Sun, Moon, BellDot, BellRing, BellOff, ChevronRight, Plug } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { authService } from "../../services/api/authService";
@@ -43,6 +43,7 @@ export default function SettingsPage() {
 
   const displayName = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email_id;
   const isSuperAdmin = user?.appRole === APP_ROLES.SUPER_ADMIN;
+  const isAdmin = user?.appRole === APP_ROLES.ADMIN || isSuperAdmin;
 
   const handlePasswordReset = async () => {
     setResetSending(true);
@@ -65,8 +66,6 @@ export default function SettingsPage() {
   const handleNotificationStyleChange = (value) => {
     setNotificationStyle(value);
     localStorage.setItem(NOTIF_STYLE_STORAGE_KEY, value);
-    // NotificationBell reads this same key on mount to decide how to
-    // render its badge — see notification-bell__badge styling logic.
   };
 
   return (
@@ -189,6 +188,35 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Admin / Super Admin only — configure external dealer CRM
+            integrations (Portal vs External CRM, field/status mappings,
+            connection test). Role-agnostic here; the real security
+            boundary is requireAdminRole/requireSuperAdminRole on the
+            backend and the RequireRole wrapper on the route itself. */}
+        {isAdmin && (
+          <div className="settings__card">
+            <div className="settings__card-header">
+              <span className="settings__card-icon">
+                <Plug size={18} />
+              </span>
+              <h3>Dealer CRM Connection</h3>
+            </div>
+
+            <div className="settings__row settings__row--first">
+              <div>
+                <p className="settings__label">External CRM integrations</p>
+                <p className="settings__value-muted">
+                  Configure Portal vs External CRM mode, field/status mappings, and connection settings per dealer.
+                </p>
+              </div>
+              <Link to={ROUTES.DEALER_CRM_CONFIG} className="settings__button settings__button--primary">
+                Configure
+                <ChevronRight size={14} strokeWidth={2.5} />
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Super Admin only — invite/manage Dealer-role users via
             admin_user_mapping. Not a RequireRole route guard here since

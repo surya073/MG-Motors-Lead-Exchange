@@ -3,22 +3,29 @@ import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
+import { aiAssistantService } from "../../services/api/aiAssistantService";
 import "./Overview.css";
 
 // Hero/backdrop artwork — used to give the two overview screens a bit of
 // showroom feel instead of reading as a bare data grid. Adjust the import
 // path below if this component ever moves out of src/components/Overview.
-import blueMgCarBg from "../../assets/dashboardimgs/blueMgCarBg.jpg";
+//
+// grayMgCarBg is still used as a faint corner watermark photo on one of
+// the Admin panel cards (see AdminOverview) — unrelated to the hero.
+// blueMgCarBg / skyBlueMgCarBg were the old hero background photos and
+// are no longer used now that the hero is a flat dark graphic instead
+// of a photo slideshow.
 import grayMgCarBg from "../../assets/dashboardimgs/grayMgCarBg.jpg";
-import skyBlueMgCarBg from "../../assets/dashboardimgs/skyBlueMgCarBg.jpg";
 import mgCarPng1 from "../../assets/dashboardimgs/mgcarpng1.png";
 import mgCarPng2 from "../../assets/dashboardimgs/mgcarpng2.png";
 import mgCarPng3 from "../../assets/dashboardimgs/mgcarpng3.png";
 import mgCarPng4 from "../../assets/dashboardimgs/mgcarpng4.png";
 import mgLogo from "../../assets/images/logo-morris-garages.png";
 
-
-const HERO_BACKGROUNDS = [blueMgCarBg, grayMgCarBg, skyBlueMgCarBg];
+// Cutout PNGs the hero cycles through, floating in front of the glow —
+// these must be transparent-background car cutouts, not full rectangular
+// photos, or the car will show a visible box edge over the glow/map.
+const HERO_CAR_CUTOUTS = [mgCarPng1, mgCarPng2, mgCarPng3, mgCarPng4];
 const SLIDE_DURATION_MS = 7000;
 
 const STATUS_CARDS = [
@@ -51,8 +58,6 @@ export default function Overview() {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
 
-  // Shared right-side detail drawer — every clickable card/chart opens
-  // into this same panel, so we only need one instance on the page.
   const [drawer, setDrawer] = useState({ open: false, title: "", subtitle: "", content: null });
   const openDrawer = (title, subtitle, content) => setDrawer({ open: true, title, subtitle, content });
   const closeDrawer = () => setDrawer((d) => ({ ...d, open: false }));
@@ -79,23 +84,29 @@ export default function Overview() {
     return () => { cancelled = true; };
   }, [isDealer]);
 
-  if (loading) return <OverviewSkeleton isDealer={isDealer} />;
-  if (error) return <div className="overview__state overview__state--error">{error}</div>;
-
   return (
     <>
-      {isDealer ? (
-        <DealerOverview summary={data} openDrawer={openDrawer} />
+      {loading ? (
+        <OverviewSkeleton isDealer={isDealer} />
+      ) : error ? (
+        <div className="overview__state overview__state--error">{error}</div>
       ) : (
-        <AdminOverview data={data} openDrawer={openDrawer} />
+        <>
+          {isDealer ? (
+            <DealerOverview summary={data} openDrawer={openDrawer} />
+          ) : (
+            <AdminOverview data={data} openDrawer={openDrawer} />
+          )}
+          <Drawer open={drawer.open} onClose={closeDrawer} title={drawer.title} subtitle={drawer.subtitle}>
+            {drawer.content}
+          </Drawer>
+        </>
       )}
-      <Drawer open={drawer.open} onClose={closeDrawer} title={drawer.title} subtitle={drawer.subtitle}>
-        {drawer.content}
-      </Drawer>
       <AIAssistantPanel isDealer={isDealer} />
     </>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Loading skeleton — avoids a layout jump when real data lands       */
@@ -148,6 +159,8 @@ const ICONS = {
   download: "M12 3v11m0 0l-4-4m4 4l4-4M4 20h16",
   pencil: "M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z",
   trophy: "M8 21h8M12 17v4M7 4h10v4a5 5 0 01-10 0V4zM7 5H4a3 3 0 003 3M17 5h3a3 3 0 01-3 3",
+  mic: "M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v1a7 7 0 01-14 0v-1M12 18v4m-4 0h8",
+  square: "M5 5h14v14H5z",
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -192,59 +205,115 @@ function FadeImage({ src, alt = "", className = "" }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* OverviewHero — the showroom strip at the top of both dashboards.   */
-/* A real photo, a floating car cutout, and a short greeting instead  */
-/* of dropping straight into a wall of numbers.                      */
+/* OverviewHero — the network-overview strip at the top of both       */
+/* dashboards: flat dark background, a pulsing dot-map with           */
+/* connection lines, a red glow wedge, a floating car cutout that     */
+/* cycles on a timer, a gradient two-line title, stat badges, the MG  */
+/* logo, and a row of pagination dots tracking the active cutout.     */
 /* ------------------------------------------------------------------ */
 
-function OverviewHero({ eyebrow, title, subtitle }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [prevIndex, setPrevIndex] = useState(null);
+const MAP_DOTS = [
+  { x: 60, y: 90 }, { x: 90, y: 70 }, { x: 120, y: 100 }, { x: 150, y: 60 },
+  { x: 180, y: 85 }, { x: 40, y: 130 }, { x: 100, y: 140 }, { x: 200, y: 40 },
+  { x: 230, y: 95 }, { x: 70, y: 160 }, { x: 160, y: 130 }, { x: 210, y: 150 },
+];
+
+const MAP_HOTSPOTS = [
+  { x: 60, y: 90 }, { x: 150, y: 60 }, { x: 210, y: 150 }, { x: 40, y: 130 },
+];
+
+function OverviewHero({ eyebrow, title, titleAccent, subtitle, stats = [] }) {
+  const [activeIdx, setActiveIdx] = useState(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveIndex((current) => {
-        setPrevIndex(current);
-        return (current + 1) % HERO_BACKGROUNDS.length;
-      });
+    const id = setInterval(() => {
+      setActiveIdx((i) => (i + 1) % HERO_CAR_CUTOUTS.length);
     }, SLIDE_DURATION_MS);
-    return () => clearInterval(interval);
+    return () => clearInterval(id);
   }, []);
 
   return (
     <div className="overview-hero">
-      <div className="overview-hero__bg-stack" aria-hidden="true">
-        {HERO_BACKGROUNDS.map((src, index) => {
-          let slideClass = "overview-hero__bg-slide";
-          if (index === activeIndex) slideClass += " overview-hero__bg-slide--active";
-          else if (index === prevIndex) slideClass += " overview-hero__bg-slide--leaving";
-
-          return <img key={src} src={src} alt="" className={slideClass} />;
-        })}
+      <div className="overview-hero__map" aria-hidden="true">
+        <svg viewBox="0 0 260 200" preserveAspectRatio="xMidYMid slice">
+          {MAP_DOTS.map((d, i) => (
+            <circle key={i} cx={d.x} cy={d.y} r="1.4" className="overview-hero__map-dot" />
+          ))}
+          {MAP_HOTSPOTS.map((h, i) => (
+            <g key={i}>
+              <line x1={h.x} y1={h.y} x2={130} y2={100} className="overview-hero__map-line" />
+              <circle cx={h.x} cy={h.y} r="3" className="overview-hero__map-hotspot" />
+            </g>
+          ))}
+        </svg>
       </div>
 
-      <div className="overview-hero__scrim" aria-hidden="true" />
+      <div className="overview-hero__glow" aria-hidden="true" />
 
-      <div className="overview-hero__logo-wrap">
-        <img src={mgLogo} alt="MG Motor" className="overview-hero__logo" />
+      <div className="overview-hero__car-wrap" aria-hidden="true">
+        {HERO_CAR_CUTOUTS.map((src, i) => (
+          <img
+            key={src}
+            src={src}
+            alt=""
+            className={
+              "overview-hero__car" + (i === activeIdx ? " overview-hero__car--active" : "")
+            }
+          />
+        ))}
       </div>
 
       <div className="overview-hero__content">
-        <span className="overview-hero__eyebrow overview-hero__text-in" style={{ animationDelay: "0ms" }}>
-          {eyebrow}
-        </span>
-        <h2 className="overview-hero__title overview-hero__text-in" style={{ animationDelay: "90ms" }}>
-          {title}
-        </h2>
-        <p className="overview-hero__subtitle overview-hero__text-in" style={{ animationDelay: "180ms" }}>
-          {subtitle}
-        </p>
+        <div className="overview-hero__text-in">
+          <span className="overview-hero__eyebrow">
+            {eyebrow}
+            <span className="overview-hero__eyebrow-rule" aria-hidden="true" />
+          </span>
+
+          <h1 className="overview-hero__title">
+            <span className="overview-hero__title-line">{title}</span>
+            {titleAccent && (
+              <span className="overview-hero__title-line overview-hero__title-line--accent">
+                {titleAccent}
+              </span>
+            )}
+          </h1>
+
+          <p className="overview-hero__subtitle">{subtitle}</p>
+
+          {stats.length > 0 && (
+            <div className="overview-hero__stats">
+              {stats.map((s) => (
+                <div className="overview-hero__stat" key={s.label}>
+                  <span className={`overview-hero__stat-icon overview-hero__stat-icon--${s.tone || "neutral"}`}>
+                    <Icon name={s.icon} size={16} />
+                  </span>
+                  <span className="overview-hero__stat-text">
+                    <strong>{s.value}</strong>
+                    <span>{s.label}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <img src={mgLogo} alt="MG Motor" className="overview-hero__logo" />
+
+      <div className="overview-hero__dots" role="tablist" aria-label="Hero slide">
+        {HERO_CAR_CUTOUTS.map((_, i) => (
+          <span
+            key={i}
+            className={"overview-hero__dot" + (i === activeIdx ? " overview-hero__dot--active" : "")}
+            role="tab"
+            aria-selected={i === activeIdx}
+          />
+        ))}
       </div>
     </div>
   );
 }
-
-
 
 /* ------------------------------------------------------------------ */
 /* useCountUp — lightweight number animation for KPI values.          */
@@ -973,39 +1042,122 @@ function PipelineStageBar({ segments, total }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* AIAssistantPanel — floating button + slide panel. UI ONLY: replies */
-/* are stubbed locally. Wire `handleSend` to a real endpoint later    */
-/* (see comment inline) to go live.                                   */
-/* ------------------------------------------------------------------ */
+const ADMIN_AI_SUGGESTIONS = [
+  "Top performing dealer",
+  "Leads for [dealer name]",
+  "How is [dealer name] performing?",
+  "Details on lead [customer name]",
+  "Network lead summary",
+  "Dealers in [region]",
+];
 
-const AI_SUGGESTIONS = [
-  "Show today's leads",
-  "Dealer performance",
-  "Sync status",
-  "Lead summary",
-  "Pending follow-ups",
-  "Top dealer",
+const DEALER_AI_SUGGESTIONS = [
+  "Show my recent leads",
+  "Details on [customer name]",
+  "What does 'delivered' mean?",
+  "How often does data sync?",
+  "My pending leads",
+  "How is a lead marked lost?",
 ];
 
 function AIAssistantPanel({ isDealer }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
 
-  function handleSend(text) {
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const audioPlayerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+
+  const busy = sending || recording || transcribing;
+
+  useEffect(() => {
+  messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, sending, transcribing]);
+
+  function historyForApi() {
+    return messages.map((m) => ({ role: m.role, text: m.text }));
+  }
+
+  async function handleSend(text) {
     const prompt = (text ?? input).trim();
-    if (!prompt) return;
+    if (!prompt || busy) return;
+
+    const priorHistory = historyForApi();
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     setInput("");
-    // TODO: replace this stub with a real call, e.g.
-    //   const reply = await aiAssistantService.ask(prompt);
-    setTimeout(() => {
+    setSending(true);
+    try {
+      const { reply } = await aiAssistantService.ask(prompt, priorHistory);
+      setMessages((m) => [...m, { role: "assistant", text: reply }]);
+    } catch (err) {
       setMessages((m) => [...m, {
         role: "assistant",
-        text: "AI Assistant integration is coming soon — this panel is UI-ready and just needs a backend endpoint wired up here.",
+        text: err?.response?.data?.error || "Sorry, I couldn't reach the assistant just now.",
       }]);
-    }, 500);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = ["audio/webm", "audio/mp4", "audio/ogg"].find(
+        (t) => window.MediaRecorder?.isTypeSupported?.(t)
+      );
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        await handleVoiceMessage(blob);
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch (_) {
+      setMessages((m) => [...m, {
+        role: "assistant",
+        text: "I need microphone access to hear you — please allow it and try again.",
+      }]);
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  }
+
+  async function handleVoiceMessage(blob) {
+    const priorHistory = historyForApi();
+    setTranscribing(true);
+    try {
+      const { transcript, reply, audio } = await aiAssistantService.askByVoice(blob, priorHistory);
+      if (transcript) setMessages((m) => [...m, { role: "user", text: transcript }]);
+      setMessages((m) => [...m, { role: "assistant", text: reply }]);
+      if (audio && audioPlayerRef.current) {
+        audioPlayerRef.current.src = `data:audio/wav;base64,${audio}`;
+        audioPlayerRef.current.play().catch(() => {});
+      }
+    } catch (err) {
+      setMessages((m) => [...m, {
+        role: "assistant",
+        text: err?.response?.data?.error || "Sorry, I couldn't process that recording.",
+      }]);
+    } finally {
+      setTranscribing(false);
+    }
   }
 
   return (
@@ -1037,12 +1189,23 @@ function AIAssistantPanel({ isDealer }) {
           <Icon name="search" size={15} />
           <input
             type="text"
-            placeholder="Ask about leads, dealers, syncs…"
+            placeholder={recording ? "Listening…" : "Ask about leads, dealers, syncs…"}
             value={input}
+            disabled={recording || transcribing}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
           />
-          <button type="button" onClick={() => handleSend()} aria-label="Send">
+          <button
+            type="button"
+            className={`ai-panel__mic${recording ? " ai-panel__mic--recording" : ""}`}
+            onClick={recording ? stopRecording : startRecording}
+            disabled={sending || transcribing}
+            aria-pressed={recording}
+            aria-label={recording ? "Stop recording" : "Ask by voice"}
+          >
+            <Icon name={recording ? "square" : "mic"} size={15} />
+          </button>
+          <button type="button" onClick={() => handleSend()} disabled={busy} aria-label="Send">
             <Icon name="send" size={15} />
           </button>
         </div>
@@ -1058,21 +1221,32 @@ function AIAssistantPanel({ isDealer }) {
               {messages.map((m, i) => (
                 <div key={i} className={`ai-msg ai-msg--${m.role}`}>{m.text}</div>
               ))}
+              {(sending || transcribing) && (
+                <div className="ai-msg ai-msg--assistant ai-msg--typing">
+                  <span className="ai-typing-dot" />
+                  <span className="ai-typing-dot" />
+                  <span className="ai-typing-dot" />
+                </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
           )}
         </div>
 
         <div className="ai-panel__suggestions">
-          {AI_SUGGESTIONS.map((s) => (
-            <button type="button" key={s} className="ai-chip" onClick={() => handleSend(s)}>
+          {(isDealer ? DEALER_AI_SUGGESTIONS : ADMIN_AI_SUGGESTIONS).map((s) => (
+            <button type="button" key={s} className="ai-chip" onClick={() => handleSend(s)} disabled={busy}>
               {s}
             </button>
           ))}
         </div>
+
+        <audio ref={audioPlayerRef} hidden />
       </div>
     </>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Dummy data helpers — STILL DUMMY, clearly isolated so they're      */
@@ -1132,11 +1306,15 @@ function DealerOverview({ summary, openDrawer }) {
   return (
     <div className="overview">
       <OverviewHero
-        bg={skyBlueMgCarBg}
-        car={mgCarPng1}
         eyebrow="Dealer portal"
-        title="Your leads, at a glance"
-        subtitle={`${summary.total || 0} leads in your pipeline · ${conversionPct}% delivered so far`}
+        title="Your leads,"
+        titleAccent="at a glance"
+        subtitle={`${summary.total || 0} leads in your pipeline`}
+        stats={[
+          { icon: "car", value: summary.total || 0, label: "Total leads", tone: "danger" },
+          { icon: "check", value: summary.delivered || 0, label: "Delivered", tone: "accent" },
+          { icon: "clock", value: summary.pending || 0, label: "Pending", tone: "success" },
+        ]}
       />
 
       <div className="overview__kpis">
@@ -1292,11 +1470,15 @@ function AdminOverview({ data, openDrawer }) {
   return (
     <div className="overview">
       <OverviewHero
-        bg={blueMgCarBg}
-        car={mgCarPng2}
         eyebrow="Network overview"
-        title="MG Motor Lead Exchange"
+        title="MG Motor"
+        titleAccent="Lead Exchange"
         subtitle={`${totalDealers} dealers · ${totalLeads} leads across the network`}
+        stats={[
+          { icon: "building", value: totalDealers, label: "Dealers", tone: "danger" },
+          { icon: "car", value: totalLeads, label: "Total leads", tone: "accent" },
+          { icon: "users", value: activeDealers, label: "Active today", tone: "success" },
+        ]}
       />
 
       <div className="overview__kpis">

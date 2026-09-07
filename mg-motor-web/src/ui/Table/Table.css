@@ -1,5 +1,9 @@
 /* =========================================================
    TABLE
+   Flat, hairline-divided rows with a single accent moment:
+   a brand-red bar that sweeps in from the left edge on
+   hover/active, echoing the sidebar's active-nav treatment
+   so the table reads as part of the same system.
    ========================================================= */
 
 .table-wrapper {
@@ -13,20 +17,25 @@
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   padding: var(--space-3) var(--space-4);
   white-space: nowrap;
   text-align: left;
-  font-size: var(--fs-xs);
+  font-size: 11px;
   font-weight: var(--fw-semibold);
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: var(--tracking-wide);
   background-color: var(--color-surface-alt);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-strong);
 }
 
 .table thead th:first-child {
@@ -38,10 +47,11 @@
 }
 
 .table tbody td {
-  padding: var(--space-3) var(--space-4);
+  position: relative;
+  padding: var(--space-4);
   font-size: var(--fs-sm);
   color: var(--color-text-primary);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-subtle);
   vertical-align: middle;
 }
 
@@ -51,6 +61,20 @@
 
 .table tbody tr {
   transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+/* Accent bar lives on the first cell of every row, collapsed to
+   zero width at rest so it costs nothing visually until needed. */
+.table tbody td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 0;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: var(--color-primary);
+  transition: width var(--transition-fast) var(--ease-premium);
 }
 
 .table tbody tr:hover {
@@ -65,75 +89,8 @@
   background-color: var(--color-primary-soft);
 }
 
-.table__row--clickable:active {
-  background-color: var(--color-primary-soft-strong);
-}
-
-/* =========================================================
-   TABLE
-   ========================================================= */
-
-.table-wrapper {
-  width: 100%;
-  overflow-x: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-bg-elevated);
-  box-shadow: var(--shadow-xs);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.table thead th {
-  padding: var(--space-3) var(--space-4);
-  white-space: nowrap;
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-wide);
-  background-color: var(--color-surface-alt);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.table thead th:first-child {
-  border-top-left-radius: var(--radius-lg);
-}
-
-.table thead th:last-child {
-  border-top-right-radius: var(--radius-lg);
-}
-
-.table tbody td {
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--fs-sm);
-  color: var(--color-text-primary);
-  border-bottom: 1px solid var(--color-border);
-  vertical-align: middle;
-}
-
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-
-.table tbody tr {
-  transition: background-color var(--transition-fast) var(--ease-premium);
-}
-
-.table tbody tr:hover {
-  background-color: var(--color-surface-alt);
-}
-
-.table__row--clickable {
-  cursor: pointer;
-}
-
-.table__row--clickable:hover {
-  background-color: var(--color-primary-soft);
+.table__row--clickable:hover td:first-child::before {
+  width: 3px;
 }
 
 .table__row--clickable:active {
@@ -147,16 +104,16 @@
    ========================================================= */
 
 .table__row--skeleton td {
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4);
 }
 
 .table__row--skeleton:last-child td {
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .table__skeleton-bar {
   display: block;
-  height: 14px;
+  height: 13px;
   border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
@@ -165,7 +122,7 @@
     var(--color-surface-alt) 75%
   );
   background-size: 200% 100%;
-  animation: table-skeleton-shimmer 1.4s ease-in-out infinite;
+  animation: table-skeleton-shimmer 1.5s ease-in-out infinite;
 }
 
 @keyframes table-skeleton-shimmer {
@@ -182,4 +139,10 @@
     animation: none;
     background: var(--color-surface-alt);
   }
+
+  .table tbody tr,
+  .table tbody td:first-child::before {
+    transition: none;
+  }
 }
+

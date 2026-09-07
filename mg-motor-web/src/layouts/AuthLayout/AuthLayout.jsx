@@ -1,119 +1,67 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import "./AuthLayout.css";
 
-import car1 from "../../assets/images/mgcar1.avif";
-import car2 from "../../assets/images/mgcar2.jpeg";
-import car3 from "../../assets/images/mgcar3.jpg";
-import car4 from "../../assets/images/mgcar4.webp";
+import mgLogo from "../../assets/images/mg-logo-single.png";
+import banner1 from "../../assets/banners/bgbanner1.jpg";
+import banner2 from "../../assets/banners/bgbanner2.jpg";
+import banner3 from "../../assets/banners/bgbanner3.jpg";
+import banner4 from "../../assets/banners/bgbanner4.jpg";
+import banner5 from "../../assets/banners/bgbanner5.jpg";
+import banner6 from "../../assets/banners/bgbanner6.jpg";
+import banner7 from "../../assets/banners/bgbanner7.jpg";
 
-const SLIDES = [car1, car2, car3, car4];
-const SLIDE_DURATION = 6000;
+const SLIDES = [banner1, banner2, banner3, banner4, banner5, banner6, banner7];
+const SLIDE_DURATION = 7000;
 
-// Each entry is a 3-line headline. They type in, hold, then backspace
-// out before the next one starts — loops forever.
-const HEADLINE_SETS = [
-  ["EVERY LEAD.", "EVERY DEALER.", "ONE ENGINE."],
-  ["BUILT FOR SPEED.", "TUNED FOR SCALE.", "MADE FOR MG."],
-  ["ONE PLATFORM.", "EVERY MARKET.", "ZERO DELAY."],
-  ["DATA IN DRIVE.", "LEADS IN SYNC.", "DEALS IN MOTION."],
+const FEATURES = [
+  {
+    title: "Lead Exchange",
+    desc: "Two-way. Faster.",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 0 1 4-4h14" />
+        <path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
+      </svg>
+    ),
+  },
+  {
+    title: "Dealer Connectivity",
+    desc: "More Possibilities.",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
+    title: "Business Growth",
+    desc: "Together We Grow.",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" />
+      </svg>
+    ),
+  },
 ];
-
-const TYPE_START_DELAY_MS = 300;
-const CHAR_MS = 55;
-const ERASE_CHAR_MS = 28;
-const LINE_PAUSE_MS = 200;
-const HOLD_MS = 2200;
-const SET_PAUSE_MS = 400;
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function AuthLayout() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [hasEntered, setHasEntered] = useState(false);
-  const [typedLines, setTypedLines] = useState(["", "", ""]);
-  const [activeLineIndex, setActiveLineIndex] = useState(-1);
-  const [introDone, setIntroDone] = useState(false);
-  const reducedMotionRef = useRef(false);
 
   useEffect(() => {
-    reducedMotionRef.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const raf = requestAnimationFrame(() => setHasEntered(true));
     return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
-    if (reducedMotionRef.current) return undefined;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return undefined;
     const timer = setInterval(() => {
       setActiveIndex((prev) => (prev + 1) % SLIDES.length);
     }, SLIDE_DURATION);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!hasEntered) return undefined;
-
-    if (reducedMotionRef.current) {
-      setTypedLines(HEADLINE_SETS[0]);
-      setIntroDone(true);
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      await wait(TYPE_START_DELAY_MS);
-      let setIndex = 0;
-
-      while (!cancelled) {
-        const lines = HEADLINE_SETS[setIndex % HEADLINE_SETS.length];
-
-        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-          if (cancelled) return;
-          setActiveLineIndex(lineIndex);
-          const line = lines[lineIndex];
-          for (let charCount = 1; charCount <= line.length; charCount += 1) {
-            if (cancelled) return;
-            await wait(CHAR_MS);
-            setTypedLines((prev) => {
-              const next = [...prev];
-              next[lineIndex] = line.slice(0, charCount);
-              return next;
-            });
-          }
-          await wait(LINE_PAUSE_MS);
-        }
-        if (cancelled) return;
-
-        setIntroDone(true);
-        setActiveLineIndex(lines.length - 1);
-        await wait(HOLD_MS);
-
-        for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
-          if (cancelled) return;
-          setActiveLineIndex(lineIndex);
-          const line = lines[lineIndex];
-          for (let charCount = line.length - 1; charCount >= 0; charCount -= 1) {
-            if (cancelled) return;
-            await wait(ERASE_CHAR_MS);
-            setTypedLines((prev) => {
-              const next = [...prev];
-              next[lineIndex] = line.slice(0, charCount);
-              return next;
-            });
-          }
-        }
-        if (cancelled) return;
-
-        await wait(SET_PAUSE_MS);
-        setIndex += 1;
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [hasEntered]);
 
   return (
     <div className="auth-layout">
@@ -124,68 +72,58 @@ export default function AuthLayout() {
             className={`auth-layout__slide ${
               index === activeIndex && hasEntered ? "auth-layout__slide--active" : ""
             }`}
-            style={{ backgroundImage: `url(${src})` }}
+            style={{ backgroundImage: `url(${src})`, animationDuration: `${SLIDE_DURATION}ms` }}
             aria-hidden={index !== activeIndex}
           />
         ))}
 
-        {/* Layered scrim + a soft MG-red glow for depth, purely decorative */}
         <div className="auth-layout__scrim" />
-        <div className="auth-layout__glow" aria-hidden="true" />
-        <div className="auth-layout__grain" aria-hidden="true" />
 
         <div className={`auth-layout__visual-content ${hasEntered ? "auth-layout__visual-content--entered" : ""}`}>
           <div className="auth-layout__brandrow">
-            <span className="auth-layout__mark" aria-hidden="true" />
-            <span className="auth-layout__eyebrow">MG Dealer Network</span>
+            <img src={mgLogo} alt="MG Motor" className="auth-layout__logo" />
+            <div className="auth-layout__wordmark">
+              <span>MG MOTOR</span>
+              <span>DEALER NETWORK</span>
+            </div>
           </div>
 
-          <h1 className="auth-layout__headline">
-            <span className="sr-only">{HEADLINE_SETS[0].join(" ")}</span>
-            <span aria-hidden="true">
-              {typedLines.map((text, index) => (
-                <span className="auth-layout__headline-line" key={index}>
-                  {text}
-                  {activeLineIndex === index && <span className="auth-layout__cursor" />}
-                </span>
-              ))}
-            </span>
-          </h1>
+          <div className="auth-layout__copy">
+            <p className="auth-layout__eyebrow">DRIVE TOGETHER</p>
+            <h1 className="auth-layout__headline">
+              Stronger<br /><span className="auth-layout__headline-accent">Together</span>
+            </h1>
+            <span className="auth-layout__accent-line" />
+            <p className="auth-layout__quote">
+              Manage leads. Exchange opportunities. Build a stronger dealer network.
+            </p>
+          </div>
 
-          <span
-            className={`auth-layout__accent-line ${introDone ? "auth-layout__accent-line--drawn" : ""}`}
-          />
-
-          <p className={`auth-layout__quote ${introDone ? "auth-layout__quote--visible" : ""}`}>
-            Connecting MG dealers and the OEM in real time — every lead tracked from delivery to outcome.
-          </p>
-
-          <div
-            className={`auth-layout__dots ${introDone ? "auth-layout__dots--visible" : ""}`}
-            role="presentation"
-          >
-            {SLIDES.map((src, index) => (
-              <span
-                key={src}
-                className={`auth-layout__dot ${index === activeIndex ? "auth-layout__dot--active" : ""}`}
-              >
-                {index === activeIndex && !reducedMotionRef.current && (
-                  <span
-                    key={activeIndex}
-                    className="auth-layout__dot-fill"
-                    style={{ animationDuration: `${SLIDE_DURATION}ms` }}
-                  />
-                )}
-              </span>
+          <div className="auth-layout__features">
+            {FEATURES.map((feature) => (
+              <div className="auth-layout__feature" key={feature.title}>
+                <span className="auth-layout__feature-icon">{feature.icon}</span>
+                <span className="auth-layout__feature-title">{feature.title}</span>
+                <span className="auth-layout__feature-desc">{feature.desc}</span>
+              </div>
             ))}
           </div>
+        </div>
+
+        <div className="auth-layout__footer">
+          <span className="auth-layout__footer-mark" aria-hidden="true" />
+          <span>DRIVEN BY PEOPLE. POWERED BY PARTNERSHIP.</span>
         </div>
       </div>
 
       <div className="auth-layout__panel">
+        <div className="auth-layout__panel-eyebrow">
+          <span aria-hidden="true">→</span> MG Motor Dealer Network
+        </div>
         <div className="auth-layout__panel-inner">
           <Outlet />
         </div>
+        <div className="auth-layout__panel-footer">/// MG MORRIS GARAGES ///</div>
       </div>
     </div>
   );

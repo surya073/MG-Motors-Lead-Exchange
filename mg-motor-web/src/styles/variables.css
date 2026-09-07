@@ -4,6 +4,8 @@
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Google+Sans+Flex:opsz,wght@6..144,1..1000&family=Gugi&family=Manrope:wght@200..800&family=Oswald:wght@200..700&family=Outfit:wght@100..900&display=swap');
+
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Google+Sans+Flex:opsz,wght@6..144,1..1000&family=Gugi&family=Oswald:wght@200..700&family=Outfit:wght@100..900&display=swap');
 
 :root {
@@ -128,7 +130,7 @@
   --shadow-lg: 0 16px 40px rgba(16, 17, 20, 0.18), 0 4px 12px rgba(16, 17, 20, 0.08);
   --shadow-glow-primary: 0 8px 24px rgba(208, 2, 27, 0.22);
 
-  /* Reusable hover-lift shadow, distinct from the resting --shadow-soft
+  /* Reusable hover-lift shadow, distinct from the resting --shadow-softfam
      so a card's hover transition always reads as "lifting further",
      not just "swapping to the next shadow in the scale". */
   --shadow-hover: 0 10px 28px rgba(16, 17, 20, 0.14), 0 3px 8px rgba(16, 17, 20, 0.08);
@@ -163,7 +165,9 @@
   --space-8: 40px;
 
   /* ---------- Type ---------- */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; */
+    --font-sans: "Manrope", sans-serif;
+
   --font-mono: "SF Mono", "Roboto Mono", "Menlo", monospace;
   --tracking-wide: 0.04em;
   --fs-xs: 12px;
@@ -282,7 +286,9 @@ body {
   -webkit-font-smoothing: antialiased;
   font-size: var(--fs-md);
   line-height: var(--lh-normal);
-  transition: background-color var(--transition-base) var(--ease-premium),
+
+  transition:
+    background-color var(--transition-base) var(--ease-premium),
     color var(--transition-base) var(--ease-premium);
 }
 

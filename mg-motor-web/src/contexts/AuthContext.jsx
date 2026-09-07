@@ -8,6 +8,7 @@ import {
   CATALYST_ROLE_ID_MAP,
   CATALYST_ROLE_NAME_MAP,
 } from "../constants/auth.constants";
+import { ROUTES, APP_BASE_PATH } from "../constants/routes.constants";
 import { useAlerts } from "../ui/Alerts/Alerts";
 
 /**
@@ -55,9 +56,18 @@ export function AuthProvider({ children }) {
   // backend stays down — only alert on the transition into a failure state.
   const wasAuthenticated = useRef(false);
 
+  // Set the instant logout() is called. Any validateSession() call that
+  // was already in flight (e.g. an interval tick that fired a moment
+  // before the click, or one queued right after) checks this before
+  // acting on its result — otherwise a still-valid-on-Catalyst's-end
+  // session can silently re-authenticate the user right after logout.
+  const isLoggingOut = useRef(false);
+
   const validateSession = useCallback(async () => {
+    if (isLoggingOut.current) return;
     try {
       const profile = await authService.getCurrentSession();
+      if (isLoggingOut.current) return; // logout started while this was in flight
       console.log('[AUTH-DEBUG]', new Date().toISOString(), 'profile:', profile);
 
       if (profile) {
@@ -86,6 +96,7 @@ export function AuthProvider({ children }) {
         wasAuthenticated.current = false;
       }
     } catch (err) {
+      if (isLoggingOut.current) return;
       console.log('[AUTH-DEBUG]', new Date().toISOString(), 'validateSession threw:', err);
       if (wasAuthenticated.current) {
         showAlert("error", "We couldn't verify your session. Please log in again.", {
@@ -118,15 +129,27 @@ export function AuthProvider({ children }) {
     });
   }, [showAlert]);
 
-  const logout = useCallback(
-    (redirectUrl = "/login") => {
-      authService.signOut(redirectUrl);
-      setUser(null);
-      setStatus(SESSION_STATUS.UNAUTHENTICATED);
-      wasAuthenticated.current = false;
-    },
-    []
-  );
+  const logout = useCallback((targetPath = ROUTES.LOGIN) => {
+    isLoggingOut.current = true;
+
+    // Stop background revalidation immediately — this is the piece that
+    // was missing before, and it's what let a stale "still authenticated"
+    // response from Catalyst silently undo the logout.
+    if (revalidateTimer.current) {
+      clearInterval(revalidateTimer.current);
+      revalidateTimer.current = null;
+    }
+
+    setUser(null);
+    setStatus(SESSION_STATUS.UNAUTHENTICATED);
+    wasAuthenticated.current = false;
+
+    // Same fully-qualified hash-route shape LoginPage uses for sign-in's
+    // service_url. A bare "/login" misses the HashRouter entirely and
+    // can fall back to the app's default route on some static hosts.
+    const redirectUrl = `${window.location.origin}${APP_BASE_PATH}/#${targetPath}`;
+    authService.signOut(redirectUrl);
+  }, []);
 
   const value = {
     status,

@@ -2,58 +2,54 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  align-items: center;
+  text-align: center;
+  gap: var(--space-4);
+}
+
+.login-page__logo {
+  height: 64px;
+  width: auto;
+  margin-bottom: var(--space-2);
+  filter: invert(1) brightness(1.05);
+  opacity: 0;
+  transform: translateY(10px);
+  animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
 }
 
 .login-page__brand {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-1);
   opacity: 0;
   transform: translateY(10px);
   animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
-}
-
-.login-page__eyebrow {
-  margin-top: var(--space-3);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-  color: #e4002b;
+  animation-delay: 60ms;
 }
 
 .login-page__title {
   font-size: 26px;
   font-weight: var(--fw-semibold);
-  color: var(--color-text-primary);
-  letter-spacing: -0.01em;
+  color: #ffffff;
 }
 
 .login-page__subtitle {
   font-size: var(--fs-sm);
   line-height: 1.5;
-  color: var(--color-text-secondary);
-  max-width: 360px;
+  color: rgba(255, 255, 255, 0.55);
+  max-width: 320px;
 }
 
-/* No card, no border, no shadow — the embedded form sits directly in
-   the panel so it reads as part of the app, not a widget dropped on
-   top of it. Sizing is intentionally fluid: the Catalyst iframe reports
-   its own content height, so we give it room without pinning a fixed
-   min-height that produces empty space or a scrollbar. */
 .login-page__form-area {
   position: relative;
   width: 100%;
-  min-height: 520px;
+  min-height: 320px;
   opacity: 0;
   transform: translateY(10px);
   animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
-  animation-delay: 90ms;
+  animation-delay: 120ms;
 }
-
 
 .login-page__loading {
   position: absolute;
@@ -63,63 +59,95 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  background-color: var(--color-bg);
   font-size: var(--fs-sm);
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.4);
   z-index: 1;
 }
 
 .login-page__spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid var(--color-border);
+  border: 2px solid rgba(255, 255, 255, 0.15);
   border-top-color: #e4002b;
   border-radius: 50%;
   animation: login-page-spin 0.8s linear infinite;
 }
 
 @keyframes login-page-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes login-page-rise-in {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .login-page__iframe-slot {
   width: 100%;
-  min-height: 420px;
-  /* Removed overflow: hidden — it was clipping the iframe whenever its
-     actual rendered height exceeded 420px, producing an internal
-     scrollbar and a cut-off submit button. The slot should grow to fit
-     whatever height the injected iframe actually needs. */
+  min-height: 320px;
 }
 
 .login-page__iframe-slot iframe {
   width: 100% !important;
   height: 100% !important;
-  min-height: 520px; /* Catalyst's own .signin_box content is comfortably taller than 420px once the email field + button + footnote all render */
+  min-height: 320px;
   border: none;
   display: block;
 }
 
-.login-page__footnote {
-  font-size: 12px;
-  color: var(--color-text-muted);
+.login-page__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
   opacity: 0;
   animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
-  animation-delay: 160ms;
+  animation-delay: 180ms;
+}
+
+.login-page__divider span:not(.login-page__divider-text) {
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.login-page__divider-text {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.login-page__contact-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 48px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  opacity: 0;
+  animation: login-page-rise-in 0.6s var(--ease-premium) forwards;
+  animation-delay: 220ms;
+}
+
+.login-page__contact-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .login-page__logo,
   .login-page__brand,
   .login-page__form-area,
-  .login-page__footnote {
+  .login-page__divider,
+  .login-page__contact-btn {
     animation: none;
     opacity: 1;
     transform: none;
@@ -127,12 +155,5 @@
 }
 
 @media (max-width: 480px) {
-  .login-page__title {
-    font-size: 22px;
-  }
-
-  .login-page__form-area,
-  .login-page__iframe-slot {
-    min-height: 480px;
-  }
+  .login-page__title { font-size: 22px; }
 }

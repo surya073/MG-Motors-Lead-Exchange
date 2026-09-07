@@ -7,6 +7,7 @@ import ErrorPage from "../pages/ErrorPage/ErrorPage";
 import NotFoundPage from "../pages/NotFoundPage/NotFoundPage";
 import LoginPage from "../pages/Login/LoginPage";
 import DealerListPage from "../pages/Dealers/DealerListPage";
+import DealerCRMConfig from "../pages/Dealers/DealerCRMConfig";
 import LeadExchangePage from "../pages/LeadExchange/LeadExchangePage";
 import MyLeadsPage from "../pages/MyLeads/MyLeadsPage";
 import SyncLogsPage from "../pages/SyncLogs/SyncLogsPage";
@@ -17,27 +18,6 @@ import UserManagementPage from "../pages/UserManagement/UserManagementPage";
 import OnDemandDashboard from "../pages/OnDemandDashboard/OnDemandDashboard";
 
 import Overview from "../pages/Overview/Overview";
-
-/**
- * AppRoutes.jsx
- * -----------------------------------------------------------------------
- * Role split backed by real Catalyst roles. Super Admin and Admin share
- * the full management tree (Dealers, Lead Exchange — network-wide data
- * via /admin/*); Dealer gets a restricted tree (My Leads — scoped to
- * their own dealer_code via /dealer/leads/*, resolved server-side).
- *
- * User Management is Super Admin-only — inviting/removing Admin users
- * and controlling their dealer-management permissions is a higher
- * privilege tier than Admin itself, so it does NOT share the
- * SUPER_ADMIN + ADMIN block above like Dealers/Lead Exchange/Logs do.
- *
- * Settings is shared across all three roles (theme, password reset,
- * logout are role-agnostic) — no RequireRole wrapper needed.
- *
- * On Demand Dashboard is protected (must be logged in) but intentionally
- * sits OUTSIDE MainLayout's children — it's a sibling of the MainLayout
- * route object below, so it renders with no Sidebar/Navbar around it.
- */
 
 const router = createHashRouter([
   {
@@ -62,6 +42,7 @@ const router = createHashRouter([
                 element: <RequireRole allowedRoles={[APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN]} />,
                 children: [
                   { path: ROUTES.DEALERS, element: <DealerListPage /> },
+                  { path: ROUTES.DEALER_CRM_CONFIG, element: <DealerCRMConfig /> },
                   { path: ROUTES.LEAD_EXCHANGE, element: <LeadExchangePage /> },
                   { path: ROUTES.LOGS, element: <SyncLogsPage /> },
                 ],
@@ -83,9 +64,6 @@ const router = createHashRouter([
             ],
           },
 
-          // Sibling of the MainLayout route object — still requires auth via
-          // ProtectedRoute above, but does NOT render inside MainLayout, so
-          // no Sidebar/Navbar wraps it.
           { path: ROUTES.ON_DEMAND_DASHBOARD, element: <OnDemandDashboard /> },
         ],
       },

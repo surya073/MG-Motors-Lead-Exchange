@@ -329,6 +329,14 @@ export function InfoCircleIcon(props) {
   );
 }
 
+export function ChevronRightIcon(props) {
+  return (
+    <Icon {...props}>
+      <polyline points="9 18 15 12 9 6" />
+    </Icon>
+  );
+}
+
 
 export const NAV_ICONS = {
   dashboard: DashboardIcon,

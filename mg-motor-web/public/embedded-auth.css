@@ -58,7 +58,6 @@
 		url("https://webfonts.zohowebstatic.com/latoblack/font.svg#Lato-Black") format("svg");
 }
 
-
 @font-face {
 	font-family: "signinicon";
 	src: url(/images/signinicon.eot);
@@ -72,10 +71,8 @@
 	font-display: block;
 }
 
-
 [class^="icon-"],
 [class*=" icon-"] {
-	/* use !important to prevent issues with browser extensions that change fonts */
 	font-family: 'signinicon' !important;
 	speak: never;
 	font-style: normal;
@@ -83,60 +80,39 @@
 	font-variant: normal;
 	text-transform: none;
 	line-height: 1;
-
-	/* Better Font Rendering =========== */
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
 }
 
-.icon-hide:before {
-	content: "\e907";
-}
-
-.icon-show:before {
-	content: "\e914";
-}
-
-.icon-backarrow:before {
-	content: "\e900";
-}
-
-.icon-backup:before {
-	content: "\e901";
-}
-
-.icon-support:before {
-	content: "\e915";
-}
+.icon-hide:before { content: "\e907"; }
+.icon-show:before { content: "\e914"; }
+.icon-backarrow:before { content: "\e900"; }
+.icon-backup:before { content: "\e901"; }
+.icon-support:before { content: "\e915"; }
 
 body {
 	font-family: 'Roboto', sans-serif;
 	margin: 0px;
+	color: #ffffff;
 }
 
+/* Background artwork is handled by the app's own AuthLayout panel now —
+   this iframe sits on a transparent dark surface, so Catalyst's own
+   bg image is switched off. */
 .bg_one {
-	display: block;
-	position: fixed;
-	top: 0px;
-	left: 0px;
-	height: 100%;
-	width: 100%;
-	background: url('../images/bg.49756b7c711696d95133fa95451f8e13.svg') transparent;
-	background-size: auto 100%;
-	z-index: -1;
+	display: none !important;
 }
 
 .signin_container {
 	display: block;
-	width: 520px;
-	min-height: 520px;
-	background-color: #fff;
-	box-shadow: 0px 2px 30px #ccc6;
-	margin: auto;
+	width: 100% !important;
+	max-width: 440px;
+	min-height: 0 !important;
+	background-color: transparent !important;
+	box-shadow: none !important;
+	margin: 0 !important;
 	position: relative;
 	z-index: 1;
-	margin-top: 7%;
-	overflow: hidden;
 }
 
 .mod_container {
@@ -150,27 +126,29 @@ body {
 	float: left;
 	cursor: pointer;
 	line-height: 20px;
+	color: rgba(255, 255, 255, 0.7);
 }
 
-.signin_box {
-	width: 520px;
-	min-height: 520px;
+.signin_box,
+.rightside_box {
+	width: 100% !important;
+	min-height: 0 !important;
 	height: auto;
-	background: #fff;
+	background: transparent !important;
 	box-sizing: border-box;
-	padding: 50px 50px;
+	padding: 0 !important;
 	border-radius: 2px;
 	transition: all .1s ease-in-out;
-	float: left;
-	overflow-y: auto;
-	display: table-cell;
-	border-right: 2px solid #f1f1f1;
+	float: none !important;
+	overflow: visible !important;
+	display: block !important;
+	border-right: none !important;
 }
 
 .nopassword_message {
 	display: table-cell;
 	font-size: 14px;
-	color: #222222;
+	color: rgba(255, 255, 255, 0.75);
 	letter-spacing: 0px;
 	line-height: 20px;
 	height: auto;
@@ -194,17 +172,23 @@ body {
 
 #forgotpassword {
 	cursor: default;
+	position: static;
 }
 
-#forgotpassword>a {
+#forgotpassword > a {
 	cursor: pointer;
+}
+
+.titlename,
+.service_name {
+	display: none !important;
 }
 
 .text16 {
 	display: block;
 	text-align: center;
 	margin-bottom: 30px;
-	color: #626262;
+	color: rgba(255, 255, 255, 0.6);
 	font-size: 16px;
 	font-weight: 500;
 	text-decoration: none;
@@ -216,20 +200,20 @@ body {
 	height: 12px;
 	width: 12px;
 	display: inline-block;
-	border: 2px solid #ccc;
+	border: 2px solid rgba(255, 255, 255, 0.3);
 	border-radius: 2px;
 	position: relative;
 	top: 1.5px;
 	overflow: hidden;
-	background-color: #fff;
+	background-color: transparent;
 }
 
 .show_hide_password {
 	font-size: 34px;
-	color: #a7a7a7;
+	color: rgba(255, 255, 255, 0.35);
 	position: relative;
-	top: -39px;
-	right: 13px;
+	top: -37px;
+	right: 14px;
 	float: right;
 	cursor: pointer;
 	height: 20px;
@@ -237,7 +221,7 @@ body {
 
 .pass_policy,
 .pass_policy_error {
-	color: #8c8c8c;
+	color: rgba(255, 255, 255, 0.5);
 	font-size: 14px;
 	padding-top: 10px;
 }
@@ -258,15 +242,18 @@ body {
 	width: 16px;
 }
 
-.checkbox_div {
-	display: none;
-	height: 16px;
-	width: auto;
-	margin-bottom: 30px;
+.checkbox_check:checked ~ .checkbox {
+	background-color: #e4002b;
+	border-color: #e4002b;
 }
 
 .checkbox_div {
-	display: block;
+	display: flex !important;
+	align-items: center;
+	justify-content: space-between;
+	height: 16px;
+	width: auto;
+	margin-bottom: 26px;
 }
 
 #terminate_session_form .checkbox_mod {
@@ -295,21 +282,15 @@ body {
 
 .signin_head {
 	display: block;
-	font-size: 24px;
-	font-weight: 500;
-	margin-bottom: 30px;
+	font-family: inherit;
+	font-size: 22px !important;
+	font-weight: 700 !important;
+	color: #ffffff;
+	text-align: center;
+	margin-bottom: 6px !important;
 	line-height: 30px;
+	padding-top: 0 !important;
 	transition: all .1s ease-in-out;
-}
-
-.rightside_box {
-	width: 390px;
-	height: auto;
-	float: right;
-	box-sizing: border-box;
-	padding: 40px;
-	background-color: #fff;
-	display: table-cell;
 }
 
 .service_name,
@@ -317,79 +298,78 @@ body {
 .pass_name {
 	display: block;
 	font-size: 16px;
-	color: #000;
+	color: #ffffff;
 	font-weight: 400;
-}
-
-.titlename {
-	display: block;
-	font-size: 24px;
-	color: #000;
-	font-weight: 400;
-	text-transform: capitalize;
-	width: auto;
-	margin-bottom: 20px;
 }
 
 .extramargin {
 	margin-top: 10px;
 }
 
-.show_hide_password {
-	font-size: 34px;
-	color: #a7a7a7;
-	position: relative;
-	top: -39px;
-	right: 13px;
-	float: right;
-	cursor: pointer;
-	height: 20px;
-}
-
 .textbox_div {
 	display: block;
-	margin-bottom: 30px;
+	margin-bottom: 22px;
 	position: relative;
 }
 
 .textbox_label {
 	display: block;
-	font-size: 14px;
-	color: #626262;
-	padding-bottom: 10px;
+	font-size: 13px;
+	font-weight: 500;
+	color: rgba(255, 255, 255, 0.75);
+	padding-bottom: 8px;
 }
 
 .textbox {
 	display: block;
 	width: 100%;
-	height: 44px;
+	height: 48px;
 	box-sizing: border-box;
-	border-radius: 2px;
-	text-indent: 12px;
-	font-size: 16px;
+	border-radius: 8px;
+	text-indent: 44px;
+	font-size: 15px;
 	outline: none;
-	border: none;
+	color: #ffffff;
 	padding-right: 12px;
-	transition: all .2s ease-in-out;
-	background: #F1F1F1;
-	border: 1px solid #E4E4E4;
+	transition: border-color 0.15s ease, background-color 0.15s ease;
+	background: rgba(255, 255, 255, 0.05);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.textbox::placeholder {
+	color: rgba(255, 255, 255, 0.35);
 }
 
 .textbox:valid {
-	border: 2px solid #F4F6F8;
+	border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.textindent42 {
-	text-indent: 36px;
+.textbox:focus,
+#verify_totp:focus {
+	border-color: #e4002b;
+	background: rgba(255, 255, 255, 0.08);
+	outline: none;
 }
 
-.textindent62 {
-	text-indent: 56px;
+/* Mail / lock glyphs painted onto the two primary fields via
+   background-image — Catalyst's iframe markup can't be touched directly.
+   Verify these ids match what's actually rendered (devtools). */
+#login_id.textbox {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 6l-10 7L2 6'/%3E%3Cpath d='M2 6h20v12H2z'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: 14px center;
 }
 
-.textintent52 {
-	text-indent: 46px;
+input[type="password"].textbox,
+#password.textbox {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: 14px center;
 }
+
+.textindent42 { text-indent: 36px; }
+.textindent62 { text-indent: 56px; }
+.textintent52 { text-indent: 46px; }
 
 ::-webkit-credentials-auto-fill-button {
 	visibility: hidden;
@@ -410,14 +390,15 @@ input[type="number"] {
 .errorborder:focus,
 .textbox.errorborder {
 	border-bottom: 2px solid #ff8484;
+	border-color: #ff8484;
 }
 
 .btn {
 	cursor: pointer;
 	display: block;
 	width: 100%;
-	height: 44px;
-	border-radius: 4px;
+	height: 48px;
+	border-radius: 8px;
 	letter-spacing: .5;
 	font-size: 14px;
 	font-weight: 600;
@@ -425,8 +406,8 @@ input[type="number"] {
 	border: none;
 	margin: auto;
 	text-transform: uppercase;
-	margin-bottom: 30px;
-	transition: all .2s ease-in-out;
+	margin-bottom: 20px;
+	transition: background-color 0.15s ease, transform 0.1s ease;
 }
 
 .signupbtn {
@@ -435,25 +416,45 @@ input[type="number"] {
 }
 
 .blue {
-	box-shadow: 0px 2px 2px #fff;
-	background-color: #159AFF;
+	position: relative;
+	box-shadow: none;
+	background: linear-gradient(180deg, #ea2038, #d1001f);
 	color: #fff;
 }
 
-.grey {
-	background-color: #F3F3F3;
-	color: #3a3a3a;
-	letter-spacing: 0px;
-}
-
-.green {
-	box-shadow: 0px 2px 2px #fff;
-	background-color: #00C573;
-	color: #fff;
+.blue::before {
+	content: "→";
+	margin-right: 8px;
+	font-weight: 700;
 }
 
 .blue:hover {
-	box-shadow: 0px 2px 2px rgba(90, 183, 254, 0.2);
+	background: linear-gradient(180deg, #f2334a, #c40025);
+	box-shadow: none;
+}
+
+.blue:active {
+	transform: translateY(1px);
+}
+
+.blue:focus-visible,
+.textbox:focus-visible,
+#verify_totp:focus-visible {
+	outline: 2px solid #e4002b;
+	outline-offset: 2px;
+}
+
+.grey {
+	background-color: rgba(255, 255, 255, 0.06);
+	color: rgba(255, 255, 255, 0.8);
+	letter-spacing: 0px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.green {
+	box-shadow: none;
+	background-color: #00C573;
+	color: #fff;
 }
 
 .changeloadbtn {
@@ -471,19 +472,14 @@ input[type="number"] {
 	display: inline-block;
 	margin: 9px;
 	border: 3px solid #fff;
-	border-top: 3px solid #5AB7FE;
+	border-top: 3px solid #e4002b;
 	border-radius: 50%;
 	animation: spin .5s linear infinite;
 }
 
 @keyframes spin {
-	0% {
-		transform: rotate(0deg);
-	}
-
-	100% {
-		transform: rotate(360deg);
-	}
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
 }
 
 .hellouser {
@@ -500,18 +496,21 @@ input[type="number"] {
 	text-overflow: ellipsis;
 	padding-right: 10px;
 	float: left;
+	color: #ffffff;
 }
 
 .Notyou {
 	display: inline-block;
 	font-size: 16px;
 	line-height: 24px;
+	color: rgba(255, 255, 255, 0.7);
 }
 
 .signup_text {
 	text-align: center;
 	margin: 20px 0px;
 	font-size: 16px;
+	color: rgba(255, 255, 255, 0.7);
 }
 
 .backbtn {
@@ -536,7 +535,7 @@ input[type="number"] {
 
 #captcha,
 #bcaptcha {
-	background: #fff;
+	background: rgba(255, 255, 255, 0.05);
 	width: 60%;
 	display: inline-block;
 }
@@ -545,7 +544,7 @@ input[type="number"] {
 #bcaptcha_img {
 	width: 40%;
 	float: right;
-	background-color: #FFFFFF;
+	background-color: rgba(255, 255, 255, 0.05);
 	border-left: none;
 }
 
@@ -565,6 +564,7 @@ input[type="number"] {
 	background-size: 50%;
 	display: inline-block;
 	cursor: pointer;
+	filter: invert(1);
 }
 
 #captcha_container {
@@ -572,42 +572,47 @@ input[type="number"] {
 }
 
 .options {
-	display: block;
+	display: table;
 	width: 100%;
 	max-width: 500px;
 	min-height: 80px;
-	padding: 0px 50px;
+	padding: 16px 4px !important;
+	box-sizing: border-box;
 	cursor: pointer;
+	color: #ffffff;
 }
 
 .options:hover {
-	background-color: #F9F9F9;
+	background-color: rgba(255, 255, 255, 0.04);
 }
 
 .option_details {
-	display: inline-block;
+	display: table-cell;
 	height: auto;
-	width: 320px;
-	margin-left: 15px;
+	width: auto;
+	padding-left: 10px;
+	vertical-align: top;
+	box-sizing: border-box;
 }
 
 .option_title {
 	display: block;
 	font-size: 16px;
 	font-weight: 500;
+	color: #ffffff;
 }
 
 .img_option {
 	display: table-cell;
 	height: 24px;
 	width: 24px;
-	color: #499aff;
+	color: #e4002b;
 	font-size: 24px;
 	vertical-align: top;
 }
 
 .errorlabel {
-	color: #E92B2B;
+	color: #ff8484;
 }
 
 .fielderror {
@@ -618,12 +623,16 @@ input[type="number"] {
 
 .fielderror a {
 	text-decoration: none;
-	color: #309FF4;
+	color: #e4002b;
 }
 
-.bluetext {
-	color: #309FF4;
+.bluetext,
+.bluetext_action,
+#forgotpassword a {
+	color: #e4002b !important;
 	cursor: pointer;
+	font-size: 13px;
+	font-weight: 500;
 }
 
 #country_code_select {
@@ -638,14 +647,13 @@ input[type="number"] {
 .select_country_code {
 	width: 50px;
 	height: 40px;
-	display: inline-block;
+	display: none;
 	float: left;
 	position: absolute;
 	line-height: 40px;
 	text-align: center;
 	font-size: 16px;
-	color: black;
-	display: none;
+	color: #ffffff;
 	z-index: 0;
 }
 
@@ -659,7 +667,7 @@ input[type="number"] {
 
 .cc {
 	float: right;
-	color: #AEAEAE;
+	color: rgba(255, 255, 255, 0.5);
 }
 
 .cn {
@@ -667,7 +675,7 @@ input[type="number"] {
 }
 
 .select2-results__option--highlighted {
-	background: #F4F6F8;
+	background: rgba(255, 255, 255, 0.08);
 }
 
 .searchparent {
@@ -681,6 +689,7 @@ input[type="number"] {
 	margin-top: 15px;
 	margin-bottom: 10px;
 	margin-left: 10px;
+	color: rgba(255, 255, 255, 0.6);
 }
 
 .cntrysearch {
@@ -690,7 +699,8 @@ input[type="number"] {
 	font-size: 14px;
 	box-sizing: border-box;
 	padding: 8px 10px;
-	background: #F7F7F7;
+	background: rgba(255, 255, 255, 0.05);
+	color: #ffffff;
 	outline: none;
 	border: none;
 	margin-top: 10px;
@@ -703,6 +713,7 @@ input[type="number"] {
 	padding: 12px 20px;
 	font-size: 14px;
 	line-height: 16px;
+	color: #ffffff;
 }
 
 .select2-search__field {
@@ -710,7 +721,8 @@ input[type="number"] {
 	height: 32px;
 	border: none;
 	outline: none;
-	background: #F7F7F7;
+	background: rgba(255, 255, 255, 0.05);
+	color: #ffffff;
 	border-radius: 2px;
 	margin: 10px 0 0 10px;
 	font-size: 14px;
@@ -720,12 +732,12 @@ input[type="number"] {
 .select2-selection {
 	display: inline-block;
 	outline: none;
-	/* background-color: #F4F6F8; */
 	height: 40px;
 	text-align: center;
 	padding: 10px;
 	box-sizing: border-box;
 	cursor: pointer;
+	color: #ffffff;
 }
 
 .selection {
@@ -734,8 +746,11 @@ input[type="number"] {
 	display: inline-block;
 	white-space: nowrap;
 	overflow: hidden;
-	width: 0px;
+	width: auto;
+	width: -moz-fit-content;
+	width: -webkit-fit-content;
 	height: 43px;
+	margin: auto;
 }
 
 #select2-combobox-results {
@@ -746,13 +761,13 @@ input[type="number"] {
 	width: 400px;
 	margin-top: 10px;
 	margin-bottom: 0px;
-	background: white;
+	background: #16161a;
 }
 
 .select2-container--open {
 	z-index: 10;
-	background: #FFFFFF;
-	box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.13);
+	background: #16161a;
+	box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.4);
 	width: auto;
 	box-sizing: border-box;
 }
@@ -768,14 +783,7 @@ input[type="number"] {
 .select2-results__options {
 	overflow-y: auto;
 	max-height: 200px;
-}
-
-.selection {
-	width: auto;
-	width: -moz-fit-content;
-	width: -webkit-fit-content;
-	margin: auto;
-	display: block;
+	padding-left: 0px;
 }
 
 .select2-search--hide,
@@ -801,18 +809,8 @@ input[type="number"] {
 	display: none;
 }
 
-.errorlabel {
-	color: #E92B2B;
-}
-
-.fielderror {
-	display: none;
-	font-size: 14px;
-	margin-top: 10px;
-}
-
 .field_error {
-	color: #f37272;
+	color: #ff8484;
 	font-size: 14px;
 	padding-top: 10px;
 }
@@ -820,10 +818,12 @@ input[type="number"] {
 #recoverybtn,
 #problemsignin,
 .tryanother {
-	position: absolute;
-	left: 0px;
-	right: 0px;
-	bottom: 40px;
+	display: none;
+	position: initial;
+	bottom: 50px;
+	width: fit-content;
+	margin: 0px auto;
+	cursor: pointer;
 }
 
 .textbox_actions,
@@ -834,28 +834,8 @@ input[type="number"] {
 	height: 20px;
 }
 
-.bluetext_action {
-	display: inline-block;
-	float: left;
-	font-size: 14px;
-	color: #159AFF;
-	font-weight: 500;
-	line-height: 16px;
-	cursor: pointer;
-}
-
-.bluetext_action a {
-	text-decoration: none;
-}
-
 .bluetext_action_right {
 	float: right;
-}
-
-.textbox_actions {
-	display: block;
-	margin-top: 20px;
-	height: 20px;
 }
 
 .Alert,
@@ -867,7 +847,8 @@ input[type="number"] {
 	width: fit-content;
 	width: -moz-fit-content;
 	max-width: 600px;
-	background-color: #032239;
+	background-color: #16161a;
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 6px;
 	position: fixed;
 	top: -100px;
@@ -888,6 +869,7 @@ input[type="number"] {
 	background-size: 60px;
 	margin: 15px;
 	float: left;
+	position: relative;
 }
 
 .tick_icon:after {
@@ -928,20 +910,12 @@ input[type="number"] {
 	background-color: #FFFFFF;
 }
 
-.error_icon:before {
-	transform: rotate(45deg);
-}
-
-.error_icon:after {
-	transform: rotate(-45deg);
-}
-
-.select2-results__options {
-	padding-left: 0px;
-}
+.error_icon:before { transform: rotate(45deg); }
+.error_icon:after { transform: rotate(-45deg); }
 
 .showcountry_code {
 	width: 62px !important;
+	display: none !important;
 }
 
 .textindent70 {
@@ -962,8 +936,8 @@ input[type="number"] {
 	box-sizing: border-box;
 	padding: 10px;
 	margin-top: -25px;
-	background: #FFFFFF;
-	box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.13);
+	background: #16161a;
+	box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.4);
 	border-radius: 2px;
 }
 
@@ -973,8 +947,8 @@ input[type="number"] {
 
 .nopassword_container {
 	display: none;
-	background: #EBF4FB;
-	border: 1px solid #CBE8FF;
+	background: rgba(228, 0, 43, 0.08);
+	border: 1px solid rgba(228, 0, 43, 0.25);
 	border-radius: 5px;
 	width: 400px;
 	height: auto;
@@ -989,7 +963,7 @@ input[type="number"] {
 	margin: 0px;
 	height: 30px;
 	width: 30px;
-	color: #0091FF;
+	color: #e4002b;
 	font-size: 30px;
 	vertical-align: middle;
 }
@@ -1000,6 +974,8 @@ input[type="number"] {
 	padding: 0px 0px;
 	border: none;
 	position: absolute;
+	background: transparent;
+	color: #ffffff;
 }
 
 .bolder1 {
@@ -1020,7 +996,7 @@ input[type="number"] {
 }
 
 .nonclickelem {
-	color: #626262;
+	color: rgba(255, 255, 255, 0.4);
 	pointer-events: none;
 }
 
@@ -1054,14 +1030,8 @@ input[type="number"] {
 }
 
 @keyframes rotate1 {
-	from {
-		transform: rotate(0deg)
-	}
-
-	to {
-		transform: rotate(360deg)
-	}
-
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
 }
 
 .waitbtn .waittext,
@@ -1087,22 +1057,12 @@ input[type="number"] {
 }
 
 .notnowbtn .loadwithbtn {
-	border: 3px solid #3a3a3a;
+	border: 3px solid rgba(255, 255, 255, 0.6);
 	border-left: 3px solid transparent;
 }
 
 .trustdevice .loadwithbtn {
 	display: none;
-}
-
-#recoverybtn,
-#problemsignin,
-.tryanother {
-	display: none;
-	bottom: 50px;
-	width: fit-content;
-	margin: 0px auto;
-	cursor: pointer;
 }
 
 #recoverOption,
@@ -1117,7 +1077,7 @@ input[type="number"] {
 	font-size: 24px;
 	display: inline-block;
 	float: left;
-	color: #666666;
+	color: rgba(255, 255, 255, 0.7);
 	padding: 3px;
 	box-sizing: border-box;
 	margin-right: 5px;
@@ -1126,7 +1086,7 @@ input[type="number"] {
 }
 
 .backoption:hover {
-	background: #f4f4f4;
+	background: rgba(255, 255, 255, 0.06);
 }
 
 .rec_head_text,
@@ -1134,41 +1094,41 @@ input[type="number"] {
 	display: table-cell;
 }
 
-.options,
 .optionstry {
 	display: table;
 	width: 100%;
 	height: auto;
-	padding: 20px 50px;
+	padding: 20px 4px;
 	box-sizing: border-box;
 	cursor: pointer;
+	color: #ffffff;
 }
 
-.options:hover,
 .optionstry:hover {
-	background-color: #F9F9F9;
+	background-color: rgba(255, 255, 255, 0.04);
 }
 
-.option_details,
 .option_details_try {
 	height: auto;
 	width: auto;
 	padding-left: 10px;
 	vertical-align: top;
 	box-sizing: border-box;
+	display: table-cell;
 }
 
 .option_title_try {
 	display: block;
 	font-size: 16px;
 	font-weight: 500;
+	color: #ffffff;
 }
 
 .option_description {
 	display: block;
 	font-size: 13px;
 	line-height: 20px;
-	color: #696969;
+	color: rgba(255, 255, 255, 0.5);
 	margin-top: 5px;
 }
 
@@ -1176,31 +1136,21 @@ input[type="number"] {
 	margin: 12px 0px;
 }
 
-.img_option {
-	font-size: 30px;
-	color: #499aff;
-}
-
-.option_details {
-	display: table-cell;
-}
-
 .problemsignincon,
 .recoverymodes,
 .addaptivetfalist,
 #recoverymodeContainer {
 	width: auto;
-	margin: 0px -50px;
+	margin: 0 !important;
 }
 
 .line {
-	background-color: #f1f1f1;
+	background-color: rgba(255, 255, 255, 0.08);
 	width: 100%;
 	height: 2px;
 	border-radius: 1px;
 	margin-bottom: 20px;
 }
-
 
 /*---------------------terminate_session---------------------*/
 
@@ -1221,13 +1171,13 @@ input[type="number"] {
 	left: 15px;
 }
 
-#terminate_session_form .checkbox_check:checked~.checkbox {
-	background-color: #159AFF;
-	border-color: #159AFF;
+#terminate_session_form .checkbox_check:checked ~ .checkbox {
+	background-color: #e4002b;
+	border-color: #e4002b;
 }
 
 #terminate_session_form .showOneAuthLable {
-	border: 1px solid #E7E7E7;
+	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 10px 10px 0px 0px;
 	box-sizing: border-box;
 	max-width: 420px;
@@ -1243,9 +1193,10 @@ input[type="number"] {
 	align-items: center;
 	margin-bottom: 10px;
 	box-sizing: border-box;
-	border: 1px solid #E7E7E7;
+	border: 1px solid rgba(255, 255, 255, 0.12);
 	border-top: none;
 	border-radius: 0px 0px 15px 15px;
+	color: #ffffff;
 }
 
 .oneauth_icon {
@@ -1274,6 +1225,7 @@ input[type="number"] {
 .oneAuthLable .text_desc {
 	font-size: 10px;
 	line-height: 14px;
+	color: rgba(255, 255, 255, 0.6);
 }
 
 .oneAuthLable .togglebtn_div {
@@ -1296,11 +1248,11 @@ input[type="number"] {
 	margin: 0px;
 }
 
-.real_togglebtn:checked~.togglebase {
+.real_togglebtn:checked ~ .togglebase {
 	background-color: #10bc83;
 }
 
-.real_togglebtn:checked~.togglebase .toggle_circle {
+.real_togglebtn:checked ~ .togglebase .toggle_circle {
 	left: 16px;
 }
 
@@ -1308,7 +1260,7 @@ input[type="number"] {
 	height: 16px;
 	width: 30px;
 	display: inline-block;
-	background: #ccc;
+	background: rgba(255, 255, 255, 0.2);
 	border-radius: 10px;
 	position: absolute;
 }
@@ -1323,9 +1275,8 @@ input[type="number"] {
 	position: absolute;
 	left: 2px;
 	top: 2px;
-	box-shadow: 0px 0px 5px #999;
+	box-shadow: 0px 0px 5px rgba(0, 0, 0, 0.4);
 }
-
 
 @media only screen and (-webkit-min-device-pixel-ratio: 2),
 not all,
@@ -1345,9 +1296,7 @@ only screen and (min-resolution: 2dppx) {
 		background-position: -10px -10px;
 	}
 
-	.MS_icon {
-		background-color: #2F2F2F;
-	}
+	.MS_icon { background-color: #2F2F2F; }
 
 	.MS_icon .fed_icon {
 		background: url("../images/signin_icons@2x.c0c72f3600a6f5ec03c9119d5a7d0518.png") no-repeat transparent;
@@ -1355,9 +1304,7 @@ only screen and (min-resolution: 2dppx) {
 		background-position: -38px -10px;
 	}
 
-	.linkedin_fed_box {
-		background-color: #0966C2;
-	}
+	.linkedin_fed_box { background-color: #0966C2; }
 
 	.linkedin_fed_box .fed_icon {
 		background: url("../images/signin_icons@2x.c0c72f3600a6f5ec03c9119d5a7d0518.png") no-repeat transparent;
@@ -1369,9 +1316,7 @@ only screen and (min-resolution: 2dppx) {
 		background-position: -9px -174px;
 	}
 
-	.fb_fed_box {
-		background-color: #1877F2;
-	}
+	.fb_fed_box { background-color: #1877F2; }
 
 	.fb_fed_box .fed_icon {
 		background: url("../images/signin_icons@2x.c0c72f3600a6f5ec03c9119d5a7d0518.png") no-repeat transparent;
@@ -1400,18 +1345,17 @@ only screen and (min-resolution: 2dppx) {
 	.signin_container {
 		width: 100%;
 		box-shadow: none;
-		margin: 0 auto;
+		margin: 0 auto !important;
 		position: relative;
 		z-index: 1;
-		margin-top: 40px;
 		height: auto;
 		overflow: hidden;
-
+		max-width: 100%;
 	}
 
 	.signin_box {
-		width: 100%;
-		padding: 0px 30px;
+		width: 100% !important;
+		padding: 0px !important;
 		height: auto;
 		border-right: none;
 	}
@@ -1420,7 +1364,7 @@ only screen and (min-resolution: 2dppx) {
 	#captcha,
 	#bcaptcha_img,
 	#bcaptcha {
-		border: 2px solid #F4F6F8;
+		border: 1px solid rgba(255, 255, 255, 0.12);
 		border-radius: 2px;
 		text-indent: 3px;
 		width: 50%;
@@ -1432,23 +1376,20 @@ only screen and (min-resolution: 2dppx) {
 
 	.textbox,
 	#verify_totp {
-		background-color: transparent;
-		border: none;
-		border-bottom: 2px solid #F4F6F8;
-		text-indent: 0px;
-		border-radius: 0px;
+		background-color: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		text-indent: 44px;
+		border-radius: 8px;
 	}
 
 	.textbox:focus,
-	#verify_totp {
-		border: none;
-		border-bottom: 2px solid #159AFF;
-
+	#verify_totp:focus {
+		border: 1px solid #e4002b;
 	}
 
 	.errorborder:focus,
 	.textbox.errorborder {
-		border-bottom: 2px solid #ff8484;
+		border: 1px solid #ff8484;
 	}
 
 	.backoption {
@@ -1465,12 +1406,12 @@ only screen and (min-resolution: 2dppx) {
 	}
 
 	.signin_head {
-		margin-bottom: 30px;
+		margin-bottom: 20px;
 	}
 
 	.btn {
 		margin-top: 10px;
-		border-radius: 4px;
+		border-radius: 8px;
 	}
 
 	.changeloadbtn {
@@ -1481,24 +1422,16 @@ only screen and (min-resolution: 2dppx) {
 		margin-right: 0px !important;
 	}
 
-	.textindent42 {
-		text-indent: 36px;
-	}
-
-	.textindent62 {
-		text-indent: 56px;
-	}
-
-	.textintent52 {
-		text-indent: 46px;
-	}
+	.textindent42 { text-indent: 36px; }
+	.textindent62 { text-indent: 56px; }
+	.textintent52 { text-indent: 46px; }
 
 	.select2-selection {
-		background-color: #F1F9FF;
+		background-color: rgba(255, 255, 255, 0.05);
 	}
 
 	.devices .select2-selection {
-		background-color: #F1F9FF;
+		background-color: rgba(255, 255, 255, 0.05);
 	}
 
 	.select2-search__field {
@@ -1579,9 +1512,10 @@ only screen and (min-resolution: 2dppx) {
 	position: absolute;
 	top: 15px;
 	left: 335px;
-	background: #fff;
+	background: #16161a;
+	color: #ffffff;
 	padding: 20px;
-	box-shadow: 0px 0px 10px #0000001a;
+	box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.5);
 	transition: opacity 0.1s;
 	border-radius: 5px;
 	z-index: 9;
@@ -1598,10 +1532,10 @@ only screen and (min-resolution: 2dppx) {
 	left: 0;
 	box-sizing: border-box;
 	border: 6px solid black;
-	border-color: #ffffff transparent transparent #ffffff;
+	border-color: #16161a transparent transparent #16161a;
 	transform-origin: 0 0;
 	transform: rotate(-45deg);
-	box-shadow: -6px -6px 10px 0 #0000001a;
+	box-shadow: -6px -6px 10px 0 rgba(0, 0, 0, 0.3);
 }
 
 .hover-tool-tip.no-arrow::after {
@@ -1641,171 +1575,8 @@ only screen and (min-resolution: 2dppx) {
 	border-radius: 50%;
 }
 
-.titlename,
-.service_name {
-	display: none !important;
-}
-
-.signin_head {
-	padding-top: 20px;
-}
-
 #login_id {
-	text-indent: 0 !important;
-}
-
-.showcountry_code {
-	display: none !important;
-}
-
-/* ==========================================================================
-   MG Motor app-side overrides
-   --------------------------------------------------------------------------
-   Everything above this line is Catalyst's default Embedded Authentication
-   stylesheet — untouched, so the sign-in/sign-up/MFA/recovery flows keep
-   working exactly as Catalyst renders them. Catalyst reuses these class
-   names across every screen in the flow (not just the plain sign-in form),
-   so we only override presentation here — layout, color, spacing — and
-   never touch structural properties (display/position toggles) that drive
-   which step is currently shown..
-
-   Goal: the 520px fixed-width white card with its own drop shadow and
-   right-hand divider line should stop looking like a foreign widget
-   dropped into the MG app, and instead fill the space it's given.
-   ========================================================================== */
-
-.signin_container {
-	width: 100% !important;
-	max-width: 440px;
-	min-height: 0 !important;
-	margin: 0 !important;
-	background-color: transparent !important;
-	box-shadow: none !important;
-}
-
-.signin_box,
-.rightside_box {
-	width: 100% !important;
-	min-height: 0 !important;
-	padding: 0 !important;
-	background: transparent !important;
-	border-right: none !important;
-	float: none !important;
-	display: block !important;
-	overflow: visible !important;
-}
-
-.bg_one {
-	display: none !important;
-}
-
-.signin_head {
-	font-family: inherit;
-	font-size: 18px !important;
-	font-weight: 600 !important;
-	color: #1a1a1a;
-	padding-top: 0 !important;
-	margin-bottom: 22px !important;
-}
-
-.titlename,
-.service_name {
-	display: none !important;
-}
-
-.textbox_label {
-	font-size: 13px;
-	color: #6b6b6b;
-	padding-bottom: 8px;
-}
-
-.textbox,
-#verify_totp {
-	height: 46px;
-	background: #fafafa;
-	border: 1px solid #e6e6e6;
-	border-radius: 8px;
-	font-size: 15px;
-	transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.textbox:focus,
-#verify_totp:focus {
-	border-color: #e4002b;
-	background: #ffffff;
-	outline: none;
-}
-
-.errorborder:focus,
-.textbox.errorborder {
-	border-bottom: 2px solid #ff8484;
-	border-color: #ff8484;
-}
-
-.textbox_div {
-	margin-bottom: 22px;
-}
-
-/* Primary action (Sign In / Next) picks up the MG red instead of
-   Catalyst's default blue */
-.btn.blue {
-	background-color: #e4002b;
-	box-shadow: none;
-	height: 46px;
-	border-radius: 8px;
-	font-size: 14px;
-	letter-spacing: 0.4px;
-	margin-bottom: 18px;
-	transition: background-color 0.15s ease, transform 0.1s ease;
-}
-
-.btn.blue:hover {
-	background-color: #c40025;
-	box-shadow: none;
-}
-
-.btn.blue:active {
-	transform: translateY(1px);
-}
-
-.btn.blue:focus-visible,
-.textbox:focus-visible,
-#verify_totp:focus-visible {
-	outline: 2px solid #e4002b;
-	outline-offset: 2px;
-}
-
-.changeloadbtn:before {
-	border-top-color: #e4002b;
-}
-
-.loadwithbtn:before {
-	border-color: #ffffff4d;
-}
-
-.bluetext,
-.bluetext_action,
-#forgotpassword a {
-	color: #e4002b !important;
-}
-
-.line {
-	background-color: #eeeeee;
-}
-
-/* Options list (federated sign-in choices, recovery options, etc.) loses
-   its full-bleed edge-to-edge hover strip since the card no longer has
-   fixed 520px margins to bleed against */
-.options,
-.optionstry {
-	padding: 16px 4px !important;
-}
-
-.problemsignincon,
-.recoverymodes,
-.addaptivetfalist,
-#recoverymodeContainer {
-	margin: 0 !important;
+	text-indent: 44px !important;
 }
 
 @media (max-width: 600px) {
