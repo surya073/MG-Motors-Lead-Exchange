@@ -14,10 +14,11 @@ import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
 import { PhoneIcon, MailIcon } from "../../ui/icons";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import mgLogo from "../../assets/images/mg-logo-single.png";
 
 const REGION_LABELS = { East: "East", West: "West", North: "North", South: "South" };
 
-const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50, 100];
 
 const SYNC_STATUS_TONES = {
   Synced: "active",
@@ -310,7 +311,14 @@ export default function DealerListPage() {
 
   const columnRenderers = {
     dealer_code: (row) => dimmed(row, row.dealer_code),
-    dealer_name: (row) => dimmed(row, row.dealer_name),
+    dealer_name: (row) =>
+      dimmed(
+        row,
+        <span className="dealer-list__name-cell">
+          <img src={mgLogo} alt="" className="dealer-list__dealer-logo" />
+          {row.dealer_name}
+        </span>
+      ),
     email_address: (row) =>
       dimmed(
         row,
@@ -562,7 +570,7 @@ export default function DealerListPage() {
           )}
 
           <div className="dealer-list__pagination">
-            <div className="dealer-list__page-size">
+             <div className="dealer-list__page-size">
               <span>Rows per page</span>
               <Dropdown
                 ariaLabel="Rows per page"

@@ -1,19 +1,5 @@
 'use strict';
 
-/**
- * env.js
- * -----------------------------------------------------------------------
- * Single source of truth for reading Zoho CRM OAuth config from Catalyst
- * environment variables. Nothing else in the function should read
- * process.env directly for these — import from here instead, so a
- * missing variable fails loudly and in one place, not deep inside an
- * HTTP call with a confusing axios error.
- *
- * Values themselves are set in Catalyst Console → your function →
- * Environment Variables (or injected at deploy time) — never committed
- * to source.
- */
-
 const REQUIRED_VARS = [
   'ZOHO_CLIENT_ID',
   'ZOHO_CLIENT_SECRET',
@@ -37,10 +23,35 @@ function getZohoConfig() {
     clientId: process.env.ZOHO_CLIENT_ID,
     clientSecret: process.env.ZOHO_CLIENT_SECRET,
     refreshToken: process.env.ZOHO_REFRESH_TOKEN,
-    apiDomain: process.env.ZOHO_API_DOMAIN,       // e.g. https://www.zohoapis.in
-    accountsDomain: process.env.ZOHO_ACCOUNTS_DOMAIN, // e.g. https://accounts.zoho.in
+    apiDomain: process.env.ZOHO_API_DOMAIN,
+    accountsDomain: process.env.ZOHO_ACCOUNTS_DOMAIN,
     webhookToken: process.env.ZOHO_WEBHOOK_TOKEN,
   };
 }
 
-module.exports = { getZohoConfig };
+/**
+ * Kept as a SEPARATE function from getZohoConfig() deliberately — this
+ * key is only needed by integrationAuthService.js when a dealer's
+ * EXTERNAL_CRM integration actually saves/reads a credential. Bundling
+ * it into REQUIRED_VARS above would mean every existing Zoho sync call
+ * (which has nothing to do with dealer CRM integrations) starts failing
+ * for shops that haven't set this var yet.
+ *
+ * Must be 32 raw bytes, base64-encoded, e.g. generated once via:
+ *   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+ * and stored in Catalyst Console → mg_motors_au_function → Environment
+ * Variables as INTEGRATION_CREDENTIALS_KEY.
+ */
+function getIntegrationCredentialsKey() {
+  const key = process.env.INTEGRATION_CREDENTIALS_KEY;
+  if (!key) {
+    throw new Error(
+      'Missing required environment variable: INTEGRATION_CREDENTIALS_KEY. ' +
+      'Set this in Catalyst Console → mg_motors_au_function → Environment Variables ' +
+      '(32 random bytes, base64-encoded).'
+    );
+  }
+  return key;
+}
+
+module.exports = { getZohoConfig, getIntegrationCredentialsKey };

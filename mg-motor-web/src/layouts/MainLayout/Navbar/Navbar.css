@@ -344,3 +344,85 @@
     font-size: 14px;
   }
 }
+
+
+.navbar__greeting-icon {
+  display: inline-flex;
+  margin-left: 5px;
+  vertical-align: -2px;
+  transform-origin: center;
+}
+
+/* Morning 🌅 */
+.navbar__greeting-icon--morning {
+  animation: morning-sun 3s ease-in-out infinite;
+}
+
+/* Afternoon ☀️ */
+.navbar__greeting-icon--afternoon {
+  animation: afternoon-sun 4s ease-in-out infinite;
+}
+
+/* Evening 🌆 */
+.navbar__greeting-icon--evening {
+  animation: evening-sun 3.5s ease-in-out infinite;
+}
+
+/* Night 🌙 */
+.navbar__greeting-icon--night {
+  animation: night-moon 4s ease-in-out infinite;
+}
+
+/* Morning - gentle rise */
+@keyframes morning-sun {
+  0%,
+  100% {
+    transform: translateY(2px) rotate(-8deg);
+  }
+
+  50% {
+    transform: translateY(-2px) rotate(8deg);
+  }
+}
+
+/* Afternoon - subtle glowing movement */
+@keyframes afternoon-sun {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+
+  50% {
+    transform: rotate(12deg) scale(1.08);
+  }
+}
+
+/* Evening - slowly setting */
+@keyframes evening-sun {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(3px) rotate(-8deg);
+  }
+}
+
+/* Night - gentle floating moon */
+@keyframes night-moon {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-5deg);
+  }
+
+  50% {
+    transform: translateY(-3px) rotate(5deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navbar__greeting-icon {
+    animation: none;
+  }
+}

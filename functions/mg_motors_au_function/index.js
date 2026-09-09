@@ -12,6 +12,8 @@ const cronRoutes = require('./routes/cronRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const aiAssistantRoutes = require('./routes/aiAssistantRoutes');
+const dealerCrmIntegrationRoutes = require('./routes/dealerCrmIntegrationRoutes');
+
 
 
 
@@ -385,5 +387,6 @@ app.use('/', onDemandDashboardRoutes);
 app.use('/', adminUserRoutes);
 app.use('/', notificationRoutes);
 app.use('/', aiAssistantRoutes);
+app.use('/', dealerCrmIntegrationRoutes);
 
 module.exports = app;

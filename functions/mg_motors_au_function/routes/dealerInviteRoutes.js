@@ -51,12 +51,21 @@ router.post('/dealers/invite', requireAdminRole, async (req, res) => {
 router.get('/dealer-context/:userId', async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;
-    const dealerCode = await getDealerCodeForUser(catalystApp, req.params.userId);
+    const currentUser = res.locals.currentUser;
+
+    if (!currentUser) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+
+    // Ignore req.params.userId — always resolve from the server-verified
+    // session, same source /dealer/leads uses via requireDealerCode().
+    const dealerCode = await getDealerCodeForUser(catalystApp, currentUser.user_id);
     res.status(200).json({ success: true, dealer_code: dealerCode });
   } catch (err) {
     logger.error('dealerInviteRoutes', 'GET /dealer-context failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
 });
+
 
 module.exports = router;

@@ -248,6 +248,7 @@
   border-radius: var(--radius-md);
   background-color: var(--color-bg-elevated);
   font-size: var(--fs-sm);
+  color: var(--color-text-primary);
 }
 
 .dealer-crm-config__checkbox-row {
@@ -389,6 +390,7 @@
   border-radius: var(--radius-md);
   background-color: var(--color-bg-elevated);
   font-size: var(--fs-sm);
+  color: var(--color-text-primary);
 }
 
 .dealer-crm-config__status-source {

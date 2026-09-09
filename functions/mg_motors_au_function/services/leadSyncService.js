@@ -5,6 +5,7 @@ const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const { notifyAdmins, notifyUser } = require('./notificationService');
+const crmIntegrationService = require('./integrations/crmIntegrationService'); // NEW
 
 const LEADS_TABLE = 'leads';
 const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
@@ -148,6 +149,50 @@ async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, ve
 }
 
 /**
+ * Branches a newly-inserted lead: EXTERNAL_CRM dealers get it pushed to
+ * their own CRM; PORTAL dealers (the default / existing behaviour) get
+ * the existing Catalyst-portal notification, completely unchanged.
+ */
+async function dispatchNewLeadToDealer(catalystApp, leadRow) {
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
+
+    if (integration && integration.integration_type === 'EXTERNAL_CRM') {
+      await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+      return;
+    }
+
+    // No integration row, or integration_type === 'PORTAL' — existing behaviour.
+    await notifyDealerOfNewLead(catalystApp, {
+      dealerCode: leadRow.dealer_code,
+      customerName: leadRow.customer_name,
+      vehicleModel: leadRow.vehicle_model,
+      leadRowId: leadRow.ROWID,
+    });
+  } catch (err) {
+    // Never let a dealer-CRM push failure break the sync loop — same
+    // fire-and-forget contract notifyDealerOfNewLead already had.
+    logger.error('leadSyncService', `dispatchNewLeadToDealer failed for dealer_code=${leadRow.dealer_code}`, err);
+  }
+}
+
+/**
+ * Only EXTERNAL_CRM dealers need an active push on lead update — PORTAL
+ * dealers already see updated data live from the `leads` table via the
+ * existing dealer portal reads, no action needed there.
+ */
+async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
+    if (integration && integration.integration_type === 'EXTERNAL_CRM') {
+      await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+    }
+  } catch (err) {
+    logger.error('leadSyncService', `dispatchLeadUpdateToDealer failed for dealer_code=${leadRow.dealer_code}`, err);
+  }
+}
+
+/**
  * Syncs all OEM_Leads records from Zoho CRM into the Catalyst `leads`
  * table. Same entry-point shape as syncDealers() — reusable by a manual
  * route now, a scheduled Cron job later, with no changes needed here.
@@ -193,21 +238,35 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
         const insertedRow = await table.insertRow({ ...mappedRow, last_synced_at: now, sync_status: 'Synced' });
         inserted += 1;
 
-        logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code}) — attempting dealer notification`);
+        logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
 
-        // Fire-and-forget — do not await inline in a way that blocks the
-        // sync loop's throughput; Promise chain runs independently.
-        notifyDealerOfNewLead(catalystApp, {
-          dealerCode: mappedRow.dealer_code,
-          customerName: mappedRow.customer_name,
-          vehicleModel: mappedRow.vehicle_model,
-          leadRowId: insertedRow.ROWID,
+        // INTEGRATION POINT: branch on dealer's integration_type instead
+        // of always notifying via the Catalyst portal. Fire-and-forget
+        // in both branches, matching the existing notifyDealerOfNewLead
+        // pattern — a slow/failed dealer-CRM push must not block or
+        // fail the overall Zoho sync loop.
+        dispatchNewLeadToDealer(catalystApp, {
+          ...mappedRow,
+          crm_record_id: crmRecord.id,
+          ROWID: insertedRow.ROWID,
         });
       } else if (existingRow.sync_status === 'Removed' || hasChanges(existingRow, mappedRow)) {
-
         await table.updateRow({ ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: 'Synced' });
         updated += 1;
+
+        // INTEGRATION POINT: EXTERNAL_CRM dealers also need updates
+        // pushed out (status changes, remarks changes from Zoho side) —
+        // the old code had no equivalent call here at all for PORTAL
+        // dealers either, since the portal reads leads live from the
+        // table. Only EXTERNAL_CRM dealers need an active push on update.
+        dispatchLeadUpdateToDealer(catalystApp, {
+          ...mappedRow,
+          crm_record_id: crmRecord.id,
+          ROWID: existingRow.ROWID,
+        });
       }
+
+
     } catch (err) {
       failed += 1;
       errors.push({ crm_record_id: crmRecord.id || 'UNKNOWN', error: err.message });
