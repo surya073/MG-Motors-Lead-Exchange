@@ -26,20 +26,18 @@ import sedanIcon from "../../assets/images/sedan.png";
 import "./LeadUpdateOffcanvas.css";
 
 const STATUS_OPTIONS = [
-  { key: "New", icon: CircleDot, tone: "info" },
-  { key: "Contacted", icon: PhoneCall, tone: "warning" },
-  { key: "Test Drive", icon: Car, tone: "warning" },
-  { key: "Quotation", icon: FileText, tone: "warning" },
-  { key: "Delivered", icon: PackageCheck, tone: "success" },
+  { key: "Not Contacted", icon: CircleDot, tone: "neutral" },
+  { key: "Contacted", icon: PhoneCall, tone: "info" },
+  { key: "In Progress", icon: Car, tone: "warning" },      // reuse existing icon imports; swap if you want something more literal
+  { key: "Converted", icon: PackageCheck, tone: "success" },
   { key: "Lost", icon: XCircle, tone: "danger" },
 ];
 
 const STATUS_TONES = {
-  New: "info",
-  Contacted: "warning",
-  "Test Drive": "warning",
-  Quotation: "warning",
-  Delivered: "success",
+  "Not Contacted": "neutral",
+  Contacted: "info",
+  "In Progress": "warning",
+  Converted: "success",
   Lost: "danger",
 };
 

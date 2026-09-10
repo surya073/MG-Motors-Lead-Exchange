@@ -29,15 +29,10 @@ const VIEW_STORAGE_KEY = "leadExchange:view";
 const DETAIL_STORAGE_KEY = "leadExchange:detailId";
 
 const STATUS_TONES = {
-  New: "info",
-  Contacted: "warning",
-  "Test Drive": "warning",
-  "Test Drive Scheduled": "warning",
-  Assigned: "info",
-  Quotation: "warning",
-  "Quotation Sent": "warning",
-  Booked: "success",
-  Delivered: "success",
+  "Not Contacted": "neutral",
+  Contacted: "info",
+  "In Progress": "warning",
+  Converted: "success",
   Lost: "danger",
 };
 
@@ -501,7 +496,7 @@ export default function LeadExchangePage() {
                           <div>
                             <div className="lead-card__name-row">
                               <h3>{row.customer_name || "Unnamed lead"}</h3>
-                              {row.lead_status === "New" && !removed && (
+                              {row.lead_status === "Not Contacted" && !removed && (
                                 <span className="lead-card__new-pill">New Lead</span>
                               )}
                             </div>

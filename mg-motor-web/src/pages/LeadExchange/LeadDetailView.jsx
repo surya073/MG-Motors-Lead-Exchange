@@ -19,15 +19,10 @@ import mgLogo from "../../assets/images/mg-logo-single.png";
 import "./LeadDetailView.css";
 
 const STATUS_TONES = {
-  New: "info",
-  Contacted: "warning",
-  "Test Drive": "warning",
-  "Test Drive Scheduled": "warning",
-  Assigned: "info",
-  Quotation: "warning",
-  "Quotation Sent": "warning",
-  Booked: "success",
-  Delivered: "success",
+  "Not Contacted": "neutral",
+  Contacted: "info",
+  "In Progress": "warning",
+  Converted: "success",
   Lost: "danger",
 };
 

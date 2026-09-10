@@ -48,16 +48,34 @@ function toCatalystDateTimeFromCrm(crmDateString) {
 function mapCrmRecordToLeadRow(crmRecord) {
   return {
     dealer_code: crmRecord.Dealer_Code || '',
-    customer_name: crmRecord.Customer_Name || '',
-    mobile_number: crmRecord.Mobile_Number || '',
-    email_address: crmRecord.Email_Address || '',
-    vehicle_model: crmRecord.Vehicle_Model || '',
-    lead_source: crmRecord.Lead_Source || '',
-    lead_status: crmRecord.Lead_Status || '',
+    customer_name: [crmRecord.First_Name, crmRecord.Last_Name].filter(Boolean).join(' ') || '',
+    mobile_number: crmRecord.Mobile || '',
+    email_address: crmRecord.Email || '',
+    vehicle_model: crmRecord.Enquiry_Model || '',
+    lead_source: crmRecord.Enquiry_Source || '',
+    lead_status: crmRecord.Enquiry_Status || '',
     assigned_date: toCatalystDateTimeFromCrm(crmRecord.Assigned_Date),
     last_status_update: toCatalystDateTimeFromCrm(crmRecord.Last_Status_Update),
     dealer_remarks: crmRecord.Dealer_Remarks || '',
     crm_record_id: crmRecord.id || '',
+
+    // New fields
+    enquiry_status: crmRecord.Enquiry_Status || '',
+    nature_of_enquiry: crmRecord.Nature_of_Enquiry || '',
+    purchase_classification: crmRecord.Purchase_Classification || '',
+    enquiry_outcome: crmRecord.Enquiry_Outcome || '',
+    lead_department: crmRecord.Lead_Department || '',
+    franchise: crmRecord.Franchise || '',
+    enquiry_id: crmRecord.Enquiry_ID || '',
+    customer_message: crmRecord.Customer_Message || '',
+    accept_privacy_policy: crmRecord.Accept_Privacy_Policy ?? false,
+    receive_marketing_updates: crmRecord.Receive_Marketing_Updates ?? false,
+    postcode: crmRecord.Postcode || '',
+    unit_suite: crmRecord.Unit_Suite || '',
+    enquiry_model: crmRecord.Enquiry_Model || '',
+    enquiry_variant: crmRecord.Enquiry_Variant || '',
+    enquiry_powertrain: crmRecord.Enquiry_Powertrain || '',
+    chat_transcript: crmRecord.Chat_Transcript || '',
   };
 }
 

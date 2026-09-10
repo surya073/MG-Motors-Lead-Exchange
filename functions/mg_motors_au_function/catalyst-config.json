@@ -1,0 +1,22 @@
+{
+  "deployment": {
+    "name": "mg_motors_au_function",
+    "stack": "node20",
+    "type": "advancedio",
+    "env_variables": {
+      "ZOHO_CLIENT_ID": "",
+      "ZOHO_CLIENT_SECRET": "",
+      "ZOHO_REFRESH_TOKEN": "",
+      "ZOHO_API_DOMAIN": "https://www.zohoapis.in",
+      "ZOHO_ACCOUNTS_DOMAIN": "https://accounts.zoho.in",
+      "ZOHO_WEBHOOK_TOKEN": "",
+      "CRON_SECRET": "",
+      "GEMINI_API_KEY": "",
+      "SARVAM_API_KEY": "",
+      "EXTERNAL_CRM_API_KEY": ""
+    }
+  },
+  "execution": {
+    "main": "index.js"
+  }
+}

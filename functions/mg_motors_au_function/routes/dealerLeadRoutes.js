@@ -15,7 +15,7 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
-const ALLOWED_LEAD_STATUSES = ['New', 'Contacted', 'Test Drive', 'Quotation', 'Delivered', 'Lost'];
+const ALLOWED_LEAD_STATUSES = ['Not Contacted', 'Contacted', 'In Progress', 'Converted', , 'Lost'];
 
 /**
  * Shared helper: resolves the logged-in user's dealer_code, or responds

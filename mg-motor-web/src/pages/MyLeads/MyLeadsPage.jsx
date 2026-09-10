@@ -15,20 +15,18 @@ const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
 const VIEW_STORAGE_KEY = "myLeads:view";
 
 const STATUS_CARDS = [
-  { key: "New", label: "New" },
+  { key: "Not Contacted", label: "Not Contacted" },
   { key: "Contacted", label: "Contacted" },
-  { key: "Test Drive", label: "Test Drive" },
-  { key: "Quotation", label: "Quotation" },
-  { key: "Delivered", label: "Delivered" },
+  { key: "In Progress", label: "In Progress" },
+  { key: "Converted", label: "Converted" },
   { key: "Lost", label: "Lost" },
 ];
 
 const STATUS_TONES = {
-  New: "info",
-  Contacted: "warning",
-  "Test Drive": "warning",
-  Quotation: "warning",
-  Delivered: "success",
+  "Not Contacted": "neutral",
+  Contacted: "info",
+  "In Progress": "warning",
+  Converted: "success",
   Lost: "danger",
 };
 

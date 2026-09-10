@@ -68,16 +68,32 @@ async function fetchDealerMaster() {
 
 const OEM_LEADS_FIELDS = [
   'Dealer_Code',
-  'Customer_Name',
-  'Mobile_Number',
-  'Email_Address',
-  'Vehicle_Model',
-  'Lead_Source',
-  'Lead_Status',
-  'Assigned_Date',
-  'Last_Status_Update',
+  'Last_Name',
+  'First_Name',
+  'Mobile',
+  'Email',
+  'Enquiry_Model',
+  'Enquiry_Source',
+  'Enquiry_Status',
+  'Assigned_Date',           // if you kept this on Leads — confirm, wasn't in your original field list
+  'Last_Status_Update',      // same caveat
   'Dealer_Remarks',
+  'Nature_of_Enquiry',
+  'Purchase_Classification',
+  'Enquiry_Outcome',
+  'Lead_Department',
+  'Franchise',
+  'Enquiry_ID',
+  'Customer_Message',
+  'Accept_Privacy_Policy',
+  'Receive_Marketing_Updates',
+  'Postcode',
+  'Unit_Suite',
+  'Enquiry_Variant',
+  'Enquiry_Powertrain',
+  'Chat_Transcript',
 ];
+
 
 /**
  * Fetches ALL OEM_Leads records from Zoho CRM, paging through
@@ -96,7 +112,7 @@ async function fetchOemLeads() {
   while (moreRecords) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/OEM_Leads`, {
+      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
         },
@@ -145,7 +161,7 @@ async function updateOemLead(crmRecordId, fields) {
   let response;
   try {
     response = await axios.put(
-      `${apiDomain}/crm/v8/OEM_Leads/${crmRecordId}`,
+      `${apiDomain}/crm/v8/Leads/${crmRecordId}`,
       { data: [fields] },
       {
         headers: {
