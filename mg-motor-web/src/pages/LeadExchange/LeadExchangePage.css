@@ -68,6 +68,92 @@
   font-size: var(--fs-sm);
 }
 
+/* =========================================================
+   HAPPY / UNHAPPY PATH TOGGLE
+   Same segmented-pill pattern used on the Sync Logs page — "Happy"
+   leans on the success token, "Unhappy" on the danger token, so a
+   lead's classification reads consistently across both screens.
+   ========================================================= */
+
+.lead-exchange__path-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+}
+
+.lead-exchange__path-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.lead-exchange__path-pill:hover {
+  color: var(--color-text-primary);
+}
+
+.lead-exchange__path-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding-inline: 6px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.lead-exchange__path-pill--active {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.lead-exchange__path-pill--happy.lead-exchange__path-pill--active {
+  color: var(--color-success);
+}
+
+.lead-exchange__path-pill--happy.lead-exchange__path-pill--active .lead-exchange__path-pill-count {
+  background-color: var(--color-success);
+  color: #ffffff;
+}
+
+.lead-exchange__path-pill--unhappy.lead-exchange__path-pill--active {
+  color: var(--color-danger);
+}
+
+.lead-exchange__path-pill--unhappy.lead-exchange__path-pill--active .lead-exchange__path-pill-count {
+  background-color: var(--color-danger);
+  color: #ffffff;
+}
+
+@media (max-width: 600px) {
+  .lead-exchange__path-toggle {
+    align-self: stretch;
+    justify-content: space-between;
+  }
+
+  .lead-exchange__path-pill {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
 .lead-exchange__filters {
   display: flex;
   gap: var(--space-3);

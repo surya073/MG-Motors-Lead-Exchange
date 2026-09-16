@@ -18,6 +18,7 @@ const genericRestAdapter = require('./adapters/genericRestAdapter');
 
 const ADAPTERS = {
   GENERIC_REST: genericRestAdapter,
+  ZOHO_CRM: genericRestAdapter, 
 };
 
 function getAdapter(crmType) {

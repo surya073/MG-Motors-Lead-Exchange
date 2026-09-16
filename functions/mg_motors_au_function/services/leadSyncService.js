@@ -28,6 +28,17 @@ const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
  * of module exports inside circular dependency" in logs. Lazy-requiring
  * inside the function avoids this since by request time the module is
  * already fully loaded and cached.
+ *
+ * NOTE (dispatch calls): dispatchNewLeadToDealer / dispatchLeadUpdateToDealer
+ * are AWAITED in the main loop below, even though both already catch
+ * their own errors internally and never throw. This isn't about error
+ * propagation — it's because this whole function runs inside a
+ * serverless invocation. If the outbound push isn't awaited, the
+ * function can return (and Catalyst can freeze/recycle the execution
+ * context) before the push actually finishes, silently truncating it
+ * mid-flight with no error and nothing written to integration_logs.
+ * Previously this caused some newly-synced leads to never reach the
+ * dealer's external CRM, especially the last few processed in a batch.
  */
 
 /**
@@ -170,6 +181,11 @@ async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, ve
  * Branches a newly-inserted lead: EXTERNAL_CRM dealers get it pushed to
  * their own CRM; PORTAL dealers (the default / existing behaviour) get
  * the existing Catalyst-portal notification, completely unchanged.
+ *
+ * Callers AWAIT this (see syncLeads loop) so the outbound push has a
+ * chance to finish before the enclosing function invocation returns —
+ * see the file-level note above. This function still swallows its own
+ * errors internally, so awaiting it can never fail the sync loop.
  */
 async function dispatchNewLeadToDealer(catalystApp, leadRow) {
   try {
@@ -198,6 +214,9 @@ async function dispatchNewLeadToDealer(catalystApp, leadRow) {
  * Only EXTERNAL_CRM dealers need an active push on lead update — PORTAL
  * dealers already see updated data live from the `leads` table via the
  * existing dealer portal reads, no action needed there.
+ *
+ * Callers AWAIT this (see syncLeads loop) for the same reason as
+ * dispatchNewLeadToDealer above.
  */
 async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
   try {
@@ -259,11 +278,13 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
         logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
 
         // INTEGRATION POINT: branch on dealer's integration_type instead
-        // of always notifying via the Catalyst portal. Fire-and-forget
-        // in both branches, matching the existing notifyDealerOfNewLead
-        // pattern — a slow/failed dealer-CRM push must not block or
-        // fail the overall Zoho sync loop.
-        dispatchNewLeadToDealer(catalystApp, {
+        // of always notifying via the Catalyst portal. AWAITED — both
+        // branches already catch their own errors internally (matching
+        // the previous fire-and-forget contract for error handling),
+        // but this must be awaited so the outbound push has a chance to
+        // finish before this function invocation returns. See file-level
+        // note at the top of this file.
+        await dispatchNewLeadToDealer(catalystApp, {
           ...mappedRow,
           crm_record_id: crmRecord.id,
           ROWID: insertedRow.ROWID,
@@ -276,8 +297,10 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
         // pushed out (status changes, remarks changes from Zoho side) —
         // the old code had no equivalent call here at all for PORTAL
         // dealers either, since the portal reads leads live from the
-        // table. Only EXTERNAL_CRM dealers need an active push on update.
-        dispatchLeadUpdateToDealer(catalystApp, {
+        // table. Only EXTERNAL_CRM dealers need an active push on
+        // update. AWAITED for the same reason as dispatchNewLeadToDealer
+        // above.
+        await dispatchLeadUpdateToDealer(catalystApp, {
           ...mappedRow,
           crm_record_id: crmRecord.id,
           ROWID: existingRow.ROWID,

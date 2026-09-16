@@ -11,7 +11,19 @@ const integrationAuthService = require('./integrationAuthService');
  * (preferred) and static bearer/API-key fallback, per integration config.
  * Never logs the secret or the raw signature header value on failure —
  * only a boolean result and a safe error code.
+ *
+ * TEMP TEST MODE — see SKIP_WEBHOOK_AUTH below. This flag disables all
+ * authentication and MUST be removed before connecting any real dealer.
+ * Left in place only to unblock local/manual testing of the inbound
+ * webhook flow without needing to configure a header on the CRM side
+ * during initial setup.
  */
+
+// TEMPORARY: set to true to skip webhook authentication entirely for
+// testing. MUST be set back to false (or this whole block removed)
+// before any real dealer integration goes live — otherwise the webhook
+// endpoint accepts unauthenticated requests from anyone who finds the URL.
+const SKIP_WEBHOOK_AUTH = true;
 
 function timingSafeEqual(a, b) {
   const bufA = Buffer.from(a || '', 'utf8');
@@ -33,6 +45,14 @@ function computeHmac(secret, rawBody) {
 async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   if (!integration.webhook_enabled) {
     return { ok: false, reason: 'WEBHOOK_DISABLED' };
+  }
+
+  if (SKIP_WEBHOOK_AUTH) {
+    logger.error(
+      'webhookVerificationService',
+      `SKIP_WEBHOOK_AUTH is enabled — accepting unauthenticated webhook for integration ${integration.ROWID}. This must be disabled before production use.`
+    );
+    return { ok: true };
   }
 
   const webhookSecret = await integrationAuthService.getDecryptedCredential(

@@ -6,6 +6,7 @@ const { URL } = require('url');
 const axios = require('axios');
 const logger = require('../../../utils/logger');
 const integrationAuthService = require('../integrationAuthService');
+const { getAccessTokenForDealerZoho } = require('./zohoCrmOAuthHelper');
 
 /**
  * genericRestAdapter.js
@@ -13,6 +14,14 @@ const integrationAuthService = require('../integrationAuthService');
  * Implements the common adapter interface (createLead/updateLead/getLead/
  * testConnection) against a dealer-configured REST CRM. All requests go
  * through SSRF-guarded resolution and enforce HTTPS by default.
+ *
+ * Also doubles as the ZOHO_CRM adapter — a dealer whose external CRM
+ * happens to be their own separate Zoho CRM org uses this same file
+ * (same generic REST shape), just with:
+ *   - OAuth2 access-token refresh instead of a static credential
+ *     (buildAuthHeaders branches on crm_type === 'ZOHO_CRM')
+ *   - request/response bodies wrapped in { data: [...] } per Zoho's
+ *     CRM API convention (createLead/updateLead branch on the same flag)
  *
  * Retry policy lives here (not in crmIntegrationService) since "what
  * counts as transient" is an HTTP-layer concern specific to this adapter;
@@ -39,6 +48,13 @@ function isPrivateIp(ip) {
  * SSRF guard: resolves the hostname and rejects private/loopback/
  * link-local targets before any request is made. Re-checked on every
  * call (not cached) since DNS can change between config-save time and
+ * 
+ *Today, I’ll check the CRM configuration, including field mapping and status mapping.
+
+For Responsive Lending, I’ll work on completing the full AI Assist workflow.
+
+
+
  * request time (DNS rebinding).
  */
 async function assertSafeUrl(rawUrl) {
@@ -83,6 +99,14 @@ async function assertSafeUrl(rawUrl) {
 }
 
 async function buildAuthHeaders(catalystApp, integration) {
+  // Dealer's external CRM is itself Zoho CRM — needs live OAuth2 token
+  // refresh (access tokens expire ~1hr), not a static stored credential
+  // like every other auth_type below. Checked first and returns early.
+  if (integration.crm_type === 'ZOHO_CRM') {
+    const accessToken = await getAccessTokenForDealerZoho(catalystApp, integration);
+    return { Authorization: `Zoho-oauthtoken ${accessToken}` };
+  }
+
   const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[integration.auth_type];
   const secret = credType
     ? await integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, credType)
@@ -108,7 +132,9 @@ async function buildAuthHeaders(catalystApp, integration) {
     case 'OAUTH2':
       // V1 assumption: pre-obtained access token stored as the
       // credential, not a full OAuth2 flow. Flagging for review —
-      // full client-credentials/token-refresh flow is a Phase 2 item.
+      // full client-credentials/token-refresh flow is a Phase 2 item
+      // for any non-Zoho OAuth2 CRM. Zoho CRM specifically is handled
+      // above via crm_type, not this branch.
       return { Authorization: `Bearer ${secret}` };
     default:
       return {};
@@ -137,15 +163,29 @@ async function createLead(catalystApp, integration, payload) {
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
+  const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
+  const requestBody = isZohoCrm ? { data: [payload] } : payload;
+
   const response = await requestWithRetry({
     method: integration.http_method || 'POST',
     url: url.toString(),
     headers: { 'Content-Type': 'application/json', ...headers },
-    data: payload,
+    data: requestBody,
     timeout: 10000,
   });
 
-  return { externalLeadId: response.data?.id || response.data?.leadId, httpStatus: response.status, raw: response.data };
+  if (isZohoCrm) {
+    const recordResult = response.data?.data?.[0];
+    if (!recordResult || recordResult.status === 'error') {
+      const err = new Error(recordResult?.message || 'Zoho CRM rejected the create');
+      err.code = 'EXTERNAL_CRM_ERROR';
+      err.response = { status: response.status, data: response.data };
+      throw err;
+    }
+    return { externalLeadId: recordResult.details?.id, httpStatus: response.status, raw: response.data };
+  }
+  const externalLeadId = response.data?.id || response.data?.leadId;
+  return { externalLeadId, httpStatus: response.status, raw: response.data };
 }
 
 async function updateLead(catalystApp, integration, externalLeadId, payload) {
@@ -153,13 +193,26 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const url = await assertSafeUrl(`${integration.base_url}${endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
+  const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
+  const requestBody = isZohoCrm ? { data: [payload] } : payload;
+
   const response = await requestWithRetry({
-    method: 'PATCH',
+    method: integration.update_http_method || 'PUT',
     url: url.toString(),
     headers: { 'Content-Type': 'application/json', ...headers },
-    data: payload,
+    data: requestBody,
     timeout: 10000,
   });
+
+  if (isZohoCrm) {
+    const recordResult = response.data?.data?.[0];
+    if (!recordResult || recordResult.status === 'error') {
+      const err = new Error(recordResult?.message || 'Zoho CRM rejected the update');
+      err.code = 'EXTERNAL_CRM_ERROR';
+      err.response = { status: response.status, data: response.data };
+      throw err;
+    }
+  }
 
   return { httpStatus: response.status, raw: response.data };
 }
@@ -187,7 +240,14 @@ async function getLead(catalystApp, integration, externalLeadId) {
  * dealer_integrations with a `test_endpoint` field later.
  */
 async function testConnection(catalystApp, integration) {
-  const url = await assertSafeUrl(integration.base_url);
+  // Zoho's GET /crm/v8/Leads requires an explicit `fields` param —
+  // omitting it returns 400 REQUIRED_PARAM_MISSING regardless of auth
+  // or scope. Last_Name is always present on every Lead record, so
+  // it's a safe universal choice just for this connectivity check.
+  const testPath = integration.crm_type === 'ZOHO_CRM'
+    ? '/crm/v8/Leads?per_page=1&fields=Last_Name'
+    : '';
+  const url = await assertSafeUrl(`${integration.base_url}${testPath}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
   const start = Date.now();
 
@@ -196,7 +256,7 @@ async function testConnection(catalystApp, integration) {
     url: url.toString(),
     headers,
     timeout: 8000,
-    validateStatus: () => true, // we report the status, don't throw on 4xx/5xx
+    validateStatus: () => true,
   });
 
   return {

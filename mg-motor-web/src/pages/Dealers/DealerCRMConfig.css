@@ -223,10 +223,7 @@
 }
 
 .dealer-crm-config__field-row-inline {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: var(--space-3);
-  align-items: end;
+  grid-template-columns: 1fr 1fr auto auto; /* was: 1fr 1fr auto */
 }
 
 .dealer-crm-config__field-row-inline > div {
@@ -458,4 +455,150 @@
 .dealer-crm-config__row-label--selected {
   font-weight: var(--fw-semibold);
   color: var(--color-primary);
+}
+
+/* =========================================================
+   DEALER CRM CONFIG — REDESIGN ADDITIONS
+   Append this block to the end of DealerCRMConfig.css
+   ========================================================= */
+
+/* ---------- Guided progress banner ---------- */
+
+.dealer-crm-config__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.dealer-crm-config__progress svg {
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__progress--done {
+  background-color: var(--color-success-soft);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+/* ---------- Section titles inside the Connection form ---------- */
+
+.dealer-crm-config__section-title {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.dealer-crm-config__form > .dealer-crm-config__section-title:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* ---------- Credentials grid (Zoho: 3 fields side by side on wide screens) ---------- */
+
+.dealer-crm-config__credentials-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+@media (max-width: 720px) {
+  .dealer-crm-config__credentials-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Locked mapping tab state ---------- */
+
+.dealer-crm-config__locked-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+  font-size: var(--fs-sm);
+  background-color: var(--color-surface-alt);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+}
+
+.dealer-crm-config__locked-state p {
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+/* ---------- Mapping tab intro copy ---------- */
+
+.dealer-crm-config__mapping-intro {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+  line-height: 1.5;
+}
+
+/* ---------- Responsive tab bar: wrap + horizontal scroll on narrow screens ---------- */
+
+@media (max-width: 640px) {
+  .dealer-crm-config__tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dealer-crm-config__tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .dealer-crm-config__field-row-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .dealer-crm-config__mapping-header,
+  .dealer-crm-config__mapping-row {
+    grid-template-columns: 1fr 20px 1fr 50px 24px;
+    font-size: var(--fs-xs);
+  }
+
+  .dealer-crm-config__detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+}
+
+.dealer-crm-config__layout > * {
+  min-width: 0;
+}
+
+.dealer-crm-config__panel--detail {
+  overflow-x: hidden;
+}
+
+.dealer-crm-config__panel--detail .table-wrapper {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.dealer-crm-config__link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-primary, #2563eb);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
 }

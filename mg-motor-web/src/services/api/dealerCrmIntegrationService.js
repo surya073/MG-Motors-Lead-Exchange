@@ -45,8 +45,14 @@ export const dealerCrmIntegrationService = {
     return data;
   },
 
-  async retrySync(dealerCode) {
-    const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/sync`);
+  async retrySync(dealerCode, crmRecordId) {
+    const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/sync`, { crmRecordId });
     return data;
   },
+
+  async generateWebhookSecret(dealerCode) {
+  const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/webhook-secret`);
+  return data;
+},
+
 };

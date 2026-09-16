@@ -33,7 +33,12 @@ async function registerWatchChannels(catalystApp) {
     watch: [
       {
         channel_id: channelId,
-        events: ['Dealer_Master.all', 'OEM_Leads.all'],
+        // FIX: the real CRM module API name is "Leads" — zohoCrmService.js
+        // fetches from /crm/v8/Leads. "OEM_Leads" is not an actual module,
+        // so Zoho never had anything to fire notifications for, which is
+        // why lead changes only ever showed up via manual sync while
+        // Dealer_Master (a real module name) synced live via webhook.
+        events: ['Dealer_Master.all', 'Leads.all'],
         notify_url: buildNotifyUrl(),
         token: webhookToken,
         channel_expiry: channelExpiryStr,
@@ -63,7 +68,7 @@ async function registerWatchChannels(catalystApp) {
   const table = catalystApp.datastore().table('webhook_channels');
   await table.insertRow({
     channel_id: channelId,
-    module_name: 'Dealer_Master,OEM_Leads',
+    module_name: 'Dealer_Master,Leads',
     token: webhookToken,
     registered_at: toCatalystDateTime(new Date()),
     expires_at: toCatalystDateTime(expiryDate),

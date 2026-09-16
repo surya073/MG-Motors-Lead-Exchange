@@ -30,11 +30,38 @@ const DETAIL_STORAGE_KEY = "leadExchange:detailId";
 
 const STATUS_TONES = {
   "Not Contacted": "neutral",
+  "Follow-up 1": "info",
+  "Follow-up 2": "info",
   Contacted: "info",
+  "Contact in Future": "warning",
   "In Progress": "warning",
   Converted: "success",
+  "Not Qualified": "danger",
+  Dropped: "danger",
   Lost: "danger",
+  "Dealer Unavailable": "danger",
+  "Unattended Alert": "danger",
 };
+
+// Terminal/negative outcomes count as "unhappy" path leads for the
+// toggle — everything else (new, in-progress, follow-up statuses)
+// defaults to "happy" so a new in-progress status added later doesn't
+// need to be whitelisted to show up on the happy side.
+const UNHAPPY_LEAD_STATUSES = new Set([
+  "Not Qualified",
+  "Dropped",
+  "Lost",
+  "Dealer Unavailable",
+  "Unattended Alert",
+]);
+
+const classifyLeadPath = (status) => (UNHAPPY_LEAD_STATUSES.has(status) ? "unhappy" : "happy");
+
+const PATH_FILTER_OPTIONS = [
+  { value: "all", label: "All leads" },
+  { value: "happy", label: "Happy" },
+  { value: "unhappy", label: "Unhappy" },
+];
 
 const ALL_COLUMNS = [
   { key: "customer_name", label: "Customer", defaultVisible: true },
@@ -121,7 +148,9 @@ export default function LeadExchangePage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [dealerFilter, setDealerFilter] = useState("");
+  const [pathFilter, setPathFilter] = useState("all");
   const [showRemoved, setShowRemoved] = useState(true);
+  const [sortBy, setSortBy] = useState("recent"); // "recent" | "alpha"
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
 
@@ -238,10 +267,28 @@ export default function LeadExchangePage() {
     [dealerOptions]
   );
 
+  const sortDropdownOptions = useMemo(
+    () => [
+      { value: "recent", label: "Recently added" },
+      { value: "alpha", label: "Alphabetical (A–Z)" },
+    ],
+    []
+  );
+
   const pageSizeOptions = useMemo(
     () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
     []
   );
+
+  // Counts for the toggle labels, computed pre-pathFilter so switching
+  // segments doesn't make its own count disappear.
+  const pathCounts = useMemo(() => {
+    const counts = { happy: 0, unhappy: 0 };
+    leads.forEach((l) => {
+      counts[classifyLeadPath(l.lead_status)] += 1;
+    });
+    return counts;
+  }, [leads]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -253,14 +300,41 @@ export default function LeadExchangePage() {
           .some((field) => field.toLowerCase().includes(term));
       const matchesStatus = !statusFilter || l.lead_status === statusFilter;
       const matchesDealer = !dealerFilter || l.dealer_code === dealerFilter;
+      const matchesPath = pathFilter === "all" || classifyLeadPath(l.lead_status) === pathFilter;
       const matchesRemoved = showRemoved || l.sync_status !== "Removed";
-      return matchesSearch && matchesStatus && matchesDealer && matchesRemoved;
+      return matchesSearch && matchesStatus && matchesDealer && matchesPath && matchesRemoved;
     });
-  }, [leads, search, statusFilter, dealerFilter, showRemoved]);
+  }, [leads, search, statusFilter, dealerFilter, pathFilter, showRemoved]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // Applied after filtering, before pagination, so "recently added"
+  // and "alphabetical" both operate on the same filtered set and the
+  // first page always reflects the chosen order.
+  const sorted = useMemo(() => {
+    const rows = [...filtered];
+    if (sortBy === "alpha") {
+      rows.sort((a, b) =>
+        (a.customer_name || "").localeCompare(b.customer_name || "", undefined, {
+          sensitivity: "base",
+        })
+      );
+    } else {
+      // "recent" (default) — Catalyst ROWIDs are chronologically
+      // increasing, so a higher ROWID means the record was created
+      // more recently. Falls back to assigned_date if ROWID is ever
+      // missing/non-numeric.
+      rows.sort((a, b) => {
+        const aId = Number(a.ROWID);
+        const bId = Number(b.ROWID);
+        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return bId - aId;
+        return (b.assigned_date || "").localeCompare(a.assigned_date || "");
+      });
+    }
+    return rows;
+  }, [filtered, sortBy]);
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
-  const pageRows = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
+  const pageRows = sorted.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
 
   const resetPage = () => setPageIndex(0);
 
@@ -271,6 +345,16 @@ export default function LeadExchangePage() {
 
   const handleDealerChange = (value) => {
     setDealerFilter(value);
+    resetPage();
+  };
+
+  const handlePathFilterChange = (value) => {
+    setPathFilter(value);
+    resetPage();
+  };
+
+  const handleSortChange = (value) => {
+    setSortBy(value);
     resetPage();
   };
 
@@ -376,6 +460,32 @@ export default function LeadExchangePage() {
             </div>
           )}
 
+          <div className="lead-exchange__path-toggle" role="tablist" aria-label="Filter by outcome">
+            {PATH_FILTER_OPTIONS.map((option) => {
+              const count =
+                option.value === "happy"
+                  ? pathCounts.happy
+                  : option.value === "unhappy"
+                  ? pathCounts.unhappy
+                  : leads.length;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={pathFilter === option.value}
+                  className={`lead-exchange__path-pill lead-exchange__path-pill--${option.value} ${
+                    pathFilter === option.value ? "lead-exchange__path-pill--active" : ""
+                  }`}
+                  onClick={() => handlePathFilterChange(option.value)}
+                >
+                  {option.label}
+                  <span className="lead-exchange__path-pill-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <div className="lead-exchange__filters">
             <div className="lead-exchange__search">
               <input
@@ -400,6 +510,13 @@ export default function LeadExchangePage() {
               value={dealerFilter}
               onChange={handleDealerChange}
               options={dealerDropdownOptions}
+            />
+
+            <Dropdown
+              ariaLabel="Sort leads"
+              value={sortBy}
+              onChange={handleSortChange}
+              options={sortDropdownOptions}
             />
 
             <label className="lead-exchange__switch">
@@ -552,8 +669,8 @@ export default function LeadExchangePage() {
 
                       <div className="lead-card__contact-row">
                         {row.mobile_number && (
-                          
-                         <a   href={`tel:${row.mobile_number}`}
+                          <a
+                            href={`tel:${row.mobile_number}`}
                             className="lead-card__contact-btn lead-card__contact-btn--call"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -562,8 +679,8 @@ export default function LeadExchangePage() {
                           </a>
                         )}
                         {row.email_address && (
-                          
-                           <a href={`mailto:${row.email_address}`}
+                          <a
+                            href={`mailto:${row.email_address}`}
                             className="lead-card__contact-btn lead-card__contact-btn--mail"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -615,7 +732,7 @@ export default function LeadExchangePage() {
                 Previous
               </button>
               <span>
-                Page {currentPage + 1} of {pageCount} · {filtered.length} leads
+                Page {currentPage + 1} of {pageCount} · {sorted.length} leads
               </span>
               <button
                 onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}

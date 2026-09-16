@@ -12,7 +12,7 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
-router.post('/webhooks/crm-notify', async (req, res) => {
+router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
   try {
     const { webhookToken } = getZohoConfig();
     const incomingToken = req.body?.token;
@@ -29,7 +29,12 @@ router.post('/webhooks/crm-notify', async (req, res) => {
 
     if (moduleName === 'Dealer_Master') {
       await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
-    } else if (moduleName === 'OEM_Leads') {
+    } else if (moduleName === 'Leads') {
+      // FIX: Zoho's real CRM module API name is "Leads" (see
+      // zohoCrmService.js / zohoWebhookService.js) — this previously
+      // checked for "OEM_Leads", which is not a real module name, so
+      // notifications for lead changes always fell through to the
+      // "unhandled module" branch below and syncLeads() never ran.
       await syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
     } else {
       logger.info('webhookRoutes', `Notification for unhandled module: ${moduleName}`);
@@ -38,7 +43,6 @@ router.post('/webhooks/crm-notify', async (req, res) => {
     logger.error('webhookRoutes', 'Webhook processing failed', err);
   }
 });
-
 /**
  * POST /webhooks/dealers/:dealerCode
  * -----------------------------------------------------------------------

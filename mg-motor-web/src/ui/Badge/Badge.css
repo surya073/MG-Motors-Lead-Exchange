@@ -1,222 +1,215 @@
 .badge {
+  --badge-color: #a1a1aa;
+  --badge-light: #52525b;
+  --badge-dark: #18181b;
+
+  position: relative;
+
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 2px 10px;
-  border: 1px solid var(--color-border);
+  gap: 7px;
+
+  min-height: 28px;
+  padding: 5px 11px 5px 8px;
+
+  border: 1px solid var(--badge-border);
   border-radius: 999px;
-  background-color: var(--color-surface);
+
+  color: var(--badge-text);
+
+  background:
+    linear-gradient(
+      135deg,
+      var(--badge-light) 0%,
+      var(--badge-dark) 100%
+    );
+
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
-  color: var(--color-text-secondary);
+  line-height: 1;
+
   white-space: nowrap;
+  overflow: hidden;
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 2px 5px rgba(0, 0, 0, 0.12);
+
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
 }
+
+
+/* --------------------------------------------------------------------------
+   Subtle gradient shine
+   -------------------------------------------------------------------------- */
+
+.badge::before {
+  content: "";
+
+  position: absolute;
+  inset: 0;
+
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.12),
+    transparent 45%
+  );
+
+  pointer-events: none;
+}
+
+
+/* --------------------------------------------------------------------------
+   Dot
+   -------------------------------------------------------------------------- */
 
 .badge__dot {
-  width: 6px;
-  height: 6px;
+  position: relative;
+  z-index: 1;
+
+  width: 7px;
+  height: 7px;
+
   flex-shrink: 0;
+
   border-radius: 50%;
-  background-color: transparent;
-  border: 1.5px solid currentColor;
+
+  background: var(--badge-color);
+
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.08),
+    0 0 7px var(--badge-color);
 }
 
-/* ---------- Tones (light) ----------
-   Colorful by design: each tone gets its own hue for background, border,
-   text, and dot fill so state reads at a glance. */
+
+/* --------------------------------------------------------------------------
+   Text
+   -------------------------------------------------------------------------- */
+
+.badge__text {
+  position: relative;
+  z-index: 1;
+
+  letter-spacing: 0.01em;
+}
+
+
+/* ==========================================================================
+   NEUTRAL — Deep Slate
+   ========================================================================== */
 
 .badge--neutral {
-  color: #6b7280;
-  border-color: #d1d5db;
-  background-color: #f3f4f6;
-}
-.badge--neutral .badge__dot {
-  background-color: #9ca3af;
-  border-color: #9ca3af;
+  --badge-color: #d4d4d8;
+  --badge-light: #52525b;
+  --badge-dark: #27272a;
+
+  --badge-text: #f4f4f5;
+  --badge-border: #52525b;
 }
 
+
+/* ==========================================================================
+   INFO — Deep Blue
+   ========================================================================== */
+
 .badge--info {
-  color: #1d4ed8;
-  border-color: #bfdbfe;
-  background-color: #eff6ff;
+  --badge-color: #93c5fd;
+  --badge-light: #1e40af;
+  --badge-dark: #172554;
+
+  --badge-text: #dbeafe;
+  --badge-border: #1d4ed8;
 }
-.badge--info .badge__dot {
-  background-color: #3b82f6;
-  border-color: #3b82f6;
-}
+
+
+/* ==========================================================================
+   PENDING / WARNING — Deep Amber
+   ========================================================================== */
 
 .badge--pending,
 .badge--warning {
-  color: #b45309;
-  border-color: #fde68a;
-  background-color: #fffbeb;
-  border-style: solid;
+  --badge-color: #fcd34d;
+  --badge-light: #a16207;
+  --badge-dark: #451a03;
+
+  --badge-text: #fef3c7;
+  --badge-border: #92400e;
 }
-.badge--pending .badge__dot,
-.badge--warning .badge__dot {
-  background-color: #f59e0b;
-  border-color: #f59e0b;
-}
+
+
+/* ==========================================================================
+   SUCCESS / ACTIVE — Deep Emerald
+   ========================================================================== */
 
 .badge--success,
 .badge--active {
-  color: #15803d;
-  border-color: #bbf7d0;
-  background-color: #f0fdf4;
+  --badge-color: #86efac;
+  --badge-light: #15803d;
+  --badge-dark: #052e16;
+
+  --badge-text: #dcfce7;
+  --badge-border: #166534;
+
   font-weight: var(--fw-semibold);
 }
-.badge--success .badge__dot,
-.badge--active .badge__dot {
-  background-color: #22c55e;
-  border-color: #22c55e;
-}
+
+
+/* ==========================================================================
+   DANGER — Deep Crimson
+   ========================================================================== */
 
 .badge--danger {
-  color: #b91c1c;
-  border-color: #fecaca;
-  background-color: #fef2f2;
+  --badge-color: #fca5a5;
+  --badge-light: #b91c1c;
+  --badge-dark: #450a0a;
+
+  --badge-text: #fee2e2;
+  --badge-border: #991b1b;
+
   font-weight: var(--fw-semibold);
 }
-.badge--danger .badge__dot {
-  background-color: #ef4444;
-  border-color: #ef4444;
-}
 
-/* ---------- Fixed width (table columns) ---------- */
+
+/* ==========================================================================
+   FIXED
+   ========================================================================== */
 
 .badge--fixed {
   min-width: 96px;
   justify-content: center;
 }
 
+
 /* ==========================================================================
-   Dark theme
-   Same hues, but shifted to darker/muted backgrounds with brighter text
-   so contrast holds up on a dark surface. Pick the selector matching your
-   app's theming convention — [data-theme="dark"], .dark, or the media query.
+   HOVER
    ========================================================================== */
 
-[data-theme="dark"] .badge--neutral,
-.dark .badge--neutral {
-  color: #9ca3af;
-  border-color: #374151;
-  background-color: #1f2937;
-}
-[data-theme="dark"] .badge--neutral .badge__dot,
-.dark .badge--neutral .badge__dot {
-  background-color: #6b7280;
-  border-color: #6b7280;
+.badge:hover {
+  transform: translateY(-1px);
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 4px 12px rgba(0, 0, 0, 0.18),
+    0 0 12px color-mix(
+      in srgb,
+      var(--badge-color) 18%,
+      transparent
+    );
 }
 
-[data-theme="dark"] .badge--info,
-.dark .badge--info {
-  color: #93c5fd;
-  border-color: #1e40af;
-  background-color: #1e3a5f;
-}
-[data-theme="dark"] .badge--info .badge__dot,
-.dark .badge--info .badge__dot {
-  background-color: #60a5fa;
-  border-color: #60a5fa;
-}
 
-[data-theme="dark"] .badge--pending,
-[data-theme="dark"] .badge--warning,
-.dark .badge--pending,
-.dark .badge--warning {
-  color: #fcd34d;
-  border-color: #92400e;
-  background-color: #45300a;
-}
-[data-theme="dark"] .badge--pending .badge__dot,
-[data-theme="dark"] .badge--warning .badge__dot,
-.dark .badge--pending .badge__dot,
-.dark .badge--warning .badge__dot {
-  background-color: #fbbf24;
-  border-color: #fbbf24;
-}
+/* ==========================================================================
+   DARK MODE — Slightly richer
+   ========================================================================== */
 
-[data-theme="dark"] .badge--success,
-[data-theme="dark"] .badge--active,
-.dark .badge--success,
-.dark .badge--active {
-  color: #86efac;
-  border-color: #166534;
-  background-color: #14301f;
-}
-[data-theme="dark"] .badge--success .badge__dot,
-[data-theme="dark"] .badge--active .badge__dot,
-.dark .badge--success .badge__dot,
-.dark .badge--active .badge__dot {
-  background-color: #4ade80;
-  border-color: #4ade80;
-}
-
-[data-theme="dark"] .badge--danger,
-.dark .badge--danger {
-  color: #fca5a5;
-  border-color: #991b1b;
-  background-color: #3f1414;
-}
-[data-theme="dark"] .badge--danger .badge__dot,
-.dark .badge--danger .badge__dot {
-  background-color: #f87171;
-  border-color: #f87171;
-}
-
-/* Fallback: respects OS-level dark mode if you have no manual toggle */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not(.light) .badge--neutral {
-    color: #9ca3af;
-    border-color: #374151;
-    background-color: #1f2937;
-  }
-  :root:not([data-theme="light"]):not(.light) .badge--neutral .badge__dot {
-    background-color: #6b7280;
-    border-color: #6b7280;
-  }
-
-  :root:not([data-theme="light"]):not(.light) .badge--info {
-    color: #93c5fd;
-    border-color: #1e40af;
-    background-color: #1e3a5f;
-  }
-  :root:not([data-theme="light"]):not(.light) .badge--info .badge__dot {
-    background-color: #60a5fa;
-    border-color: #60a5fa;
-  }
-
-  :root:not([data-theme="light"]):not(.light) .badge--pending,
-  :root:not([data-theme="light"]):not(.light) .badge--warning {
-    color: #fcd34d;
-    border-color: #92400e;
-    background-color: #45300a;
-  }
-  :root:not([data-theme="light"]):not(.light) .badge--pending .badge__dot,
-  :root:not([data-theme="light"]):not(.light) .badge--warning .badge__dot {
-    background-color: #fbbf24;
-    border-color: #fbbf24;
-  }
-
-  :root:not([data-theme="light"]):not(.light) .badge--success,
-  :root:not([data-theme="light"]):not(.light) .badge--active {
-    color: #86efac;
-    border-color: #166534;
-    background-color: #14301f;
-  }
-  :root:not([data-theme="light"]):not(.light) .badge--success .badge__dot,
-  :root:not([data-theme="light"]):not(.light) .badge--active .badge__dot {
-    background-color: #4ade80;
-    border-color: #4ade80;
-  }
-
-  :root:not([data-theme="light"]):not(.light) .badge--danger {
-    color: #fca5a5;
-    border-color: #991b1b;
-    background-color: #3f1414;
-  }
-  :root:not([data-theme="light"]):not(.light) .badge--danger .badge__dot {
-    background-color: #f87171;
-    border-color: #f87171;
-  }
+[data-theme="dark"] .badge,
+.dark .badge {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 2px 6px rgba(0, 0, 0, 0.25);
 }

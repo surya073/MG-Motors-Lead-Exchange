@@ -20,10 +20,12 @@ const dealerCrmIntegrationRoutes = require('./routes/dealerCrmIntegrationRoutes'
 
 
 const app = express();
-app.use(express.json({ limit: '20mb' }));
 
 
 app.use('/', webhookRoutes);
+
+app.use(express.json({ limit: '20mb' }));
+
 app.use('/', cronRoutes);
 
 
@@ -387,6 +389,8 @@ app.use('/', onDemandDashboardRoutes);
 app.use('/', adminUserRoutes);
 app.use('/', notificationRoutes);
 app.use('/', aiAssistantRoutes);
-app.use('/', dealerCrmIntegrationRoutes);
+
+app.use('/admin/dealers', dealerCrmIntegrationRoutes);
+
 
 module.exports = app;

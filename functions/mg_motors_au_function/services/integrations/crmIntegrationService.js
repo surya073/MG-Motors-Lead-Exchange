@@ -16,6 +16,8 @@ const INTEGRATION_LOGS_TABLE = 'integration_logs';
 const WEBHOOK_EVENTS_TABLE = 'webhook_events';
 const LEADS_TABLE = 'leads';
 
+   
+
 /**
  * crmIntegrationService.js
  * -----------------------------------------------------------------------
@@ -52,6 +54,7 @@ async function getIntegrationByDealerCode(catalystApp, dealerCode) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE dealer_code = '${safeQuoteForZcql(dealerCode)}' LIMIT 1`
   );
+  logger.info('crmIntegrationService', `getIntegrationByDealerCode(${dealerCode}) rows=${rows.length} raw=${JSON.stringify(rows)}`); // TEMP DEBUG
   return rows.length > 0 ? rows[0][DEALER_INTEGRATIONS_TABLE] : null;
 }
 
@@ -86,6 +89,10 @@ async function writeLog(catalystApp, entry) {
  * and ROWID) already produced by mapCrmRecordToLeadRow there — we do
  * NOT re-fetch or re-shape anything here.
  */
+
+
+
+
 async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   if (!integration.outbound_enabled) {
     return { skipped: true, reason: 'OUTBOUND_DISABLED' };
@@ -118,7 +125,13 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     } else {
       result = await adapter.createLead(catalystApp, integration, payload);
       operation = 'CREATE_LEAD';
+      
+      
     }
+
+   
+
+    logger.info('crmIntegrationService', `${operation} raw Zoho response: ${JSON.stringify(result.raw)}`);
 
     const sourceHash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
     const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);

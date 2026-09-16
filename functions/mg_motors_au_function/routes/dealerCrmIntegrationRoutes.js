@@ -7,6 +7,8 @@ const crmIntegrationService = require('../services/integrations/crmIntegrationSe
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 
+const crypto = require('crypto');
+
 /**
  * dealerCrmIntegrationRoutes.js
  * -----------------------------------------------------------------------
@@ -26,11 +28,17 @@ const LEADS_TABLE = 'leads';
 function safeConfig(integration) {
   if (!integration) return null;
   const { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
-    create_lead_endpoint, update_lead_endpoint, http_method, webhook_enabled,
-    outbound_enabled, inbound_enabled, status, last_tested_at, last_sync_at } = integration;
+    create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
+    oauth_accounts_domain, webhook_enabled, outbound_enabled, inbound_enabled,
+    status, last_tested_at, last_sync_at } = integration;
   return { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
-    create_lead_endpoint, update_lead_endpoint, http_method, webhook_enabled,
-    outbound_enabled, inbound_enabled, status, last_tested_at, last_sync_at };
+    create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
+    oauth_accounts_domain, webhook_enabled, outbound_enabled, inbound_enabled,
+    status, last_tested_at, last_sync_at };
+  // NOTE: oauth_accounts_domain is not a secret (it's just a regional
+  // API base like https://accounts.zoho.in) — safe to return as-is,
+  // unlike the actual client secret/refresh token which never leave
+  // integration_credentials.
 }
 
 router.get('/:dealerCode/integration', requireAdminRole, async (req, res) => {
@@ -44,10 +52,22 @@ router.get('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
     if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
 
-    const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[integration.auth_type];
-    const hasCred = credType ? await integrationAuthService.hasCredential(catalystApp, integration.ROWID, credType) : false;
+    let hasCredential;
+    if (integration.crm_type === 'ZOHO_CRM') {
+      // Three credentials for this crm_type — report whether ALL
+      // three are present, since a partial set can't authenticate.
+      const [hasClientId, hasClientSecret, hasRefreshToken] = await Promise.all([
+        integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'OAUTH2_CLIENT_ID'),
+        integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'OAUTH2_CLIENT_SECRET'),
+        integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'OAUTH2_REFRESH_TOKEN'),
+      ]);
+      hasCredential = hasClientId && hasClientSecret && hasRefreshToken;
+    } else {
+      const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[integration.auth_type];
+      hasCredential = credType ? await integrationAuthService.hasCredential(catalystApp, integration.ROWID, credType) : false;
+    }
 
-    res.json({ integration: safeConfig(integration), hasCredential: hasCred });
+    res.json({ integration: safeConfig(integration), hasCredential });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET integration failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
@@ -67,6 +87,11 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
 
+    const isZohoCrm = body.crm_type === 'ZOHO_CRM';
+    if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM' && !body.oauth_accounts_domain) {
+      return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
+    }
+
     const table = catalystApp.datastore().table('dealer_integrations');
     let integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
 
@@ -76,10 +101,17 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       crm_type: body.crm_type || 'GENERIC_REST',
       crm_name: body.crm_name || null,
       base_url: body.base_url || null,
-      auth_type: body.auth_type || null,
+      // ZOHO_CRM doesn't use auth_type (its auth is handled entirely
+      // via crm_type branching in the adapter) — store null so
+      // buildAuthHeaders' switch/default doesn't get confused later
+      // if crm_type ever changes back to GENERIC_REST without
+      // auth_type being re-set.
+      auth_type: isZohoCrm ? null : (body.auth_type || null),
       create_lead_endpoint: body.create_lead_endpoint || null,
       update_lead_endpoint: body.update_lead_endpoint || null,
       http_method: body.http_method || 'POST',
+      update_http_method: body.update_http_method || 'PUT',
+      oauth_accounts_domain: isZohoCrm ? (body.oauth_accounts_domain || null) : null,
       webhook_enabled: Boolean(body.webhook_enabled),
       outbound_enabled: true,
       inbound_enabled: true,
@@ -92,7 +124,23 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       integration = await table.insertRow(fields);
     }
 
-    if (body.credential && body.auth_type) {
+    if (isZohoCrm) {
+      // Three separate credentials — each optional per-request (blank
+      // means "keep existing"), same contract as the single-credential
+      // path below.
+      const credentialWrites = [
+        ['oauth_client_id', 'OAUTH2_CLIENT_ID'],
+        ['oauth_client_secret', 'OAUTH2_CLIENT_SECRET'],
+        ['oauth_refresh_token', 'OAUTH2_REFRESH_TOKEN'],
+      ];
+      await Promise.all(
+        credentialWrites
+          .filter(([bodyKey]) => body[bodyKey])
+          .map(([bodyKey, credType]) =>
+            integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body[bodyKey])
+          )
+      );
+    } else if (body.credential && body.auth_type) {
       const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[body.auth_type];
       if (credType) {
         await integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body.credential);
@@ -254,5 +302,29 @@ router.post('/:dealerCode/integration/sync', requireAdminRole, async (req, res) 
     res.status(500).json({ error: err.code || 'INTERNAL_ERROR' });
   }
 });
+
+// POST — generate/rotate the webhook secret. Returns the PLAINTEXT
+// secret exactly once, in the response body — never stored anywhere
+// retrievable again after this. Admin must copy it immediately and
+// paste it into the dealer CRM's outbound webhook config.
+router.post('/:dealerCode/integration/webhook-secret', requireAdminRole, async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { dealerCode } = req.params;
+
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+
+    const secret = crypto.randomBytes(32).toString('hex');
+    await integrationAuthService.saveCredential(catalystApp, integration.ROWID, 'WEBHOOK_SECRET', secret);
+
+    res.json({ webhookSecret: secret });
+  } catch (err) {
+    logger.error('dealerCrmIntegrationRoutes', `Webhook secret generation failed for ${dealerCode}`, err);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+
 
 module.exports = router;
