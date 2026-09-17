@@ -50,12 +50,163 @@ const SYNC_TYPE_LABELS = {
   Lead_Sync: "Lead Sync",
 };
 
-// Happy-path statuses run clean; anything else (Partial/Failed/unknown
-// error states) is treated as an unhappy-path run for the toggle and
-// the detail panel's banner.
 const HAPPY_STATUSES = new Set(["Success"]);
-
 const classifyPath = (status) => (HAPPY_STATUSES.has(status) ? "happy" : "unhappy");
+
+// =========================================================
+// SCENARIO CATALOG — the client's full Happy/Unhappy path matrix.
+// =========================================================
+const SCENARIO_CATALOG = {
+  "happy-1": {
+    path: "happy",
+    number: 1,
+    label: "New enquiry routed successfully",
+    source: "OEM CRM",
+    description:
+      "New enquiry created in OEM CRM with status = 'Update Pending'. Fires via OEM webhook (or scheduled poll of records where Status = Update Pending). Mandatory fields present.",
+    color: { bg: "#dcfce7", text: "#16a34a" },
+  },
+  "happy-2": {
+    path: "happy",
+    number: 2,
+    label: "Dealer progresses enquiry (status sync)",
+    source: "Dealer CRM",
+    description:
+      "Dealer CRM sends a receipt on accept, then subsequent status changes. Fires on dealer webhook per change, plus a daily scheduled reconcile pull.",
+    color: { bg: "#ccfbf1", text: "#0d9488" },
+  },
+  "happy-3": {
+    path: "happy",
+    number: 3,
+    label: "Duplicate detected",
+    source: "Middleware",
+    description:
+      "During ingest of a new enquiry. Dedupe rule matches an existing record: same Enq. ID (idempotent replay) OR match on email/mobile + name for the same dealer within the configured window.",
+    color: { bg: "#cffafe", text: "#0891b2" },
+  },
+  "happy-4": {
+    path: "happy",
+    number: 4,
+    label: "Integration recovery (replay)",
+    source: "Scheduler",
+    description:
+      "Connectivity is restored after an outage and queued messages exist. The retry/replay processor runs.",
+    color: { bg: "#dbeafe", text: "#2563eb" },
+  },
+  "happy-5": {
+    path: "happy",
+    number: 5,
+    label: "Data synchronisation (dealer → OEM)",
+    source: "Dealer CRM",
+    description:
+      "Dealer updates customer/enquiry fields. Fires on dealer change event, plus daily scheduled pull.",
+    color: { bg: "#d1fae5", text: "#059669" },
+  },
+  "unhappy-1": {
+    path: "unhappy",
+    number: 1,
+    label: "API / integration failure",
+    source: "Middleware",
+    description:
+      "During push to the dealer: adapter returns timeout, 5xx, or connection error (a recoverable failure).",
+    color: { bg: "#fee2e2", text: "#dc2626" },
+  },
+  "unhappy-2": {
+    path: "unhappy",
+    number: 2,
+    label: "Invalid / missing data",
+    source: "Middleware",
+    description:
+      "During validation on ingest from OEM: a mandatory field is missing or a value fails format/business rules. NON-recoverable — no retry.",
+    color: { bg: "#ffe4e6", text: "#e11d48" },
+  },
+  "unhappy-3": {
+    path: "unhappy",
+    number: 3,
+    label: "Dealer unavailable (after 24h retry)",
+    source: "Scheduler",
+    description: "Mapped dealer is inactive/unavailable and the retry window (24h) is exhausted.",
+    color: { bg: "#ffedd5", text: "#ea580c" },
+  },
+  "unhappy-4": {
+    path: "unhappy",
+    number: 4,
+    label: "Status update failure (dealer → OEM)",
+    source: "Middleware",
+    description: "A dealer update is received but the write to OEM fails (recoverable).",
+    color: { bg: "#fef3c7", text: "#d97706" },
+  },
+  "unhappy-5": {
+    path: "unhappy",
+    number: 5,
+    label: "Wrong / rejected dealer mapping",
+    source: "Middleware",
+    description:
+      "During routing: postcode resolves to no dealer, an ambiguous dealer, or an invalid postcode-to-dealer configuration.",
+    color: { bg: "#fce7f3", text: "#db2777" },
+  },
+  "unhappy-6": {
+    path: "unhappy",
+    number: 6,
+    label: "Ownership conflict",
+    source: "Middleware",
+    description: "OEM and dealer independently update the same enquiry/field (concurrent edits).",
+    color: { bg: "#fae8ff", text: "#c026d3" },
+  },
+  "unhappy-7": {
+    path: "unhappy",
+    number: 7,
+    label: "Out-of-order events",
+    source: "Middleware",
+    description: "A status update arrives before the enquiry-created record exists.",
+    color: { bg: "#fee2e2", text: "#7f1d1d" },
+  },
+  "unhappy-8": {
+    path: "unhappy",
+    number: 8,
+    label: "Consent / privacy mismatch",
+    source: "Middleware",
+    description:
+      "Consent/privacy data is incomplete or incorrect (e.g. Privacy Opt-In missing/mismatched) at OEM→dealer send or on dealer receipt.",
+    color: { bg: "#ede9fe", text: "#7c3aed" },
+  },
+  "unhappy-9": {
+    path: "unhappy",
+    number: 9,
+    label: "Dealer rejects enquiry",
+    source: "Dealer CRM",
+    description: "Dealer marks the enquiry as rejected (spam/invalid). A rejection event is received.",
+    color: { bg: "#ffedd5", text: "#9a3412" },
+  },
+  "unhappy-10": {
+    path: "unhappy",
+    number: 10,
+    label: "SLA breach",
+    source: "Scheduler",
+    description: "Dealer received the enquiry but takes no action within 24 hours. The SLA monitor fires.",
+    color: { bg: "#ffe4e6", text: "#be123c" },
+  },
+  "unhappy-11": {
+    path: "unhappy",
+    number: 11,
+    label: "Partial transaction",
+    source: "Middleware",
+    description:
+      "OEM records the enquiry successfully but the dealer creation fails, leaving a mismatch.",
+    color: { bg: "#fef3c7", text: "#92400e" },
+  },
+  "unhappy-12": {
+    path: "unhappy",
+    number: 12,
+    label: "Dealer CRM migration / offboarding",
+    source: "Scheduler",
+    description:
+      "Dealer changes CRM or leaves the network. Eligible enquiries = status NOT IN (Not Qualified, Lost, Dropped) AND age_in_days < 14.",
+    color: { bg: "#f1f5f9", text: "#475569" },
+  },
+};
+
+const SCENARIO_LIST = Object.entries(SCENARIO_CATALOG).map(([code, info]) => ({ code, ...info }));
 
 const PATH_FILTER_OPTIONS = [
   { value: "all", label: "All runs" },
@@ -63,25 +214,110 @@ const PATH_FILTER_OPTIONS = [
   { value: "unhappy", label: "Unhappy" },
 ];
 
-// Copy shown in the detail panel's status banner. Swap in the real
-// client-provided wording here once available — this is the single
-// place it needs to change.
-const PATH_MESSAGES = {
-  happy: {
-    heading: "Sync Successful",
-    message: "This sync completed cleanly — all records were processed and synced without errors.",
-  },
-  unhappy: {
-    heading: "Sync Failed",
-    message: "Some records were not synced. Check the error details below for more information.",
-  },
-};
-
 const DETAIL_TABS = [
-  { key: "overview", label: "Overview", icon: Activity },
+  { key: "overview", label: "Overview" },
   { key: "records", label: "Records" },
   { key: "errors", label: "Error Details" },
 ];
+
+const normalizeScenarioCode = (raw) => {
+  if (!raw) return null;
+  return String(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+};
+
+// ---------------------------------------------------------
+// Best-effort guess used only when a log has no explicit
+// scenario_code tagged on it. Uses whatever signal is already on
+// the aggregate sync_logs row (trigger, counts, error text). This
+// is an inference, not ground truth — the backend should tag
+// scenario_code directly the moment it can, which always takes
+// priority over this guess (see resolveScenario below).
+// ---------------------------------------------------------
+const guessHappyCode = (log) => {
+  const trigger = (log.sync_trigger || "").toLowerCase();
+  const inserted = Number(log.records_inserted) || 0;
+  const updated = Number(log.records_updated) || 0;
+  const fetched = Number(log.total_records_fetched) || 0;
+  const skipped = Math.max(fetched - inserted - updated, 0);
+
+  if (skipped > 0 && fetched > 0) return "happy-3"; // fetched but neither inserted nor updated → likely deduped/skipped
+  if (trigger.includes("schedul") || trigger.includes("retry") || trigger.includes("replay")) return "happy-4";
+  if (log.sync_type === "Dealer_Sync" && updated > 0) return "happy-5";
+  if (trigger.includes("webhook") && inserted > 0) return "happy-1";
+  if (trigger.includes("webhook") && updated > 0) return "happy-2";
+  if (inserted > 0) return "happy-1";
+  if (updated > 0) return "happy-2";
+  return "happy-1";
+};
+
+const UNHAPPY_KEYWORD_RULES = [
+  { code: "unhappy-3", keywords: ["dealer unavailable", "inactive dealer", "dealer inactive"] },
+  { code: "unhappy-4", keywords: ["write to oem", "oem update failed", "oem write failed"] },
+  { code: "unhappy-5", keywords: ["postcode", "dealer mapping", "ambiguous dealer", "no dealer"] },
+  { code: "unhappy-6", keywords: ["conflict", "concurrent"] },
+  { code: "unhappy-7", keywords: ["out of order", "out-of-order", "sequence"] },
+  { code: "unhappy-8", keywords: ["consent", "privacy", "opt-in", "opt in"] },
+  { code: "unhappy-9", keywords: ["reject", "spam"] },
+  { code: "unhappy-10", keywords: ["sla", "24 hour", "24h", "no action"] },
+  { code: "unhappy-11", keywords: ["partial transaction", "mismatch"] },
+  { code: "unhappy-12", keywords: ["migration", "offboard"] },
+  { code: "unhappy-2", keywords: ["missing", "mandatory", "required field", "invalid"] },
+  { code: "unhappy-1", keywords: ["timeout", "connection", "econnrefused", "5xx", "unavailable"] },
+];
+
+const guessUnhappyCode = (log) => {
+  const text = (log.error_message || "").toLowerCase();
+  for (const { code, keywords } of UNHAPPY_KEYWORD_RULES) {
+    if (keywords.some((kw) => text.includes(kw))) return code;
+  }
+  return "unhappy-1";
+};
+
+// Prefers an explicit scenario_code tagged on the log by the backend;
+// falls back to the heuristic guess above when absent, so every log
+// always resolves to a specific numbered scenario.
+const resolveScenario = (log) => {
+  const raw = log?.scenario_code || log?.scenario || log?.path_code || log?.scenarioCode;
+  const explicitCode = normalizeScenarioCode(raw);
+  const hasExplicit = Boolean(explicitCode && SCENARIO_CATALOG[explicitCode]);
+  const path = classifyPath(log?.status);
+  const code = hasExplicit ? explicitCode : path === "happy" ? guessHappyCode(log) : guessUnhappyCode(log);
+  const info = SCENARIO_CATALOG[code];
+  return { code, info, path: info.path, guessed: !hasExplicit };
+};
+
+const shortText = (text, max = 78) =>
+  !text ? "" : text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+function ScenarioBadge({ resolved }) {
+  const { path, number, label, color } = resolved.info;
+  return (
+    <span
+      className={`sync-logs__scenario-badge ${resolved.guessed ? "sync-logs__scenario-badge--guessed" : ""}`}
+      style={{ backgroundColor: color.bg, color: color.text }}
+      title={resolved.guessed ? `${label} (estimated from log data)` : label}
+    >
+      {path === "happy" ? "Happy" : "Unhappy"} {number}
+    </span>
+  );
+}
+
+function ScenarioMessage({ resolved }) {
+  const { color, description } = resolved.info;
+  return (
+    <span
+      className="sync-logs__scenario-message"
+      style={{ backgroundColor: color.bg, color: color.text, borderLeftColor: color.text }}
+      title={description}
+    >
+      {shortText(description)}
+    </span>
+  );
+}
 
 export default function SyncLogsPage() {
   const { showAlert } = useAlerts();
@@ -95,6 +331,7 @@ export default function SyncLogsPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [triggeredByFilter, setTriggeredByFilter] = useState("");
   const [pathFilter, setPathFilter] = useState("all");
+  const [scenarioFilter, setScenarioFilter] = useState("");
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
 
@@ -124,8 +361,6 @@ export default function SyncLogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset to the Overview tab each time a different log is opened, and
-  // close on Escape.
   useEffect(() => {
     if (!selectedLog) return undefined;
     setActiveTab("overview");
@@ -184,8 +419,6 @@ export default function SyncLogsPage() {
     else await handleSyncLeads();
   };
 
-  // Statuses / triggered-by values derived from actual log data — no
-  // hardcoded picklist to drift out of sync.
   const statuses = useMemo(
     () => [...new Set(logs.map((l) => l.status).filter(Boolean))].sort(),
     [logs]
@@ -214,12 +447,21 @@ export default function SyncLogsPage() {
     []
   );
 
-  // Counts for the toggle labels, computed pre-pathFilter so switching
-  // segments doesn't make its own count disappear.
+  const scenarioOptions = useMemo(() => {
+    const relevant = SCENARIO_LIST.filter((s) => pathFilter === "all" || s.path === pathFilter);
+    return [
+      { value: "", label: pathFilter === "all" ? "All scenarios" : `All ${pathFilter} scenarios` },
+      ...relevant.map((s) => ({
+        value: s.code,
+        label: `${s.path === "happy" ? "Happy" : "Unhappy"} ${s.number} — ${s.label}`,
+      })),
+    ];
+  }, [pathFilter]);
+
   const pathCounts = useMemo(() => {
     const counts = { happy: 0, unhappy: 0 };
     logs.forEach((log) => {
-      counts[classifyPath(log.status)] += 1;
+      counts[resolveScenario(log).path] += 1;
     });
     return counts;
   }, [logs]);
@@ -227,18 +469,27 @@ export default function SyncLogsPage() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return logs.filter((log) => {
+      const resolved = resolveScenario(log);
       const matchesType = !typeFilter || log.sync_type === typeFilter;
       const matchesStatus = !statusFilter || log.status === statusFilter;
       const matchesTriggeredBy = !triggeredByFilter || log.triggered_by === triggeredByFilter;
-      const matchesPath = pathFilter === "all" || classifyPath(log.status) === pathFilter;
+      const matchesPath = pathFilter === "all" || resolved.path === pathFilter;
+      const matchesScenario = !scenarioFilter || resolved.code === scenarioFilter;
       const matchesSearch =
         !term ||
         [log.sync_type, log.sync_trigger, log.triggered_by, log.status]
           .filter(Boolean)
           .some((field) => field.toLowerCase().includes(term));
-      return matchesType && matchesStatus && matchesTriggeredBy && matchesPath && matchesSearch;
+      return (
+        matchesType &&
+        matchesStatus &&
+        matchesTriggeredBy &&
+        matchesPath &&
+        matchesScenario &&
+        matchesSearch
+      );
     });
-  }, [logs, search, typeFilter, statusFilter, triggeredByFilter, pathFilter]);
+  }, [logs, search, typeFilter, statusFilter, triggeredByFilter, pathFilter, scenarioFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
@@ -268,6 +519,12 @@ export default function SyncLogsPage() {
 
   const handlePathFilterChange = (value) => {
     setPathFilter(value);
+    setScenarioFilter("");
+    resetPage();
+  };
+
+  const handleScenarioFilterChange = (value) => {
+    setScenarioFilter(value);
     resetPage();
   };
 
@@ -281,7 +538,8 @@ export default function SyncLogsPage() {
     Boolean(typeFilter) ||
     Boolean(statusFilter) ||
     Boolean(triggeredByFilter) ||
-    pathFilter !== "all";
+    pathFilter !== "all" ||
+    Boolean(scenarioFilter);
 
   const clearFilters = () => {
     setSearch("");
@@ -289,10 +547,24 @@ export default function SyncLogsPage() {
     setStatusFilter("");
     setTriggeredByFilter("");
     setPathFilter("all");
+    setScenarioFilter("");
     resetPage();
   };
 
   const columns = [
+    {
+      key: "scenario",
+      label: "Scenario",
+      render: (row) => {
+        const resolved = resolveScenario(row);
+        return (
+          <div className="sync-logs__scenario-cell">
+            <ScenarioBadge resolved={resolved} />
+            <ScenarioMessage resolved={resolved} />
+          </div>
+        );
+      },
+    },
     {
       key: "sync_type",
       label: "Type",
@@ -342,8 +614,6 @@ export default function SyncLogsPage() {
 
   const anySyncing = syncingDealers || syncingLeads;
 
-  // Try to make sense of error_message as structured data; fall back
-  // to a single plain-text entry if it isn't JSON.
   const parsedErrors = useMemo(() => {
     if (!selectedLog?.error_message) return [];
     try {
@@ -354,14 +624,25 @@ export default function SyncLogsPage() {
     }
   }, [selectedLog]);
 
-  const path = selectedLog ? classifyPath(selectedLog.status) : "happy";
-  const pathInfo = PATH_MESSAGES[path];
+  const resolvedSelected = selectedLog ? resolveScenario(selectedLog) : null;
+  const path = resolvedSelected ? resolvedSelected.path : "happy";
+  const bannerHeading = resolvedSelected
+    ? `${resolvedSelected.path === "happy" ? "Happy" : "Unhappy"} ${resolvedSelected.info.number} — ${
+        resolvedSelected.info.label
+      }`
+    : "";
+  const bannerMessage = resolvedSelected ? resolvedSelected.info.description : "";
+  const bannerColor = resolvedSelected ? resolvedSelected.info.color : { bg: "#f0fdf4", text: "#16a34a" };
 
   const syncInfoFields = selectedLog
     ? [
         { icon: User, label: "Creator ID", value: selectedLog.CREATORID },
         { icon: Zap, label: "Sync Type", value: SYNC_TYPE_LABELS[selectedLog.sync_type] || selectedLog.sync_type },
-        { icon: Activity, label: "Triggered By", value: selectedLog.triggered_by },
+        {
+          icon: Activity,
+          label: "Trigger Source",
+          value: resolvedSelected?.info?.source || selectedLog.triggered_by,
+        },
         { icon: RefreshCw, label: "Sync Trigger", value: selectedLog.sync_trigger },
         { icon: CheckCircle2, label: "Status", value: selectedLog.status, badge: true },
       ].filter((f) => f.value !== undefined && f.value !== null && f.value !== "")
@@ -379,7 +660,9 @@ export default function SyncLogsPage() {
 
   const footnote = selectedLog
     ? `This sync was triggered ${
-        selectedLog.sync_trigger === "Webhook" ? "automatically via webhook" : `via ${selectedLog.sync_trigger || "an unspecified trigger"}`
+        selectedLog.sync_trigger === "Webhook"
+          ? "automatically via webhook"
+          : `via ${selectedLog.sync_trigger || "an unspecified trigger"}`
       }${selectedLog.triggered_by ? ` from ${selectedLog.triggered_by}` : ""}.`
     : "";
 
@@ -476,6 +759,13 @@ export default function SyncLogsPage() {
         </div>
 
         <Dropdown
+          ariaLabel="Filter by scenario"
+          value={scenarioFilter}
+          onChange={handleScenarioFilterChange}
+          options={scenarioOptions}
+        />
+
+        <Dropdown
           ariaLabel="Filter by sync type"
           value={typeFilter}
           onChange={handleTypeChange}
@@ -559,6 +849,7 @@ export default function SyncLogsPage() {
                 </div>
               </div>
               <div className="sync-logs__offcanvas-header-right">
+                {resolvedSelected && <ScenarioBadge resolved={resolvedSelected} />}
                 <Badge tone={STATUS_TONES[selectedLog.status] || "neutral"}>{selectedLog.status}</Badge>
                 <button
                   type="button"
@@ -572,15 +863,21 @@ export default function SyncLogsPage() {
             </div>
 
             <div className="sync-logs__offcanvas-body">
-              <div className={`sync-logs__path-banner sync-logs__path-banner--${path}`}>
-                <span className="sync-logs__path-banner-icon">
+              <div
+                className="sync-logs__path-banner"
+                style={{ backgroundColor: bannerColor.bg, borderColor: bannerColor.text }}
+              >
+                <span
+                  className="sync-logs__path-banner-icon"
+                  style={{ backgroundColor: "rgba(255,255,255,0.55)", color: bannerColor.text }}
+                >
                   {path === "happy" ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
                 </span>
                 <div className="sync-logs__path-banner-text">
-                  <h3>{pathInfo.heading}</h3>
-                  <p>{pathInfo.message}</p>
+                  <h3 style={{ color: bannerColor.text }}>{bannerHeading}</h3>
+                  <p>{bannerMessage}</p>
                 </div>
-                <span className="sync-logs__path-banner-decor">
+                <span className="sync-logs__path-banner-decor" style={{ color: bannerColor.text }}>
                   {path === "happy" ? <FileCheck2 size={44} /> : <FileWarning size={44} />}
                 </span>
               </div>
@@ -764,10 +1061,7 @@ export default function SyncLogsPage() {
                   onClick={handleRetryFromDetail}
                   disabled={anySyncing}
                 >
-                  <RefreshCw
-                    size={16}
-                    className={anySyncing ? "sync-logs__sync-icon--spinning" : ""}
-                  />
+                  <RefreshCw size={16} className={anySyncing ? "sync-logs__sync-icon--spinning" : ""} />
                   Retry Sync
                 </button>
               )}

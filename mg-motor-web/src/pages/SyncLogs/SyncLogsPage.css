@@ -6,20 +6,10 @@
 
 .sync-logs__header {
   display: flex;
+  justify-content: flex-end;
   align-items: flex-start;
-  justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
-}
-
-.sync-logs__header h1 {
-  font-weight: var(--fw-semibold);
-}
-
-.sync-logs__header p {
-  margin-top: var(--space-1);
-  font-size: var(--fs-sm);
-  color: var(--color-text-secondary);
 }
 
 .sync-logs__actions {
@@ -107,11 +97,6 @@
   border-color: var(--color-danger);
 }
 
-.sync-logs__notice--success {
-  color: var(--color-success);
-  border-color: var(--color-success);
-}
-
 .sync-logs__notice-close {
   display: inline-flex;
   align-items: center;
@@ -125,7 +110,53 @@
 }
 
 /* =========================================================
-   HAPPY / UNHAPPY PATH TOGGLE (table filter)
+   SCENARIO BADGE + HIGHLIGHTED MESSAGE (table cell)
+   Badge gets its own hue per SCENARIO_CATALOG entry via inline
+   style; the message chip sits directly below it in the same
+   color family with a solid left-border accent so the two read as
+   one unit and the reason is visible without opening the panel.
+   ========================================================= */
+
+.sync-logs__scenario-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: 260px;
+}
+
+.sync-logs__scenario-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.sync-logs__scenario-badge--guessed {
+  outline: 1px dashed currentColor;
+  outline-offset: 1px;
+}
+
+.sync-logs__scenario-message {
+  display: block;
+  padding: 3px 8px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: var(--fw-medium, 500);
+  line-height: 1.4;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* =========================================================
+   HAPPY / UNHAPPY PATH TOGGLE (broad table filter)
    ========================================================= */
 
 .sync-logs__path-toggle {
@@ -242,14 +273,6 @@
   color: var(--color-text-primary);
 }
 
-.sync-logs__filters select {
-  height: 40px;
-  padding-inline: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--fs-sm);
-}
-
 .sync-logs__clear-filters {
   display: inline-flex;
   align-items: center;
@@ -278,6 +301,13 @@
   gap: var(--space-3);
   font-size: var(--fs-sm);
   color: var(--color-text-secondary);
+}
+
+.sync-logs__page-nav {
+  gap: var(--space-3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .sync-logs__pagination button {
@@ -345,9 +375,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sync-logs__offcanvas {
-    animation-duration: 1ms;
-  }
+  .sync-logs__offcanvas,
   .sync-logs__offcanvas-backdrop {
     animation-duration: 1ms;
   }
@@ -399,6 +427,8 @@
   align-items: center;
   gap: var(--space-3);
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .sync-logs__offcanvas-close {
@@ -427,7 +457,7 @@
   gap: var(--space-5);
 }
 
-/* ---------- Happy / unhappy status banner ---------- */
+/* ---------- Scenario status banner (per-scenario colored) ---------- */
 
 .sync-logs__path-banner {
   position: relative;
@@ -436,27 +466,8 @@
   gap: var(--space-3);
   padding: var(--space-4);
   border-radius: var(--radius-lg, 12px);
+  border: 1px solid;
   /* overflow: hidden; */
-}
-
-.sync-logs__path-banner--happy {
-  background-color: #f0fdf4;
-  border: 1px solid #bbf7d0;
-}
-
-.sync-logs__path-banner--unhappy {
-  background-color: #fef2f2;
-  border: 1px solid #fecaca;
-}
-
-[data-theme="dark"] .sync-logs__path-banner--happy {
-  background-color: #14301f;
-  border-color: #166534;
-}
-
-[data-theme="dark"] .sync-logs__path-banner--unhappy {
-  background-color: #3f1414;
-  border-color: #7f1d1d;
 }
 
 .sync-logs__path-banner-icon {
@@ -467,16 +478,6 @@
   height: 40px;
   border-radius: 50%;
   flex-shrink: 0;
-}
-
-.sync-logs__path-banner--happy .sync-logs__path-banner-icon {
-  background-color: #dcfce7;
-  color: #16a34a;
-}
-
-.sync-logs__path-banner--unhappy .sync-logs__path-banner-icon {
-  background-color: #fee2e2;
-  color: #dc2626;
 }
 
 .sync-logs__path-banner-text {
@@ -491,14 +492,6 @@
   margin-bottom: 2px;
 }
 
-.sync-logs__path-banner--happy .sync-logs__path-banner-text h3 {
-  color: #15803d;
-}
-
-.sync-logs__path-banner--unhappy .sync-logs__path-banner-text h3 {
-  color: #b91c1c;
-}
-
 .sync-logs__path-banner-text p {
   font-size: var(--fs-sm);
   color: var(--color-text-secondary);
@@ -511,14 +504,6 @@
   transform: translateY(-50%);
   opacity: 0.12;
   pointer-events: none;
-}
-
-.sync-logs__path-banner--happy .sync-logs__path-banner-decor {
-  color: #16a34a;
-}
-
-.sync-logs__path-banner--unhappy .sync-logs__path-banner-decor {
-  color: #dc2626;
 }
 
 /* ---------- Tabs ---------- */
@@ -819,7 +804,6 @@
     align-items: stretch;
   }
 
-  .sync-logs__filters select,
   .sync-logs__clear-filters {
     width: 100%;
   }
@@ -829,8 +813,20 @@
     gap: var(--space-2);
   }
 
+  .sync-logs__scenario-cell {
+    max-width: 100%;
+  }
+
+  .sync-logs__scenario-message {
+    white-space: normal;
+  }
+
   .sync-logs__offcanvas {
     max-width: 100%;
+  }
+
+  .sync-logs__offcanvas-header-right {
+    justify-content: flex-start;
   }
 
   .sync-logs__detail-grid {
@@ -854,16 +850,4 @@
   .sync-logs__retry-btn {
     justify-content: center;
   }
-}
-
-.sync-logs__header {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.sync-logs__page-nav {
-  gap: var(--space-3);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
 }

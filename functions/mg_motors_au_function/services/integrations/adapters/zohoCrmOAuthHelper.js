@@ -44,7 +44,7 @@ async function getAccessTokenForDealerZoho(catalystApp, integration) {
   // domain (www.zohoapis.in), not accounts domain (accounts.zoho.in).
   // We derive it from crm_name field's stored accounts domain, set at
   // config time — see route changes below.
-  const accountsDomain = integration.oauth_accounts_domain || 'https://accounts.zoho.com';
+  const accountsDomain = integration.oauth_accounts_domain || 'https://accounts.zoho.in';
 
   let response;
   try {
