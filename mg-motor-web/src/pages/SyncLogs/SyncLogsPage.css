@@ -851,3 +851,146 @@
     justify-content: center;
   }
 }
+
+/* =========================================================
+   ADD THESE to SyncLogsPage.css — new rules for the multi-outcome
+   scenario cell and breakdown views. Nothing existing was removed;
+   these are additive.
+   ========================================================= */
+
+.sync-logs__scenario-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sync-logs__scenario-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sync-logs__scenario-breakdown h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.sync-logs__scenario-breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid;
+  border-radius: 6px;
+  background-color: var(--color-surface-alt);
+}
+
+.sync-logs__scenario-breakdown-desc {
+  font-size: var(--fs-xs);
+  color: var(--color-text-secondary);
+}
+
+.sync-logs__error-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-left: 3px solid;
+  border-radius: 6px;
+  background-color: var(--color-surface-alt);
+}
+
+.sync-logs__error-entry-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sync-logs__error-entry-id {
+  font-size: var(--fs-xs);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, monospace);
+}
+
+.sync-logs__error-entry .sync-logs__error-block {
+  margin: 0;
+}
+
+/* =========================================================
+   ADD THESE to SyncLogsPage.css — new rules for the multi-outcome
+   scenario cell and breakdown views. Nothing existing was removed;
+   these are additive.
+   ========================================================= */
+
+.sync-logs__scenario-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sync-logs__scenario-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sync-logs__scenario-breakdown h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.sync-logs__scenario-breakdown-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid;
+  border-radius: 6px;
+  background-color: var(--color-surface-alt);
+}
+
+.sync-logs__scenario-breakdown-desc {
+  font-size: var(--fs-xs);
+  color: var(--color-text-secondary);
+}
+
+.sync-logs__error-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-left: 3px solid;
+  border-radius: 6px;
+  background-color: var(--color-surface-alt);
+}
+
+.sync-logs__error-entry-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sync-logs__error-entry-id {
+  font-size: var(--fs-xs);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono, monospace);
+}
+
+.sync-logs__error-entry .sync-logs__error-block {
+  margin: 0;
+}
+
+.sync-logs__cell-muted {
+  color: var(--color-text-muted);
+  opacity: 0.5;
+}

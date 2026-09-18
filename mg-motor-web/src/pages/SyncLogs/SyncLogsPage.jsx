@@ -50,9 +50,6 @@ const SYNC_TYPE_LABELS = {
   Lead_Sync: "Lead Sync",
 };
 
-const HAPPY_STATUSES = new Set(["Success"]);
-const classifyPath = (status) => (HAPPY_STATUSES.has(status) ? "happy" : "unhappy");
-
 // =========================================================
 // SCENARIO CATALOG — the client's full Happy/Unhappy path matrix.
 // =========================================================
@@ -206,6 +203,13 @@ const SCENARIO_CATALOG = {
   },
 };
 
+// Sort key so bucket lists always render in a stable, sensible order:
+// all Happy scenarios (by number) before all Unhappy ones (by number).
+const catalogSortKey = (code) => {
+  const info = SCENARIO_CATALOG[code];
+  return (info.path === "happy" ? 0 : 1000) + info.number;
+};
+
 const SCENARIO_LIST = Object.entries(SCENARIO_CATALOG).map(([code, info]) => ({ code, ...info }));
 
 const PATH_FILTER_OPTIONS = [
@@ -230,29 +234,27 @@ const normalizeScenarioCode = (raw) => {
 };
 
 // ---------------------------------------------------------
-// Best-effort guess used only when a log has no explicit
-// scenario_code tagged on it. Uses whatever signal is already on
-// the aggregate sync_logs row (trigger, counts, error text). This
-// is an inference, not ground truth — the backend should tag
-// scenario_code directly the moment it can, which always takes
-// priority over this guess (see resolveScenario below).
+// A "failed" record isn't always a real failure. If a record's
+// own error text says it was skipped because it matched an
+// existing lead on Enq. ID / email / mobile, that's Happy-3
+// (Duplicate detected) per the client's own scenario table — not
+// an integration error.
 // ---------------------------------------------------------
-const guessHappyCode = (log) => {
-  const trigger = (log.sync_trigger || "").toLowerCase();
-  const inserted = Number(log.records_inserted) || 0;
-  const updated = Number(log.records_updated) || 0;
-  const fetched = Number(log.total_records_fetched) || 0;
-  const skipped = Math.max(fetched - inserted - updated, 0);
-
-  if (skipped > 0 && fetched > 0) return "happy-3"; // fetched but neither inserted nor updated → likely deduped/skipped
-  if (trigger.includes("schedul") || trigger.includes("retry") || trigger.includes("replay")) return "happy-4";
-  if (log.sync_type === "Dealer_Sync" && updated > 0) return "happy-5";
-  if (trigger.includes("webhook") && inserted > 0) return "happy-1";
-  if (trigger.includes("webhook") && updated > 0) return "happy-2";
-  if (inserted > 0) return "happy-1";
-  if (updated > 0) return "happy-2";
-  return "happy-1";
-};
+const DUPLICATE_KEYWORDS = [
+  "duplicate",
+  "already exists",
+  "already exist",
+  "existing lead",
+  "existing record",
+  "existing enquiry",
+  "matched existing",
+  "same email",
+  "same mobile",
+  "same phone",
+  "email/mobile match",
+  "email or mobile",
+  "idempotent replay",
+];
 
 const UNHAPPY_KEYWORD_RULES = [
   { code: "unhappy-3", keywords: ["dealer unavailable", "inactive dealer", "dealer inactive"] },
@@ -265,57 +267,184 @@ const UNHAPPY_KEYWORD_RULES = [
   { code: "unhappy-10", keywords: ["sla", "24 hour", "24h", "no action"] },
   { code: "unhappy-11", keywords: ["partial transaction", "mismatch"] },
   { code: "unhappy-12", keywords: ["migration", "offboard"] },
-  { code: "unhappy-2", keywords: ["missing", "mandatory", "required field", "invalid"] },
+  {
+    code: "unhappy-2",
+    keywords: [
+      "missing",
+      "mandatory",
+      "required field",
+      "invalid",
+      "dealer_code",
+      "dealer code",
+    ],
+  },
   { code: "unhappy-1", keywords: ["timeout", "connection", "econnrefused", "5xx", "unavailable"] },
 ];
 
-const guessUnhappyCode = (log) => {
-  const text = (log.error_message || "").toLowerCase();
+// Classifies ONE record-level error string into a scenario code.
+// Duplicate signals win first (they're Happy-3, not a failure);
+// otherwise the first matching keyword rule wins; otherwise it
+// falls back to the generic integration-failure bucket.
+const classifyErrorText = (text) => {
+  const lower = (text || "").toLowerCase();
+  if (DUPLICATE_KEYWORDS.some((kw) => lower.includes(kw))) return "happy-3";
   for (const { code, keywords } of UNHAPPY_KEYWORD_RULES) {
-    if (keywords.some((kw) => text.includes(kw))) return code;
+    if (keywords.some((kw) => lower.includes(kw))) return code;
   }
   return "unhappy-1";
 };
 
-// Prefers an explicit scenario_code tagged on the log by the backend;
-// falls back to the heuristic guess above when absent, so every log
-// always resolves to a specific numbered scenario.
-const resolveScenario = (log) => {
-  const raw = log?.scenario_code || log?.scenario || log?.path_code || log?.scenarioCode;
-  const explicitCode = normalizeScenarioCode(raw);
-  const hasExplicit = Boolean(explicitCode && SCENARIO_CATALOG[explicitCode]);
-  const path = classifyPath(log?.status);
-  const code = hasExplicit ? explicitCode : path === "happy" ? guessHappyCode(log) : guessUnhappyCode(log);
-  const info = SCENARIO_CATALOG[code];
-  return { code, info, path: info.path, guessed: !hasExplicit };
+// The backend field has been seen as both error_details (current,
+// an array of {crm_record_id, error}) and error_message (legacy,
+// a single string or JSON blob). Read whichever is present and
+// normalize to a flat list of {recordId, text}.
+const parseErrorEntries = (log) => {
+  const raw = log?.error_details ?? log?.error_message;
+  if (!raw) return [];
+  let parsed;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return [{ recordId: null, text: String(raw) }];
+  }
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  return arr.map((item) => {
+    if (item && typeof item === "object") {
+      return {
+        recordId: item.crm_record_id || item.id || item.recordId || null,
+        text: item.error || item.message || JSON.stringify(item),
+      };
+    }
+    return { recordId: null, text: String(item) };
+  });
+};
+
+// ---------------------------------------------------------
+// Resolves a sync-log ROW into every distinct outcome it actually
+// contains, each with a record count — e.g. "27 fetched" can mean
+// 1 × Happy 1 (new lead), 2 × Unhappy 2 (missing Dealer_Code),
+// 24 × Happy 3 (already existed, correctly skipped) all in one run.
+// This replaces the old one-badge-per-row model, which forced a
+// mixed run into a single misleading bucket.
+// ---------------------------------------------------------
+const resolveRowScenarios = (log) => {
+  const explicitCode = normalizeScenarioCode(
+    log?.scenario_code || log?.scenario || log?.path_code || log?.scenarioCode
+  );
+  if (explicitCode && SCENARIO_CATALOG[explicitCode]) {
+    const total = Number(log.total_records_fetched) || 1;
+    return [
+      {
+        code: explicitCode,
+        info: SCENARIO_CATALOG[explicitCode],
+        count: total,
+        recordIds: [],
+        guessed: false,
+      },
+    ];
+  }
+
+  const inserted = Number(log.records_inserted) || 0;
+  const updated = Number(log.records_updated) || 0;
+  const failed = Number(log.records_failed) || 0;
+  const fetched = Number(log.total_records_fetched) || 0;
+
+  const buckets = new Map(); // code -> { count, recordIds }
+  const addToBucket = (code, count, recordId) => {
+    if (!SCENARIO_CATALOG[code] || count <= 0) return;
+    const existing = buckets.get(code) || { count: 0, recordIds: [] };
+    existing.count += count;
+    if (recordId) existing.recordIds.push(recordId);
+    buckets.set(code, existing);
+  };
+
+  const errorEntries = parseErrorEntries(log);
+  errorEntries.forEach((entry) => addToBucket(classifyErrorText(entry.text), 1, entry.recordId));
+
+  // If the row reports more failures than we have individual error
+  // entries for, bucket the unexplained remainder generically rather
+  // than silently dropping them.
+  const unexplainedFailed = failed - errorEntries.length;
+  if (unexplainedFailed > 0) addToBucket("unhappy-1", unexplainedFailed);
+
+  if (inserted > 0) {
+    const trigger = (log.sync_trigger || "").toLowerCase();
+    addToBucket(trigger.includes("schedul") || trigger.includes("retry") ? "happy-4" : "happy-1", inserted);
+  }
+
+  if (updated > 0) {
+    addToBucket(log.sync_type === "Dealer_Sync" ? "happy-5" : "happy-2", updated);
+  }
+
+  // Anything fetched but neither inserted, updated, nor accounted
+  // for in an error entry was left untouched — that's the dedupe
+  // path (Happy 3): the record already existed so nothing was done.
+  const accounted = inserted + updated + errorEntries.length + Math.max(unexplainedFailed, 0);
+  const skipped = Math.max(fetched - accounted, 0);
+  if (skipped > 0) addToBucket("happy-3", skipped);
+
+  if (buckets.size === 0) {
+    // No counts to go on at all — fall back to the row's own status.
+    addToBucket(log.status === "Success" ? "happy-1" : "unhappy-1", fetched || 1);
+  }
+
+  return Array.from(buckets.entries())
+    .map(([code, { count, recordIds }]) => ({
+      code,
+      info: SCENARIO_CATALOG[code],
+      count,
+      recordIds,
+      guessed: true,
+    }))
+    .sort((a, b) => catalogSortKey(a.code) - catalogSortKey(b.code));
 };
 
 const shortText = (text, max = 78) =>
   !text ? "" : text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
-function ScenarioBadge({ resolved }) {
-  const { path, number, label, color } = resolved.info;
+function ScenarioBadge({ scenario, showCount = true }) {
+  const { path, number, label } = scenario.info;
+  const { color } = scenario.info;
   return (
     <span
-      className={`sync-logs__scenario-badge ${resolved.guessed ? "sync-logs__scenario-badge--guessed" : ""}`}
+      className={`sync-logs__scenario-badge ${scenario.guessed ? "sync-logs__scenario-badge--guessed" : ""}`}
       style={{ backgroundColor: color.bg, color: color.text }}
-      title={resolved.guessed ? `${label} (estimated from log data)` : label}
+      title={scenario.guessed ? `${label} (estimated from log data)` : label}
     >
       {path === "happy" ? "Happy" : "Unhappy"} {number}
+      {showCount && scenario.count > 1 ? ` ×${scenario.count}` : ""}
     </span>
   );
 }
 
-function ScenarioMessage({ resolved }) {
-  const { color, description } = resolved.info;
+// Table-cell version: shows outcome badges for the row. When a path
+// filter is active (Happy/Unhappy tab), only badges matching that
+// path are shown — a mixed row on the Happy tab shows just its
+// happy badges, not the unhappy ones alongside them.
+function ScenarioCell({ scenarios, filterPath = "all" }) {
+  const visible = filterPath === "all" ? scenarios : scenarios.filter((s) => s.info.path === filterPath);
+  const highlighted = visible.find((s) => s.info.path === "unhappy") || visible[0];
   return (
-    <span
-      className="sync-logs__scenario-message"
-      style={{ backgroundColor: color.bg, color: color.text, borderLeftColor: color.text }}
-      title={description}
-    >
-      {shortText(description)}
-    </span>
+    <div className="sync-logs__scenario-cell">
+      <div className="sync-logs__scenario-badges">
+        {visible.map((s) => (
+          <ScenarioBadge key={s.code} scenario={s} />
+        ))}
+      </div>
+      {highlighted && (
+        <span
+          className="sync-logs__scenario-message"
+          style={{
+            backgroundColor: highlighted.info.color.bg,
+            color: highlighted.info.color.text,
+            borderLeftColor: highlighted.info.color.text,
+          }}
+          title={highlighted.info.description}
+        >
+          {shortText(highlighted.info.description)}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -458,10 +587,17 @@ export default function SyncLogsPage() {
     ];
   }, [pathFilter]);
 
+  // Inclusive by design: a mixed run genuinely contains both a happy
+  // and an unhappy outcome, so it counts — and shows — under both
+  // tabs. That's an accurate reflection of the run, not double
+  // counting. "Happy" = "this run had at least one happy outcome",
+  // "Unhappy" = "this run had at least one unhappy outcome".
   const pathCounts = useMemo(() => {
     const counts = { happy: 0, unhappy: 0 };
     logs.forEach((log) => {
-      counts[resolveScenario(log).path] += 1;
+      const scenarios = resolveRowScenarios(log);
+      if (scenarios.some((s) => s.info.path === "happy")) counts.happy += 1;
+      if (scenarios.some((s) => s.info.path === "unhappy")) counts.unhappy += 1;
     });
     return counts;
   }, [logs]);
@@ -469,12 +605,12 @@ export default function SyncLogsPage() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return logs.filter((log) => {
-      const resolved = resolveScenario(log);
+      const scenarios = resolveRowScenarios(log);
       const matchesType = !typeFilter || log.sync_type === typeFilter;
       const matchesStatus = !statusFilter || log.status === statusFilter;
       const matchesTriggeredBy = !triggeredByFilter || log.triggered_by === triggeredByFilter;
-      const matchesPath = pathFilter === "all" || resolved.path === pathFilter;
-      const matchesScenario = !scenarioFilter || resolved.code === scenarioFilter;
+      const matchesPath = pathFilter === "all" || scenarios.some((s) => s.info.path === pathFilter);
+      const matchesScenario = !scenarioFilter || scenarios.some((s) => s.code === scenarioFilter);
       const matchesSearch =
         !term ||
         [log.sync_type, log.sync_trigger, log.triggered_by, log.status]
@@ -555,15 +691,7 @@ export default function SyncLogsPage() {
     {
       key: "scenario",
       label: "Scenario",
-      render: (row) => {
-        const resolved = resolveScenario(row);
-        return (
-          <div className="sync-logs__scenario-cell">
-            <ScenarioBadge resolved={resolved} />
-            <ScenarioMessage resolved={resolved} />
-          </div>
-        );
-      },
+      render: (row) => <ScenarioCell scenarios={resolveRowScenarios(row)} filterPath={pathFilter} />,
     },
     {
       key: "sync_type",
@@ -580,19 +708,33 @@ export default function SyncLogsPage() {
       key: "records_inserted",
       label: "Inserted",
       render: (row) =>
-        row.records_inserted ? <Badge tone="success">{row.records_inserted}</Badge> : row.records_inserted,
+        pathFilter === "unhappy" ? (
+          <span className="sync-logs__cell-muted">—</span>
+        ) : row.records_inserted ? (
+          <Badge tone="success">{row.records_inserted}</Badge>
+        ) : (
+          row.records_inserted
+        ),
     },
     {
       key: "records_updated",
       label: "Updated",
       render: (row) =>
-        row.records_updated ? <Badge tone="info">{row.records_updated}</Badge> : row.records_updated,
+        pathFilter === "unhappy" ? (
+          <span className="sync-logs__cell-muted">—</span>
+        ) : row.records_updated ? (
+          <Badge tone="info">{row.records_updated}</Badge>
+        ) : (
+          row.records_updated
+        ),
     },
     {
       key: "records_failed",
       label: "Failed",
       render: (row) =>
-        row.records_failed ? (
+        pathFilter === "happy" ? (
+          <span className="sync-logs__cell-muted">—</span>
+        ) : row.records_failed ? (
           <Badge tone="danger">{row.records_failed}</Badge>
         ) : (
           <Badge tone="neutral">0</Badge>
@@ -614,35 +756,22 @@ export default function SyncLogsPage() {
 
   const anySyncing = syncingDealers || syncingLeads;
 
-  const parsedErrors = useMemo(() => {
-    if (!selectedLog?.error_message) return [];
-    try {
-      const parsed = JSON.parse(selectedLog.error_message);
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch {
-      return [{ error: selectedLog.error_message }];
-    }
-  }, [selectedLog]);
-
-  const resolvedSelected = selectedLog ? resolveScenario(selectedLog) : null;
-  const path = resolvedSelected ? resolvedSelected.path : "happy";
-  const bannerHeading = resolvedSelected
-    ? `${resolvedSelected.path === "happy" ? "Happy" : "Unhappy"} ${resolvedSelected.info.number} — ${
-        resolvedSelected.info.label
-      }`
-    : "";
-  const bannerMessage = resolvedSelected ? resolvedSelected.info.description : "";
-  const bannerColor = resolvedSelected ? resolvedSelected.info.color : { bg: "#f0fdf4", text: "#16a34a" };
+  const selectedScenarios = useMemo(
+    () => (selectedLog ? resolveRowScenarios(selectedLog) : []),
+    [selectedLog]
+  );
+  const selectedErrorEntries = useMemo(
+    () => (selectedLog ? parseErrorEntries(selectedLog) : []),
+    [selectedLog]
+  );
+  const hasUnhappy = selectedScenarios.some((s) => s.info.path === "unhappy");
+  const hasHappy = selectedScenarios.some((s) => s.info.path === "happy");
+  const isMixedOutcome = hasUnhappy && hasHappy;
 
   const syncInfoFields = selectedLog
     ? [
         { icon: User, label: "Creator ID", value: selectedLog.CREATORID },
         { icon: Zap, label: "Sync Type", value: SYNC_TYPE_LABELS[selectedLog.sync_type] || selectedLog.sync_type },
-        {
-          icon: Activity,
-          label: "Trigger Source",
-          value: resolvedSelected?.info?.source || selectedLog.triggered_by,
-        },
         { icon: RefreshCw, label: "Sync Trigger", value: selectedLog.sync_trigger },
         { icon: CheckCircle2, label: "Status", value: selectedLog.status, badge: true },
       ].filter((f) => f.value !== undefined && f.value !== null && f.value !== "")
@@ -849,7 +978,9 @@ export default function SyncLogsPage() {
                 </div>
               </div>
               <div className="sync-logs__offcanvas-header-right">
-                {resolvedSelected && <ScenarioBadge resolved={resolvedSelected} />}
+                {selectedScenarios.map((s) => (
+                  <ScenarioBadge key={s.code} scenario={s} />
+                ))}
                 <Badge tone={STATUS_TONES[selectedLog.status] || "neutral"}>{selectedLog.status}</Badge>
                 <button
                   type="button"
@@ -863,24 +994,62 @@ export default function SyncLogsPage() {
             </div>
 
             <div className="sync-logs__offcanvas-body">
-              <div
-                className="sync-logs__path-banner"
-                style={{ backgroundColor: bannerColor.bg, borderColor: bannerColor.text }}
-              >
-                <span
-                  className="sync-logs__path-banner-icon"
-                  style={{ backgroundColor: "rgba(255,255,255,0.55)", color: bannerColor.text }}
-                >
-                  {path === "happy" ? <CheckCircle2 size={22} /> : <AlertTriangle size={22} />}
-                </span>
-                <div className="sync-logs__path-banner-text">
-                  <h3 style={{ color: bannerColor.text }}>{bannerHeading}</h3>
-                  <p>{bannerMessage}</p>
+              {isMixedOutcome ? (
+                <div className="sync-logs__scenario-breakdown">
+                  <h4>
+                    <Info size={15} /> This run had a mixed outcome — {selectedScenarios.length} distinct
+                    result{selectedScenarios.length === 1 ? "" : "s"}
+                  </h4>
+                  {selectedScenarios.map((s) => (
+                    <div
+                      key={s.code}
+                      className="sync-logs__scenario-breakdown-row"
+                      style={{ borderLeftColor: s.info.color.text }}
+                    >
+                      <ScenarioBadge scenario={s} />
+                      <span className="sync-logs__scenario-breakdown-desc">{s.info.description}</span>
+                    </div>
+                  ))}
                 </div>
-                <span className="sync-logs__path-banner-decor" style={{ color: bannerColor.text }}>
-                  {path === "happy" ? <FileCheck2 size={44} /> : <FileWarning size={44} />}
-                </span>
-              </div>
+              ) : (
+                selectedScenarios[0] && (
+                  <div
+                    className="sync-logs__path-banner"
+                    style={{
+                      backgroundColor: selectedScenarios[0].info.color.bg,
+                      borderColor: selectedScenarios[0].info.color.text,
+                    }}
+                  >
+                    <span
+                      className="sync-logs__path-banner-icon"
+                      style={{ backgroundColor: "rgba(255,255,255,0.55)", color: selectedScenarios[0].info.color.text }}
+                    >
+                      {selectedScenarios[0].info.path === "happy" ? (
+                        <CheckCircle2 size={22} />
+                      ) : (
+                        <AlertTriangle size={22} />
+                      )}
+                    </span>
+                    <div className="sync-logs__path-banner-text">
+                      <h3 style={{ color: selectedScenarios[0].info.color.text }}>
+                        {selectedScenarios[0].info.path === "happy" ? "Happy" : "Unhappy"}{" "}
+                        {selectedScenarios[0].info.number} — {selectedScenarios[0].info.label}
+                      </h3>
+                      <p>{selectedScenarios[0].info.description}</p>
+                    </div>
+                    <span
+                      className="sync-logs__path-banner-decor"
+                      style={{ color: selectedScenarios[0].info.color.text }}
+                    >
+                      {selectedScenarios[0].info.path === "happy" ? (
+                        <FileCheck2 size={44} />
+                      ) : (
+                        <FileWarning size={44} />
+                      )}
+                    </span>
+                  </div>
+                )
+              )}
 
               <div className="sync-logs__offcanvas-tabs" role="tablist">
                 {DETAIL_TABS.map((tab) => {
@@ -888,7 +1057,7 @@ export default function SyncLogsPage() {
                     tab.key === "records"
                       ? selectedLog.total_records_fetched
                       : tab.key === "errors"
-                      ? parsedErrors.length
+                      ? selectedErrorEntries.length
                       : null;
                   return (
                     <button
@@ -989,41 +1158,23 @@ export default function SyncLogsPage() {
               {activeTab === "records" && (
                 <section className="sync-logs__detail-section">
                   <h4>
-                    <Database size={15} /> Records processed
+                    <Database size={15} /> Outcome breakdown
                   </h4>
-                  <div className="sync-logs__stat-grid">
-                    <div className="sync-logs__stat">
-                      <span className="sync-logs__stat-icon sync-logs__stat-icon--neutral">
-                        <Database size={15} />
-                      </span>
-                      <span className="sync-logs__stat-label">Fetched</span>
-                      <span className="sync-logs__stat-value">{selectedLog.total_records_fetched ?? 0}</span>
-                    </div>
-                    <div className="sync-logs__stat">
-                      <span className="sync-logs__stat-icon sync-logs__stat-icon--success">
-                        <CheckCircle2 size={15} />
-                      </span>
-                      <span className="sync-logs__stat-label">Inserted</span>
-                      <span className="sync-logs__stat-value">{selectedLog.records_inserted ?? 0}</span>
-                    </div>
-                    <div className="sync-logs__stat">
-                      <span className="sync-logs__stat-icon sync-logs__stat-icon--info">
-                        <RefreshCw size={15} />
-                      </span>
-                      <span className="sync-logs__stat-label">Updated</span>
-                      <span className="sync-logs__stat-value">{selectedLog.records_updated ?? 0}</span>
-                    </div>
-                    <div className="sync-logs__stat">
-                      <span className="sync-logs__stat-icon sync-logs__stat-icon--danger">
-                        <AlertTriangle size={15} />
-                      </span>
-                      <span className="sync-logs__stat-label">Failed</span>
-                      <span className="sync-logs__stat-value">{selectedLog.records_failed ?? 0}</span>
-                    </div>
+                  <div className="sync-logs__scenario-breakdown">
+                    {selectedScenarios.map((s) => (
+                      <div
+                        key={s.code}
+                        className="sync-logs__scenario-breakdown-row"
+                        style={{ borderLeftColor: s.info.color.text }}
+                      >
+                        <ScenarioBadge scenario={s} />
+                        <span className="sync-logs__scenario-breakdown-desc">{s.info.description}</span>
+                      </div>
+                    ))}
                   </div>
                   <p className="sync-logs__detail-note">
-                    Row-level record detail isn't tracked on this sync log yet — these are the aggregate
-                    counts from the run.
+                    Row-level record IDs are only available for failed records (see Error Details) — the
+                    rest is derived from the run's aggregate counts.
                   </p>
                 </section>
               )}
@@ -1033,17 +1184,27 @@ export default function SyncLogsPage() {
                   <h4>
                     <AlertTriangle size={15} /> Error Details
                   </h4>
-                  {parsedErrors.length === 0 ? (
+                  {selectedErrorEntries.length === 0 ? (
                     <div className="sync-logs__empty-state">
                       <CheckCircle2 size={20} />
                       No errors were recorded for this sync run.
                     </div>
                   ) : (
-                    parsedErrors.map((err, idx) => (
-                      <pre className="sync-logs__error-block" key={idx}>
-                        {JSON.stringify(err, null, 2)}
-                      </pre>
-                    ))
+                    selectedErrorEntries.map((entry, idx) => {
+                      const code = classifyErrorText(entry.text);
+                      const info = SCENARIO_CATALOG[code];
+                      return (
+                        <div key={idx} className="sync-logs__error-entry" style={{ borderLeftColor: info.color.text }}>
+                          <div className="sync-logs__error-entry-head">
+                            <ScenarioBadge scenario={{ code, info, count: 1, guessed: true }} showCount={false} />
+                            {entry.recordId && (
+                              <span className="sync-logs__error-entry-id">Record {entry.recordId}</span>
+                            )}
+                          </div>
+                          <pre className="sync-logs__error-block">{entry.text}</pre>
+                        </div>
+                      );
+                    })
                   )}
                 </section>
               )}
@@ -1054,7 +1215,7 @@ export default function SyncLogsPage() {
                 <Info size={14} />
                 {footnote}
               </span>
-              {path === "unhappy" && (
+              {hasUnhappy && (
                 <button
                   type="button"
                   className="sync-logs__retry-btn"
