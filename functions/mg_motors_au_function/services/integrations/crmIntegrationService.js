@@ -230,17 +230,97 @@ function toZohoApiFields(internalFieldsObject) {
   return zohoFields;
 }
 
+const INVALID_DATA_ERROR_CODES = new Set(['FIELD_MAPPING_INVALID', 'STATUS_MAPPING_NOT_FOUND']);
+
+/**
+ * Classifies a log entry into the happy/unhappy path taxonomy, so it's
+ * persisted at write time instead of re-derived on every read.
+ *
+ * classificationHint.isStatusSync distinguishes Happy 2 (dealer status
+ * change) from Happy 5 (other dealer-side field change) on inbound
+ * success — both used to log identically as UPDATE_LEAD with no way to
+ * tell them apart afterward.
+ *
+ * NOTE: this now checks error_message codes even on the
+ * EXTERNAL_CRM_TO_ZOHO direction. Previously that direction only ever
+ * reached writeLog via the OEM-write-back catch block, so "any failure
+ * here = Unhappy 4" was a safe shortcut. Now that the early
+ * LEAD_MAPPING_NOT_FOUND / FIELD_MAPPING_INVALID / STATUS_MAPPING_NOT_FOUND
+ * throws in processInboundWebhook are also logged (see that function),
+ * that shortcut would misclassify them, so those exact codes are
+ * checked first.
+ */
+function classifyLogScenario({ direction, operation, status, error_message }, { isStatusSync } = {}) {
+  if (operation === 'TEST_CONNECTION') {
+    return status === 'SUCCESS'
+      ? { name: 'Connection Test', message: 'Connection test succeeded.' }
+      : { name: 'Connection Test Failed', message: 'Connection test failed.' };
+  }
+
+  if (status === 'SUCCESS') {
+    if (direction === 'EXTERNAL_CRM_TO_ZOHO') {
+      return isStatusSync
+        ? { name: 'Happy 2', message: 'Dealer progresses enquiry (status sync)' }
+        : { name: 'Happy 5', message: 'Data synchronisation (dealer → OEM)' };
+    }
+    return { name: 'Happy 1', message: 'New enquiry routed successfully' };
+  }
+
+  // status === 'FAILED' from here down.
+  const code = (error_message || '').trim();
+
+  if (code === 'LEAD_MAPPING_NOT_FOUND') {
+    return { name: 'Unhappy 7', message: 'Out-of-order events' };
+  }
+
+  if (INVALID_DATA_ERROR_CODES.has(code)) {
+    return { name: 'Unhappy 2', message: 'Invalid / missing data' };
+  }
+
+  if (direction === 'EXTERNAL_CRM_TO_ZOHO') {
+    // Everything else on this direction is the OEM write-back call
+    // itself failing (ZOHO_UPDATE_FAILED) — genuinely Unhappy 4.
+    return { name: 'Unhappy 4', message: 'Status update failure (dealer → OEM)' };
+  }
+
+  // ZOHO_TO_EXTERNAL_CRM, anything else — connectivity/API failure.
+  return { name: 'Unhappy 1', message: 'API / integration failure' };
+}
+
+async function writeLog(catalystApp, entry, classificationHint) {
+  try {
+    const scenario = classifyLogScenario(entry, classificationHint);
+    await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).insertRow({
+      ...entry,
+      happy_unhappy_path_name: scenario.name,
+      happy_unhappy_path_message: scenario.message,
+    });
+  } catch (err) {
+    logger.error('crmIntegrationService', 'Failed to write integration log', err);
+  }
+}
+
 /**
  * ============================================================
  * INBOUND: External CRM webhook -> Zoho (via zohoCrmService.updateOemLead)
  * ============================================================
  */
 async function processInboundWebhook(catalystApp, integration, externalPayload, zohoCrmService) {
+  const requestReference = crypto.randomUUID();
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
   const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
 
   const externalLeadId = externalPayload.id || externalPayload.leadId;
   if (!externalLeadId) {
+    await writeLog(catalystApp, {
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      direction: 'EXTERNAL_CRM_TO_ZOHO',
+      operation: 'UPDATE_LEAD',
+      status: 'FAILED',
+      error_message: 'FIELD_MAPPING_INVALID',
+      request_reference: requestReference,
+    });
     const err = new Error('Webhook payload missing external lead id');
     err.code = 'FIELD_MAPPING_INVALID';
     throw err;
@@ -252,6 +332,20 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
   );
 
   if (mappingRows.length === 0) {
+    // FIX: previously thrown before writeLog was ever reached, so this
+    // — the client's Unhappy 7, an out-of-order dealer update arriving
+    // before we have a lead mapping for it — never produced a row in
+    // integration_logs at all. Now logged before throwing.
+    await writeLog(catalystApp, {
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      direction: 'EXTERNAL_CRM_TO_ZOHO',
+      operation: 'UPDATE_LEAD',
+      external_lead_id: externalLeadId,
+      status: 'FAILED',
+      error_message: 'LEAD_MAPPING_NOT_FOUND',
+      request_reference: requestReference,
+    });
     const err = new Error(`No lead mapping found for external lead ${externalLeadId}`);
     err.code = 'LEAD_MAPPING_NOT_FOUND';
     throw err;
@@ -267,11 +361,46 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
 
   // Step 1: external payload -> our internal field names.
   const internalUpdate = leadMappingService.mapExternalLeadToZoho(externalPayload, fieldMappings);
-  if (externalPayload.status) {
-    internalUpdate.lead_status = leadMappingService.mapStatus(externalPayload.status, statusMappings, 'EXTERNAL_TO_ZOHO');
+
+  // Whether this update carries a status change — used both to decide
+  // if mapStatus() runs at all, and (on success) to tell Happy 2 apart
+  // from Happy 5 in the log.
+  const isStatusSync = Boolean(externalPayload.status);
+
+  if (isStatusSync) {
+    try {
+      internalUpdate.lead_status = leadMappingService.mapStatus(externalPayload.status, statusMappings, 'EXTERNAL_TO_ZOHO');
+    } catch (err) {
+      // FIX: mapStatus() throwing STATUS_MAPPING_NOT_FOUND here was also
+      // never logged before, for the same reason as LEAD_MAPPING_NOT_FOUND
+      // above — it happened outside the function's only try/catch.
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'EXTERNAL_CRM_TO_ZOHO',
+        operation: 'UPDATE_LEAD',
+        zoho_lead_id: mapping.zoho_lead_id,
+        external_lead_id: externalLeadId,
+        status: 'FAILED',
+        error_message: err.code || 'STATUS_MAPPING_NOT_FOUND',
+        request_reference: requestReference,
+      });
+      throw err;
+    }
   }
 
   if (Object.keys(internalUpdate).length === 0) {
+    await writeLog(catalystApp, {
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      direction: 'EXTERNAL_CRM_TO_ZOHO',
+      operation: 'UPDATE_LEAD',
+      zoho_lead_id: mapping.zoho_lead_id,
+      external_lead_id: externalLeadId,
+      status: 'FAILED',
+      error_message: 'FIELD_MAPPING_INVALID',
+      request_reference: requestReference,
+    });
     const err = new Error('Webhook payload produced no mapped fields to update');
     err.code = 'FIELD_MAPPING_INVALID';
     throw err;
@@ -279,8 +408,6 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
 
   // Step 2: our internal field names -> Zoho CRM API field names.
   const zohoApiFields = toZohoApiFields(internalUpdate);
-
-  const requestReference = crypto.randomUUID();
 
   try {
     // mapping.zoho_lead_id IS the Zoho CRM record id (crm_record_id),
@@ -317,7 +444,7 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
       external_lead_id: externalLeadId,
       status: 'SUCCESS',
       request_reference: requestReference,
-    });
+    }, { isStatusSync });
 
     return { ok: true, zohoLeadId: mapping.zoho_lead_id };
   } catch (err) {

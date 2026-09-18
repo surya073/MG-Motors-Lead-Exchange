@@ -2,16 +2,58 @@
    DEALER CRM CONFIG
    ========================================================= */
 
+/*
+ * Height/scroll strategy
+ * -----------------------------------------------------------------------
+ * Previously the two panes had no height ceiling, so the sidebar +
+ * page scroll region (see MainLayout.css .main-layout__scroll) had to
+ * grow to fit the taller of the two panels — one giant page-level
+ * scrollbar for everything. Instead we give the two-pane layout a
+ * height pinned to the viewport (minus the sticky header + page
+ * padding it sits under) and let each pane scroll independently.
+ * The pixel values mirror MainLayout.css's .main-layout__header /
+ * .main-layout__content breakpoints — adjust these two numbers per
+ * breakpoint if that header height or content padding ever changes.
+ */
+.dealer-crm-config {
+  --dcc-header-h: 92px;
+  --dcc-chrome-h: 30px; /* page padding + breathing room below the fold */
+  --dcc-panel-h: calc(100vh - var(--dcc-header-h) - var(--dcc-chrome-h));
+}
+
+@media (min-width: 1440px) {
+  .dealer-crm-config {
+    --dcc-header-h: 96px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .dealer-crm-config {
+    --dcc-header-h: 84px;
+    --dcc-chrome-h: 72px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Stacked single-column layout below — let each panel size to its
+     own content and the page scroll normally instead of clipping. */
+  .dealer-crm-config {
+    --dcc-panel-h: auto;
+  }
+}
+
 .dealer-crm-config__layout {
   display: grid;
   grid-template-columns: 340px 1fr;
   gap: var(--space-5);
-  align-items: start;
+  align-items: stretch;
+  height: var(--dcc-panel-h);
 }
 
 @media (max-width: 900px) {
   .dealer-crm-config__layout {
     grid-template-columns: 1fr;
+    height: auto;
   }
 }
 
@@ -21,6 +63,18 @@
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .dealer-crm-config__panel {
+    height: auto;
+    overflow: visible;
+  }
 }
 
 .dealer-crm-config__panel-header {
@@ -28,6 +82,7 @@
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+  flex-shrink: 0;
 }
 
 .dealer-crm-config__panel-icon {
@@ -44,6 +99,21 @@
 .dealer-crm-config__panel-header h3 {
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
+}
+
+.dealer-crm-config__brand-logo {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .dealer-crm-config__brand-logo {
+  filter: invert(1);
+}
+
+.dealer-crm-config__search {
+  flex-shrink: 0;
 }
 
 .dealer-crm-config__search input {
@@ -66,6 +136,14 @@
 
 .dealer-crm-config__panel--detail {
   min-height: 480px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+@media (max-width: 900px) {
+  .dealer-crm-config__panel--detail {
+    overflow: visible;
+  }
 }
 
 .dealer-crm-config__empty-state {
@@ -87,6 +165,7 @@
   gap: var(--space-3);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .dealer-crm-config__detail-header h2 {
@@ -108,6 +187,7 @@
   gap: var(--space-1);
   margin: var(--space-4) 0;
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .dealer-crm-config__tabs button {
@@ -223,7 +303,12 @@
 }
 
 .dealer-crm-config__field-row-inline {
-  grid-template-columns: 1fr 1fr auto auto; /* was: 1fr 1fr auto */
+  /* NOTE: this rule previously set grid-template-columns without
+     `display: grid`, so it never actually laid out as a grid — fixed
+     as part of this pass. */
+  display: grid;
+  grid-template-columns: 1fr 1fr auto auto;
+  gap: var(--space-3);
 }
 
 .dealer-crm-config__field-row-inline > div {
@@ -296,7 +381,10 @@
   border-radius: var(--radius-full);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
-  transition: opacity var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: opacity var(--transition-fast), background-color var(--transition-fast) var(--ease-premium);
 }
 
 [data-theme="dark"] .dealer-crm-config__button--primary {
@@ -311,6 +399,16 @@
 .dealer-crm-config__button--primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Save success state — the button turns green to confirm the save;
+   the dealer's top connection badge is intentionally left untouched
+   (it only reflects Test Connection results / persisted status). */
+.dealer-crm-config__button--success,
+[data-theme="dark"] .dealer-crm-config__button--success {
+  background-color: var(--color-success, #16a34a) !important;
+  color: #ffffff !important;
+  opacity: 1;
 }
 
 .dealer-crm-config__button--outline {
@@ -435,7 +533,27 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.dealer-crm-config__error-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-danger-soft);
   color: var(--color-danger);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dealer-crm-config__muted {
+  color: var(--color-text-muted);
 }
 
 .dealer-crm-config__retry-link {
@@ -443,6 +561,7 @@
   font-weight: var(--fw-semibold);
   color: var(--color-primary);
   text-decoration: underline;
+  flex-shrink: 0;
 }
 
 .dealer-crm-config__skeleton-block {
@@ -459,7 +578,6 @@
 
 /* =========================================================
    DEALER CRM CONFIG — REDESIGN ADDITIONS
-   Append this block to the end of DealerCRMConfig.css
    ========================================================= */
 
 /* ---------- Guided progress banner ---------- */
@@ -584,10 +702,6 @@
   min-width: 0;
 }
 
-.dealer-crm-config__panel--detail {
-  overflow-x: hidden;
-}
-
 .dealer-crm-config__panel--detail .table-wrapper {
   overflow-x: auto;
   max-width: 100%;
@@ -601,4 +715,369 @@
   text-decoration: underline;
   cursor: pointer;
   font: inherit;
+}
+
+/* ---------- Activity Log scenario badge ---------- */
+
+.dealer-crm-config__scenario-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dealer-crm-config__scenario-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  line-height: 1.4;
+  width: fit-content;
+}
+
+.dealer-crm-config__scenario-desc {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  line-height: 1.3;
+  max-width: 200px;
+}
+
+/* =========================================================
+   LEFT PANEL — collapsible dealer cards + pagination
+   ========================================================= */
+
+.dealer-crm-config__dealer-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 7px;
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.dealer-crm-config__dealer-list-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dealer-crm-config__dealer-list-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 20px;
+}
+
+.dealer-crm-config__dealer-list-scroll > * + * {
+  margin-top: 0; /* gap handles spacing; kept for skeleton fallback */
+}
+
+.dealer-crm-config__empty-list {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+}
+
+.dealer-crm-config__dealer-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-elevated);
+  overflow: hidden;
+  transition: border-color var(--transition-fast) var(--ease-premium),
+    box-shadow var(--transition-fast) var(--ease-premium);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__dealer-card--connected {
+  border-color: var(--color-success, #16a34a);
+  background-color: var(--color-success-soft, #f0fdf4);
+}
+
+.dealer-crm-config__dealer-card--pending {
+  border-color: var(--color-warning, #d97706);
+  background-color: var(--color-warning-soft, #fffbeb);
+}
+
+.dealer-crm-config__dealer-card--selected {
+  box-shadow: 0 0 0 2px var(--color-primary);
+}
+
+.dealer-crm-config__dealer-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  text-align: left;
+}
+
+.dealer-crm-config__dealer-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .dealer-crm-config__dealer-logo {
+  filter: invert(1);
+}
+
+.dealer-crm-config__dealer-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dealer-crm-config__dealer-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dealer-crm-config__dealer-code {
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+}
+
+.dealer-crm-config__chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.dealer-crm-config__chevron:hover {
+  background-color: var(--color-surface-alt);
+}
+
+.dealer-crm-config__chevron svg {
+  transition: transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__chevron--open svg {
+  transform: rotate(180deg);
+}
+
+.dealer-crm-config__dealer-expand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3) calc(24px + var(--space-2) + var(--space-3));
+}
+
+/* =========================================================
+   PAGINATION BAR — reused for dealer list + activity log
+   ========================================================= */
+
+.dealer-crm-config__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dealer-crm-config__pagination-controls label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dealer-crm-config__pagination-controls select {
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  padding-inline: var(--space-1);
+  font-size: var(--fs-xs);
+}
+
+.dealer-crm-config__pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dealer-crm-config__pagination-buttons button {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-elevated);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__pagination-buttons button:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+}
+
+.dealer-crm-config__pagination-buttons button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* =========================================================
+   ACTIVITY LOG DETAIL — right-to-left offcanvas
+   ========================================================= */
+
+.dealer-crm-config__offcanvas-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  /* backdrop-filter: blur(2px); */
+  /* -webkit-backdrop-filter: blur(2px); */
+  z-index: 200;
+  display: flex;
+  justify-content: flex-end;
+  animation: dcc-fade-in 0.18s ease;
+}
+
+.dealer-crm-config__offcanvas {
+  width: min(420px, 92vw);
+  height: 100%;
+  background-color: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  animation: dcc-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dcc-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes dcc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dealer-crm-config__offcanvas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__offcanvas-header h4 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.dealer-crm-config__offcanvas-header button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-muted);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__offcanvas-header button:hover {
+  background-color: var(--color-surface-alt);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__offcanvas-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dealer-crm-config__offcanvas-scenario {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dealer-crm-config__offcanvas-scenario-label {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.dealer-crm-config__offcanvas-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  padding: var(--space-2) 0;
+  border-bottom: 1px dashed var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.dealer-crm-config__offcanvas-row svg {
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__offcanvas-row span {
+  flex: 1;
+}
+
+.dealer-crm-config__offcanvas-row strong {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-medium);
+  text-align: right;
+  word-break: break-word;
+}
+
+.dealer-crm-config__offcanvas-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.dealer-crm-config__offcanvas-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
 }

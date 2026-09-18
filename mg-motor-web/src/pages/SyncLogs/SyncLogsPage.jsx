@@ -327,7 +327,44 @@ const parseErrorEntries = (log) => {
 // This replaces the old one-badge-per-row model, which forced a
 // mixed run into a single misleading bucket.
 // ---------------------------------------------------------
+const parseStoredScenarioSummary = (log) => {
+  const raw = (log?.happy_unhappy_path_name || "").trim();
+  if (!raw) return null;
+
+  const segments = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return null;
+
+  const results = [];
+  segments.forEach((segment) => {
+    const match = /^(Happy|Unhappy)\s+(\d+)\s+x(\d+)$/i.exec(segment);
+    if (!match) return;
+    const code = `${match[1].toLowerCase()}-${match[2]}`;
+    const info = SCENARIO_CATALOG[code];
+    if (!info) return;
+    results.push({
+      code,
+      info,
+      count: Number(match[3]) || 1,
+      recordIds: [],
+      guessed: false,
+    });
+  });
+
+  return results.length > 0
+    ? results.sort((a, b) => catalogSortKey(a.code) - catalogSortKey(b.code))
+    : null;
+};
+
 const resolveRowScenarios = (log) => {
+  const stored = parseStoredScenarioSummary(log);
+  if (stored) return stored;
+  return resolveRowScenariosLegacy(log);
+};
+
+const resolveRowScenariosLegacy = (log) => {
   const explicitCode = normalizeScenarioCode(
     log?.scenario_code || log?.scenario || log?.path_code || log?.scenarioCode
   );
@@ -349,7 +386,7 @@ const resolveRowScenarios = (log) => {
   const failed = Number(log.records_failed) || 0;
   const fetched = Number(log.total_records_fetched) || 0;
 
-  const buckets = new Map(); // code -> { count, recordIds }
+  const buckets = new Map();
   const addToBucket = (code, count, recordId) => {
     if (!SCENARIO_CATALOG[code] || count <= 0) return;
     const existing = buckets.get(code) || { count: 0, recordIds: [] };
@@ -361,9 +398,6 @@ const resolveRowScenarios = (log) => {
   const errorEntries = parseErrorEntries(log);
   errorEntries.forEach((entry) => addToBucket(classifyErrorText(entry.text), 1, entry.recordId));
 
-  // If the row reports more failures than we have individual error
-  // entries for, bucket the unexplained remainder generically rather
-  // than silently dropping them.
   const unexplainedFailed = failed - errorEntries.length;
   if (unexplainedFailed > 0) addToBucket("unhappy-1", unexplainedFailed);
 
@@ -376,15 +410,11 @@ const resolveRowScenarios = (log) => {
     addToBucket(log.sync_type === "Dealer_Sync" ? "happy-5" : "happy-2", updated);
   }
 
-  // Anything fetched but neither inserted, updated, nor accounted
-  // for in an error entry was left untouched — that's the dedupe
-  // path (Happy 3): the record already existed so nothing was done.
   const accounted = inserted + updated + errorEntries.length + Math.max(unexplainedFailed, 0);
   const skipped = Math.max(fetched - accounted, 0);
   if (skipped > 0) addToBucket("happy-3", skipped);
 
   if (buckets.size === 0) {
-    // No counts to go on at all — fall back to the row's own status.
     addToBucket(log.status === "Success" ? "happy-1" : "unhappy-1", fetched || 1);
   }
 

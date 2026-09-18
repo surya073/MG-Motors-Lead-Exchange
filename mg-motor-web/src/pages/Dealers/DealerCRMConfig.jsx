@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Plug,
@@ -10,18 +10,24 @@ import {
   Loader2,
   Lock,
   CheckCircle2,
+  ChevronDown,
+  AlertTriangle,
+  XCircle,
+  Clock,
+  Hash,
+  Globe,
+  X,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
-import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import mgLogo from "../../assets/images/mg-logo-single.png";
 import "./DealerCRMConfig.css";
 import "../../ui/Skeleton/Skeleton.css";
-import "../../ui/Skeleton/TableSkeleton.css";
 
 /**
  * DealerCRMConfig.jsx
@@ -33,7 +39,9 @@ import "../../ui/Skeleton/TableSkeleton.css";
  * dealer's own External CRM via a generic REST adapter.
  *
  * Two-pane layout:
- *   left  — searchable list of synced dealers
+ *   left  — searchable, paginated list of synced dealers as collapsible
+ *           cards (name + code always visible, chevron reveals
+ *           connection status + region)
  *   right — the selected dealer's integration config, as a guided
  *           sequence: connect -> map fields/status -> monitor activity.
  *           Field/Status Mapping only unlock once the connection has
@@ -50,6 +58,33 @@ import "../../ui/Skeleton/TableSkeleton.css";
  * and the single generic-REST credential field.
  *
  * ?dealerCode= in the URL deep-links directly to a dealer's config.
+ *
+ * ACTIVITY LOG SCENARIO CLASSIFICATION
+ * -----------------------------------------------------------------------
+ * Each row in integration_logs (written by crmIntegrationService.js) is
+ * ONE lead-level push/pull attempt, not an aggregate batch — so unlike
+ * the sync-logs scenario matrix, this classifies per-row using the
+ * ACTUAL err.code strings the backend writes into error_message, not a
+ * keyword guess:
+ *
+ *   - ZOHO_TO_EXTERNAL_CRM + CREATE_LEAD/UPDATE_LEAD + SUCCESS -> Happy 1
+ *   - EXTERNAL_CRM_TO_ZOHO + UPDATE_LEAD + SUCCESS             -> Happy 2
+ *   - error_message === FIELD_MAPPING_INVALID
+ *       or STATUS_MAPPING_NOT_FOUND                            -> Unhappy 2
+ *   - EXTERNAL_CRM_TO_ZOHO + FAILED (any other reason)         -> Unhappy 4
+ *       (the OEM-write-back is the only thing that can fail and get
+ *       logged on this branch, per processInboundWebhook's try/catch)
+ *   - ZOHO_TO_EXTERNAL_CRM + FAILED (anything else — timeouts,
+ *       5xx, 401/403, etc.)                                    -> Unhappy 1
+ *   - TEST_CONNECTION                                          -> not a
+ *       lead scenario; shown as a plain Connection Test badge.
+ *
+ * KNOWN GAP: processInboundWebhook throws LEAD_MAPPING_NOT_FOUND and an
+ * early FIELD_MAPPING_INVALID (missing external lead id / no mapped
+ * fields) BEFORE it calls writeLog — those never produce a row here at
+ * all. LEAD_MAPPING_NOT_FOUND in particular is the client's Unhappy 7
+ * (out-of-order event) and currently can't be shown by this table no
+ * matter how it's classified, since the backend never logs it.
  */
 
 const AUTH_TYPES = [
@@ -76,6 +111,8 @@ const INTEGRATION_STATUS_TONES = {
 };
 
 const CONNECTED_STATUSES = ["ACTIVE", "CONNECTED"];
+
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 
 const MASKED_CREDENTIAL_PLACEHOLDER = "••••••••••••";
 
@@ -111,17 +148,289 @@ const EMPTY_CONFIG = {
   status: "NOT_CONFIGURED",
 };
 
+// Only the scenarios actually reachable from what crmIntegrationService.js
+// logs today (see the module-comment block above for why the others in
+// the client's full matrix can't appear here).
+const DEALER_LOG_SCENARIOS = {
+  "happy-1": {
+    path: "happy",
+    number: 1,
+    label: "New enquiry routed successfully",
+    color: { bg: "#dcfce7", text: "#16a34a" },
+  },
+  "happy-2": {
+    path: "happy",
+    number: 2,
+    label: "Dealer progresses enquiry (status sync)",
+    color: { bg: "#ccfbf1", text: "#0d9488" },
+  },
+  // NEW — backend now distinguishes this from happy-2 (see
+  // crmIntegrationService.js's isStatusSync split in processInboundWebhook).
+  "happy-5": {
+    path: "happy",
+    number: 5,
+    label: "Data synchronisation (dealer → OEM)",
+    color: { bg: "#e0f2fe", text: "#0284c7" },
+  },
+  "unhappy-1": {
+    path: "unhappy",
+    number: 1,
+    label: "API / integration failure",
+    color: { bg: "#fee2e2", text: "#dc2626" },
+  },
+  "unhappy-2": {
+    path: "unhappy",
+    number: 2,
+    label: "Invalid / missing data",
+    color: { bg: "#ffe4e6", text: "#e11d48" },
+  },
+  "unhappy-4": {
+    path: "unhappy",
+    number: 4,
+    label: "Status update failure (dealer → OEM)",
+    color: { bg: "#fef3c7", text: "#d97706" },
+  },
+  // NEW — previously unreachable: LEAD_MAPPING_NOT_FOUND used to throw
+  // before writeLog ran, so no row ever carried this scenario. Now that
+  // the backend logs it, it needs a badge here too.
+  "unhappy-7": {
+    path: "unhappy",
+    number: 7,
+    label: "Out-of-order events",
+    color: { bg: "#ede9fe", text: "#7c3aed" },
+  },
+};
+
+// Configuration/business-rule error codes that leadMappingService.js
+// literally throws as err.code — crmIntegrationService.js's catch
+// blocks store err.code (when present) verbatim as error_message, so
+// these are exact matches, not a keyword guess.
+const INVALID_DATA_ERROR_CODES = new Set(["FIELD_MAPPING_INVALID", "STATUS_MAPPING_NOT_FOUND"]);
+
+// Maps the backend's stored "Happy 2" / "Unhappy 7" / "Connection Test"
+// string (happy_unhappy_path_name) to the same key shape used by
+// DEALER_LOG_SCENARIOS above ("happy-2", "unhappy-7").
+function scenarioKeyFromStoredName(name) {
+  const match = /^(happy|unhappy)\s+(\d+)$/i.exec((name || "").trim());
+  if (!match) return null;
+  return `${match[1].toLowerCase()}-${match[2]}`;
+}
+
+// Classifies a log row for display. Prefers the columns the backend now
+// writes at insert time (happy_unhappy_path_name / _message) — these are
+// authoritative since they're derived from the exact err.code the
+// backend threw, not guessed from the row after the fact. Falls back to
+// re-deriving client-side ONLY for rows written before this migration,
+// which won't have those columns populated.
+function classifyDealerLog(row) {
+  if (row.happy_unhappy_path_name) {
+    if (row.happy_unhappy_path_name.startsWith("Connection Test")) {
+      return {
+        special: true,
+        label: row.happy_unhappy_path_name,
+        tone: row.happy_unhappy_path_name.endsWith("Failed") ? "danger" : "success",
+      };
+    }
+
+    const key = scenarioKeyFromStoredName(row.happy_unhappy_path_name);
+    const known = key && DEALER_LOG_SCENARIOS[key];
+    if (known) {
+      // Stored message can differ from the hardcoded label if the
+      // backend's wording changes later — prefer it when present.
+      return { ...known, label: row.happy_unhappy_path_message || known.label };
+    }
+
+    // Stored name doesn't match anything we know how to color/badge yet
+    // (e.g. a new scenario added server-side before the frontend catches
+    // up) — show it plainly rather than misclassifying it.
+    return {
+      special: true,
+      label: row.happy_unhappy_path_message || row.happy_unhappy_path_name,
+      tone: "neutral",
+    };
+  }
+
+  // Legacy fallback — row predates the happy_unhappy_path_* columns.
+  return classifyDealerLogLegacy(row);
+}
+
+function classifyDealerLogLegacy(row) {
+  if (row.operation === "TEST_CONNECTION") {
+    return {
+      special: true,
+      label: row.status === "SUCCESS" ? "Connection Test" : "Connection Test Failed",
+      tone: row.status === "SUCCESS" ? "success" : "danger",
+    };
+  }
+
+  if (row.status === "SUCCESS") {
+    return row.direction === "EXTERNAL_CRM_TO_ZOHO"
+      ? DEALER_LOG_SCENARIOS["happy-2"]
+      : DEALER_LOG_SCENARIOS["happy-1"];
+  }
+
+  if (row.direction === "EXTERNAL_CRM_TO_ZOHO") {
+    return DEALER_LOG_SCENARIOS["unhappy-4"];
+  }
+
+  const code = (row.error_message || "").trim();
+  if (INVALID_DATA_ERROR_CODES.has(code)) {
+    return DEALER_LOG_SCENARIOS["unhappy-2"];
+  }
+  return DEALER_LOG_SCENARIOS["unhappy-1"];
+}
+
 function statusBadge(status) {
   const tone = INTEGRATION_STATUS_TONES[status] || "neutral";
   const label = (status || "NOT_CONFIGURED").replace(/_/g, " ");
   return <Badge tone={tone} fixed>{label}</Badge>;
 }
 
-function integrationTypeBadge(type) {
-  return type === "EXTERNAL_CRM" ? (
-    <Badge tone="info" fixed>External CRM</Badge>
-  ) : (
-    <Badge tone="neutral" fixed>Portal</Badge>
+// Activity-log rows use a different status vocabulary (SUCCESS / FAILED)
+// than the dealer-level integration status above (ACTIVE / CONFIGURING /
+// etc.) — these were previously both run through statusBadge(), which
+// only knows the integration-status vocabulary, so every log row fell
+// through to the "neutral" tone. This gives logs their own green/red.
+function logStatusBadge(status) {
+  if (status === "SUCCESS") return <Badge tone="active" fixed>Success</Badge>;
+  if (status === "FAILED") return <Badge tone="danger" fixed>Failed</Badge>;
+  return <Badge tone="neutral" fixed>{status || "—"}</Badge>;
+}
+
+// NOTE: adjust the field(s) checked here to whatever your
+// adminDashboardService.listDealers() response actually names the
+// dealer's live CRM-connection state. It falls through a few likely
+// field names so the badges work as soon as that's confirmed.
+function isDealerConnected(dealer) {
+  const rawStatus = dealer.integration_status || dealer.crm_status || dealer.status;
+  return CONNECTED_STATUSES.includes(rawStatus);
+}
+
+function paginate(rows, page, pageSize) {
+  const start = (page - 1) * pageSize;
+  return rows.slice(start, start + pageSize);
+}
+
+function PaginationBar({ page, pageSize, total, onPageChange, onPageSizeChange }) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const startItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endItem = Math.min(total, page * pageSize);
+
+  return (
+    <div className="dealer-crm-config__pagination">
+      <span className="dealer-crm-config__pagination-info">
+        {total === 0 ? "0 results" : `${startItem}–${endItem} of ${total}`}
+      </span>
+      <div className="dealer-crm-config__pagination-controls">
+        <label>
+          Show
+          <select value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="dealer-crm-config__pagination-buttons">
+          <button type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous page">
+            ‹
+          </button>
+          <span>
+            {page} / {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPageChange(page + 1)}
+            disabled={page >= totalPages}
+            aria-label="Next page"
+          >
+            ›
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LogDetailOffcanvas({ row, onClose }) {
+  if (!row) return null;
+  const scenario = classifyDealerLog(row);
+
+  return (
+    <div className="dealer-crm-config__offcanvas-overlay" onClick={onClose}>
+      <div className="dealer-crm-config__offcanvas" onClick={(e) => e.stopPropagation()}>
+        <div className="dealer-crm-config__offcanvas-header">
+          <h4>Activity Detail</h4>
+          <button type="button" onClick={onClose} aria-label="Close details">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="dealer-crm-config__offcanvas-body">
+          <div className="dealer-crm-config__offcanvas-scenario">
+            {scenario.special ? (
+              <Badge tone={scenario.tone} fixed>
+                {scenario.label}
+              </Badge>
+            ) : (
+              <>
+                <span
+                  className="dealer-crm-config__scenario-badge"
+                  style={{ backgroundColor: scenario.color.bg, color: scenario.color.text }}
+                >
+                  {scenario.path === "happy" ? "Happy" : "Unhappy"} {scenario.number}
+                </span>
+                <p className="dealer-crm-config__offcanvas-scenario-label">{scenario.label}</p>
+              </>
+            )}
+          </div>
+
+          <div className="dealer-crm-config__offcanvas-row">
+            <Clock size={14} />
+            <span>Time</span>
+            <strong>{row.created_at || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            <ArrowLeftRight size={14} />
+            <span>Direction</span>
+            <strong>{row.direction || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            <Hash size={14} />
+            <span>Operation</span>
+            <strong>{row.operation || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            <Hash size={14} />
+            <span>Zoho Lead</span>
+            <strong>{row.zoho_lead_id || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            <Globe size={14} />
+            <span>External Lead</span>
+            <strong>{row.external_lead_id || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            {row.status === "SUCCESS" ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+            <span>Status</span>
+            <strong>{row.status || "—"}</strong>
+          </div>
+          <div className="dealer-crm-config__offcanvas-row">
+            <Hash size={14} />
+            <span>HTTP Status</span>
+            <strong>{row.http_status || "—"}</strong>
+          </div>
+
+          {row.status === "FAILED" && (
+            <div className="dealer-crm-config__offcanvas-error">
+              <AlertTriangle size={14} />
+              <span>{row.error_message || "Unknown error"}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -136,6 +445,8 @@ export default function DealerCRMConfig() {
   const [selectedDealer, setSelectedDealer] = useState(null);
   const [configLoading, setConfigLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const saveSuccessTimeoutRef = useRef(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
@@ -155,10 +466,20 @@ export default function DealerCRMConfig() {
 
   const [logs, setLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [activeLogDetail, setActiveLogDetail] = useState(null);
 
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [oauthRefreshToken, setOauthRefreshToken] = useState("");
+
+  // ---- left panel: collapse + pagination state ----
+  const [expandedDealers, setExpandedDealers] = useState(() => new Set());
+  const [dealerPage, setDealerPage] = useState(1);
+  const [dealerPageSize, setDealerPageSize] = useState(10);
+
+  // ---- activity log pagination state ----
+  const [logsPage, setLogsPage] = useState(1);
+  const [logsPageSize, setLogsPageSize] = useState(10);
 
   useEffect(() => {
     (async () => {
@@ -183,6 +504,8 @@ export default function DealerCRMConfig() {
     })();
   }, []);
 
+  useEffect(() => () => window.clearTimeout(saveSuccessTimeoutRef.current), []);
+
   const filteredDealers = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return dealers;
@@ -190,6 +513,38 @@ export default function DealerCRMConfig() {
       [d.dealer_name, d.dealer_code, d.email_address, d.region].filter(Boolean).some((f) => f.toLowerCase().includes(term))
     );
   }, [dealers, search]);
+
+  // Reset to page 1 whenever the visible dealer set changes shape.
+  useEffect(() => {
+    setDealerPage(1);
+  }, [search]);
+
+  const paginatedDealers = useMemo(
+    () => paginate(filteredDealers, dealerPage, dealerPageSize),
+    [filteredDealers, dealerPage, dealerPageSize]
+  );
+
+  // Reset to page 1 whenever a fresh batch of logs comes in (new dealer,
+  // reload after retry, etc.) so the pager never gets stranded past the end.
+  useEffect(() => {
+    setLogsPage(1);
+  }, [logs]);
+
+  const paginatedLogs = useMemo(() => paginate(logs, logsPage, logsPageSize), [logs, logsPage, logsPageSize]);
+
+  const toggleDealerExpand = (code) => {
+    setExpandedDealers((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const clearSaveSuccessSoon = () => {
+    window.clearTimeout(saveSuccessTimeoutRef.current);
+    saveSuccessTimeoutRef.current = window.setTimeout(() => setSaveSuccess(false), 4000);
+  };
 
   const resetCredentialInputs = () => {
     setCredentialValue("");
@@ -202,6 +557,7 @@ export default function DealerCRMConfig() {
   const loadIntegration = async (dealer) => {
     setConfigLoading(true);
     setTestResult(null);
+    setSaveSuccess(false);
     setTab("connection");
     try {
       const result = await dealerCrmIntegrationService.getIntegration(dealer.dealer_code);
@@ -241,22 +597,27 @@ export default function DealerCRMConfig() {
   };
 
   const handleConfigChange = (key, value) => {
+    setSaveSuccess(false);
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleFieldMappingChange = (index, key, value) => {
+    setSaveSuccess(false);
     setFieldMappings((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: value } : m)));
   };
 
   const addFieldMapping = () => {
+    setSaveSuccess(false);
     setFieldMappings((prev) => [...prev, { source_field: "", target_field: "", data_type: "string", required: false }]);
   };
 
   const removeFieldMapping = (index) => {
+    setSaveSuccess(false);
     setFieldMappings((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleStatusMappingChange = (index, key, value) => {
+    setSaveSuccess(false);
     setStatusMappings((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: value } : m)));
   };
 
@@ -282,11 +643,21 @@ export default function DealerCRMConfig() {
       showAlert("success", `Saved integration settings for ${selectedDealer.dealer_name}.`, {
         title: "Configuration saved",
       });
+      // Visual-only confirmation on the button itself — this must NOT
+      // touch the top connection badge, which only reflects the last
+      // Test Connection result / persisted status.
+      setSaveSuccess(true);
+      clearSaveSuccessSoon();
       // After a successful save, any credential just entered is now
       // persisted server-side — collapse back to the masked/disabled
       // view rather than leaving raw values sitting in the inputs.
       resetCredentialInputs();
       await loadIntegration(selectedDealer);
+      // loadIntegration() resets saveSuccess to false (it also runs
+      // right after Test Connection), so re-assert the confirmation
+      // state for this save action specifically.
+      setSaveSuccess(true);
+      clearSaveSuccessSoon();
     } catch (err) {
       showAlert("error", err?.response?.data?.error || "Couldn't save the configuration. Try again.", {
         title: "Save failed",
@@ -344,28 +715,38 @@ export default function DealerCRMConfig() {
     }
   };
 
-  const dealerColumns = [
-    { key: "dealer_code", label: "Code" },
-    {
-      key: "dealer_name",
-      label: "Dealer",
-      render: (row) => (
-        <span className={row.dealer_code === selectedDealer?.dealer_code ? "dealer-crm-config__row-label--selected" : ""}>
-          {row.dealer_name}
-        </span>
-      ),
-    },
-    { key: "region", label: "Region", render: (row) => <Badge tone="info" fixed>{row.region || "—"}</Badge> },
-    { key: "integration_type", label: "Mode", render: (row) => integrationTypeBadge(row.integration_type) },
-  ];
-
   const logColumns = [
+    {
+      key: "scenario",
+      label: "Scenario",
+      render: (row) => {
+        const scenario = classifyDealerLog(row);
+        if (scenario.special) {
+          return (
+            <Badge tone={scenario.tone} fixed>
+              {scenario.label}
+            </Badge>
+          );
+        }
+        return (
+          <div className="dealer-crm-config__scenario-cell">
+            <span
+              className="dealer-crm-config__scenario-badge"
+              style={{ backgroundColor: scenario.color.bg, color: scenario.color.text }}
+            >
+              {scenario.path === "happy" ? "Happy" : "Unhappy"} {scenario.number}
+            </span>
+            <span className="dealer-crm-config__scenario-desc">{scenario.label}</span>
+          </div>
+        );
+      },
+    },
     { key: "created_at", label: "Time" },
     { key: "direction", label: "Direction" },
     { key: "operation", label: "Operation" },
     { key: "zoho_lead_id", label: "Zoho Lead" },
     { key: "external_lead_id", label: "External Lead", render: (row) => row.external_lead_id || "—" },
-    { key: "status", label: "Status", render: (row) => statusBadge(row.status) },
+    { key: "status", label: "Status", render: (row) => logStatusBadge(row.status) },
     { key: "http_status", label: "HTTP" },
     {
       key: "error_message",
@@ -373,13 +754,23 @@ export default function DealerCRMConfig() {
       render: (row) =>
         row.status === "FAILED" ? (
           <div className="dealer-crm-config__log-error">
-            <span>{row.error_message || "—"}</span>
-            <button type="button" className="dealer-crm-config__retry-link" onClick={() => handleRetrySync(row)}>
+            <span className="dealer-crm-config__error-chip">
+              <AlertTriangle size={12} />
+              {row.error_message || "Unknown error"}
+            </span>
+            <button
+              type="button"
+              className="dealer-crm-config__retry-link"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRetrySync(row);
+              }}
+            >
               Retry
             </button>
           </div>
         ) : (
-          row.error_message || "—"
+          <span className="dealer-crm-config__muted">—</span>
         ),
     },
   ];
@@ -413,16 +804,25 @@ export default function DealerCRMConfig() {
     }
   };
 
+  const saveButtonContent = (defaultLabel) => {
+    if (saving) return "Saving…";
+    if (saveSuccess)
+      return (
+        <>
+          <CheckCircle2 size={14} /> Saved
+        </>
+      );
+    return defaultLabel;
+  };
+
   return (
     <div className="dealer-crm-config">
       <div className="dealer-crm-config__layout">
         {/* ---------- Left: dealer picker ---------- */}
         <div className="dealer-crm-config__panel dealer-crm-config__panel--list">
           <div className="dealer-crm-config__panel-header">
-            <span className="dealer-crm-config__panel-icon">
-              <Plug size={16} />
-            </span>
-            <h3>Dealers</h3>
+            <img src={mgLogo} alt="MG Motor" className="dealer-crm-config__brand-logo" />
+            <h3>Our Dealers</h3>
           </div>
 
           <div className="dealer-crm-config__search">
@@ -434,16 +834,96 @@ export default function DealerCRMConfig() {
           </div>
 
           {dealersLoading ? (
-            <TableSkeleton columnCount={dealerColumns.length} rowCount={6} />
+            <div className="dealer-crm-config__dealer-list-scroll">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} width="100%" height={52} />
+              ))}
+            </div>
           ) : (
-            <Table
-              columns={dealerColumns}
-              rows={filteredDealers}
-              loading={dealersLoading}
-              emptyMessage="No dealers found"
-              onRowClick={handleSelectDealer}
-              showSerial={false}
-            />
+            <>
+              <div className="dealer-crm-config__dealer-list-scroll">
+                {paginatedDealers.length === 0 ? (
+                  <p className="dealer-crm-config__empty-list">No dealers found</p>
+                ) : (
+                  paginatedDealers.map((dealer) => {
+                    const isSelected = dealer.dealer_code === selectedDealer?.dealer_code;
+                    const isExpanded = expandedDealers.has(dealer.dealer_code);
+                    const connected = isDealerConnected(dealer);
+                    return (
+                      <div
+                        key={dealer.dealer_code}
+                        className={`dealer-crm-config__dealer-card ${
+                          connected
+                            ? "dealer-crm-config__dealer-card--connected"
+                            : "dealer-crm-config__dealer-card--pending"
+                        } ${isSelected ? "dealer-crm-config__dealer-card--selected" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="dealer-crm-config__dealer-row"
+                          onClick={() => handleSelectDealer(dealer)}
+                        >
+                          <img src={mgLogo} alt="" className="dealer-crm-config__dealer-logo" />
+                          <div className="dealer-crm-config__dealer-info">
+                            <span className="dealer-crm-config__dealer-name">{dealer.dealer_name}</span>
+                            <span className="dealer-crm-config__dealer-code">{dealer.dealer_code}</span>
+                          </div>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label={isExpanded ? "Collapse dealer details" : "Expand dealer details"}
+                            className={`dealer-crm-config__chevron ${
+                              isExpanded ? "dealer-crm-config__chevron--open" : ""
+                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleDealerExpand(dealer.dealer_code);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                toggleDealerExpand(dealer.dealer_code);
+                              }
+                            }}
+                          >
+                            <ChevronDown size={16} />
+                          </span>
+                        </button>
+
+                        {isExpanded && (
+                          <div className="dealer-crm-config__dealer-expand">
+                            {connected ? (
+                              <Badge tone="active" fixed>
+                                Active
+                              </Badge>
+                            ) : (
+                              <Badge tone="pending" fixed>
+                                Not Configured
+                              </Badge>
+                            )}
+                            <Badge tone="info" fixed>
+                              {dealer.region || "—"}
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <PaginationBar
+                page={dealerPage}
+                pageSize={dealerPageSize}
+                total={filteredDealers.length}
+                onPageChange={setDealerPage}
+                onPageSizeChange={(size) => {
+                  setDealerPageSize(size);
+                  setDealerPage(1);
+                }}
+              />
+            </>
           )}
         </div>
 
@@ -798,16 +1278,18 @@ export default function DealerCRMConfig() {
                             disabled={testing || !config.base_url}
                           >
                             {testing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
-                            {testing ? "Testing…" : "Test Connection"}
+                            {testing ? "Connecting…" : "Connect Dealer CRM"}
                           </button>
                         )}
                         <button
                           type="button"
-                          className="dealer-crm-config__button--primary"
+                          className={`dealer-crm-config__button--primary ${
+                            saveSuccess ? "dealer-crm-config__button--success" : ""
+                          }`}
                           onClick={handleSave}
                           disabled={saving}
                         >
-                          {saving ? "Saving…" : "Save Configuration"}
+                          {saveButtonContent("Save Configuration")}
                         </button>
                       </div>
                     </div>
@@ -869,11 +1351,13 @@ export default function DealerCRMConfig() {
                         <div className="dealer-crm-config__actions">
                           <button
                             type="button"
-                            className="dealer-crm-config__button--primary"
+                            className={`dealer-crm-config__button--primary ${
+                              saveSuccess ? "dealer-crm-config__button--success" : ""
+                            }`}
                             onClick={handleSave}
                             disabled={saving}
                           >
-                            {saving ? "Saving…" : "Save Field Mapping"}
+                            {saveButtonContent("Save Field Mapping")}
                           </button>
                         </div>
                       </div>
@@ -911,11 +1395,13 @@ export default function DealerCRMConfig() {
                         <div className="dealer-crm-config__actions">
                           <button
                             type="button"
-                            className="dealer-crm-config__button--primary"
+                            className={`dealer-crm-config__button--primary ${
+                              saveSuccess ? "dealer-crm-config__button--success" : ""
+                            }`}
                             onClick={handleSave}
                             disabled={saving}
                           >
-                            {saving ? "Saving…" : "Save Status Mapping"}
+                            {saveButtonContent("Save Status Mapping")}
                           </button>
                         </div>
                       </div>
@@ -923,13 +1409,28 @@ export default function DealerCRMConfig() {
                   )}
 
                   {tab === "logs" && (
-                    <Table
-                      columns={logColumns}
-                      rows={logs}
-                      loading={logsLoading}
-                      emptyMessage="No integration activity yet"
-                      showSerial={false}
-                    />
+                    <>
+                      <Table
+                        columns={logColumns}
+                        rows={paginatedLogs}
+                        loading={logsLoading}
+                        emptyMessage="No integration activity yet"
+                        onRowClick={(row) => setActiveLogDetail(row)}
+                        showSerial={false}
+                      />
+                      {!logsLoading && logs.length > 0 && (
+                        <PaginationBar
+                          page={logsPage}
+                          pageSize={logsPageSize}
+                          total={logs.length}
+                          onPageChange={setLogsPage}
+                          onPageSizeChange={(size) => {
+                            setLogsPageSize(size);
+                            setLogsPage(1);
+                          }}
+                        />
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -937,6 +1438,8 @@ export default function DealerCRMConfig() {
           )}
         </div>
       </div>
+
+      <LogDetailOffcanvas row={activeLogDetail} onClose={() => setActiveLogDetail(null)} />
     </div>
   );
 }
