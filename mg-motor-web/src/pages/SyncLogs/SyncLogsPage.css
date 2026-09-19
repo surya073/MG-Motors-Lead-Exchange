@@ -24,46 +24,60 @@
 .sync-logs__sync-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
+  padding: 9px 16px;
+  min-height: 38px;
+
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
+  line-height: 1;
   white-space: nowrap;
-  transition: background-color var(--transition-fast) var(--ease-premium),
-    border-color var(--transition-fast) var(--ease-premium),
-    box-shadow var(--transition-fast) var(--ease-premium),
-    opacity var(--transition-fast);
-}
 
-.sync-logs__sync-btn--dealers {
-  border-radius: var(--radius-full);
-  background-color: #1d4ed8;
-  color: #ffffff;
-  border: 1px solid #1d4ed8;
-}
-
-.sync-logs__sync-btn--dealers:hover:not(:disabled) {
-  background-color: #1e40af;
-  border-color: #1e40af;
-}
-
-.sync-logs__sync-btn--leads {
   border-radius: var(--radius-md);
-  background-color: #fffbeb;
-  color: #b45309;
-  border: 1.5px solid #fde68a;
+  background: #111111;
+  color: #ffffff;
+  border: 1px solid #111111;
+
+  cursor: pointer;
+
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
-.sync-logs__sync-btn--leads:hover:not(:disabled) {
-  background-color: #fef3c7;
-  border-color: #fbbf24;
+/* Same style for both buttons */
+.sync-logs__sync-btn--dealers,
+.sync-logs__sync-btn--leads {
+  background: #111111;
+  color: #ffffff;
+  border-color: #111111;
 }
 
+/* Hover */
+.sync-logs__sync-btn:hover:not(:disabled) {
+  background: #ffffff;
+  color: #111111;
+  border-color: #111111;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Subtle press effect */
+.sync-logs__sync-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Disabled */
 .sync-logs__sync-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
+/* Sync animation */
 .sync-logs__sync-icon--spinning {
   animation: sync-logs-spin 0.8s linear infinite;
 }
@@ -382,9 +396,9 @@
 }
 
 .sync-logs__offcanvas-header {
-  display: flex;
+  display: grid;
   align-items: flex-start;
-  justify-content: space-between;
+  /* justify-content: space-between; */
   gap: var(--space-3);
   padding: var(--space-5);
   border-bottom: 1px solid var(--color-border);

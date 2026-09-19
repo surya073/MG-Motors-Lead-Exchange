@@ -106,9 +106,9 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
 
     const payload = leadMappingService.mapZohoLeadToExternal(leadRow, fieldMappings);
-    if (leadRow.lead_status) {
-      payload.status = leadMappingService.mapStatus(leadRow.lead_status, statusMappings, 'ZOHO_TO_EXTERNAL');
-    }
+    // if (leadRow.lead_status) {
+    //   payload.status = leadMappingService.mapStatus(leadRow.lead_status, statusMappings, 'ZOHO_TO_EXTERNAL');
+    // }
 
     const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
 

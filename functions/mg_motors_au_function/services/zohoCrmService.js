@@ -75,8 +75,9 @@ const OEM_LEADS_FIELDS = [
   'Enquiry_Model',
   'Enquiry_Source',
   'Enquiry_Status',
-  'Assigned_Date',           // if you kept this on Leads — confirm, wasn't in your original field list
-  'Last_Status_Update',      // same caveat
+  'Lead_Status',  // ← ADD THIS LINE
+  'Assigned_Date',
+  'Last_Status_Update',
   'Dealer_Remarks',
   'Nature_of_Enquiry',
   'Purchase_Classification',

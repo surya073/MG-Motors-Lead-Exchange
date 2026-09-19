@@ -57,6 +57,7 @@ function toCatalystDateTimeFromCrm(crmDateString) {
 }
 
 function mapCrmRecordToLeadRow(crmRecord) {
+  
   return {
     dealer_code: crmRecord.Dealer_Code || '',
     customer_name: [crmRecord.First_Name, crmRecord.Last_Name].filter(Boolean).join(' ') || '',
@@ -64,7 +65,7 @@ function mapCrmRecordToLeadRow(crmRecord) {
     email_address: crmRecord.Email || '',
     vehicle_model: crmRecord.Enquiry_Model || '',
     lead_source: crmRecord.Enquiry_Source || '',
-    lead_status: crmRecord.Enquiry_Status || '',
+    lead_status: crmRecord.Lead_Status || '',
     assigned_date: toCatalystDateTimeFromCrm(crmRecord.Assigned_Date),
     last_status_update: toCatalystDateTimeFromCrm(crmRecord.Last_Status_Update),
     dealer_remarks: crmRecord.Dealer_Remarks || '',
