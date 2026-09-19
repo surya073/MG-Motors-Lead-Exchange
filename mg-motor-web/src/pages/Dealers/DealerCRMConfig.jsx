@@ -156,39 +156,43 @@ const DEALER_LOG_SCENARIOS = {
     path: "happy",
     number: 1,
     label: "New enquiry routed successfully",
-    color: { bg: "#dcfce7", text: "#16a34a" },
+    color: { bg: "var(--scenario-happy-1-bg)", text: "var(--scenario-happy-1-text)" },
   },
   "happy-2": {
     path: "happy",
     number: 2,
     label: "Dealer progresses enquiry (status sync)",
-    color: { bg: "#ccfbf1", text: "#0d9488" },
+    color: { bg: "var(--scenario-happy-2-bg)", text: "var(--scenario-happy-2-text)" },
   },
   // NEW — backend now distinguishes this from happy-2 (see
   // crmIntegrationService.js's isStatusSync split in processInboundWebhook).
+  // Now pointed at the same --scenario-happy-5-* tokens SyncLogsPage.jsx
+  // uses, so the same scenario reads as the same color on both pages —
+  // previously this used its own one-off hex (#e0f2fe/#0284c7) that
+  // didn't match SyncLogsPage's happy-5 (#d1fae5/#059669) at all.
   "happy-5": {
     path: "happy",
     number: 5,
     label: "Data synchronisation (dealer → OEM)",
-    color: { bg: "#e0f2fe", text: "#0284c7" },
+    color: { bg: "var(--scenario-happy-5-bg)", text: "var(--scenario-happy-5-text)" },
   },
   "unhappy-1": {
     path: "unhappy",
     number: 1,
     label: "API / integration failure",
-    color: { bg: "#fee2e2", text: "#dc2626" },
+    color: { bg: "var(--scenario-unhappy-1-bg)", text: "var(--scenario-unhappy-1-text)" },
   },
   "unhappy-2": {
     path: "unhappy",
     number: 2,
     label: "Invalid / missing data",
-    color: { bg: "#ffe4e6", text: "#e11d48" },
+    color: { bg: "var(--scenario-unhappy-2-bg)", text: "var(--scenario-unhappy-2-text)" },
   },
   "unhappy-4": {
     path: "unhappy",
     number: 4,
     label: "Status update failure (dealer → OEM)",
-    color: { bg: "#fef3c7", text: "#d97706" },
+    color: { bg: "var(--scenario-unhappy-4-bg)", text: "var(--scenario-unhappy-4-text)" },
   },
   // NEW — previously unreachable: LEAD_MAPPING_NOT_FOUND used to throw
   // before writeLog ran, so no row ever carried this scenario. Now that
@@ -197,7 +201,7 @@ const DEALER_LOG_SCENARIOS = {
     path: "unhappy",
     number: 7,
     label: "Out-of-order events",
-    color: { bg: "#ede9fe", text: "#7c3aed" },
+    color: { bg: "var(--scenario-unhappy-7-bg)", text: "var(--scenario-unhappy-7-text)" },
   },
 };
 

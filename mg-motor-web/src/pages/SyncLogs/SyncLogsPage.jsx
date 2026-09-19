@@ -59,63 +59,56 @@ const SCENARIO_CATALOG = {
     number: 1,
     label: "New enquiry routed successfully",
     source: "OEM CRM",
-    description:
-      "New enquiry created in OEM CRM with status = 'Update Pending'. Fires via OEM webhook (or scheduled poll of records where Status = Update Pending). Mandatory fields present.",
-    color: { bg: "#dcfce7", text: "#16a34a" },
+    description: "New enquiry created in OEM CRM with status = 'Update Pending'. Fires via OEM webhook (or scheduled poll of records where Status = Update Pending). Mandatory fields present.",
+    color: { bg: "var(--scenario-happy-1-bg)", text: "var(--scenario-happy-1-text)" },
   },
   "happy-2": {
     path: "happy",
     number: 2,
     label: "Dealer progresses enquiry (status sync)",
     source: "Dealer CRM",
-    description:
-      "Dealer CRM sends a receipt on accept, then subsequent status changes. Fires on dealer webhook per change, plus a daily scheduled reconcile pull.",
-    color: { bg: "#ccfbf1", text: "#0d9488" },
+    description: "Dealer CRM sends a receipt on accept, then subsequent status changes. Fires on dealer webhook per change, plus a daily scheduled reconcile pull.",
+    color: { bg: "var(--scenario-happy-2-bg)", text: "var(--scenario-happy-2-text)" },
   },
   "happy-3": {
     path: "happy",
     number: 3,
     label: "Duplicate detected",
     source: "Middleware",
-    description:
-      "During ingest of a new enquiry. Dedupe rule matches an existing record: same Enq. ID (idempotent replay) OR match on email/mobile + name for the same dealer within the configured window.",
-    color: { bg: "#cffafe", text: "#0891b2" },
+    description: "During ingest of a new enquiry. Dedupe rule matches an existing record: same Enq. ID (idempotent replay) OR match on email/mobile + name for the same dealer within the configured window.",
+    color: { bg: "var(--scenario-happy-3-bg)", text: "var(--scenario-happy-3-text)" },
   },
   "happy-4": {
     path: "happy",
     number: 4,
     label: "Integration recovery (replay)",
     source: "Scheduler",
-    description:
-      "Connectivity is restored after an outage and queued messages exist. The retry/replay processor runs.",
-    color: { bg: "#dbeafe", text: "#2563eb" },
+    description: "Connectivity is restored after an outage and queued messages exist. The retry/replay processor runs.",
+    color: { bg: "var(--scenario-happy-4-bg)", text: "var(--scenario-happy-4-text)" },
   },
   "happy-5": {
     path: "happy",
     number: 5,
     label: "Data synchronisation (dealer → OEM)",
     source: "Dealer CRM",
-    description:
-      "Dealer updates customer/enquiry fields. Fires on dealer change event, plus daily scheduled pull.",
-    color: { bg: "#d1fae5", text: "#059669" },
+    description: "Dealer updates customer/enquiry fields. Fires on dealer change event, plus daily scheduled pull.",
+    color: { bg: "var(--scenario-happy-5-bg)", text: "var(--scenario-happy-5-text)" },
   },
   "unhappy-1": {
     path: "unhappy",
     number: 1,
     label: "API / integration failure",
     source: "Middleware",
-    description:
-      "During push to the dealer: adapter returns timeout, 5xx, or connection error (a recoverable failure).",
-    color: { bg: "#fee2e2", text: "#dc2626" },
+    description: "During push to the dealer: adapter returns timeout, 5xx, or connection error (a recoverable failure).",
+    color: { bg: "var(--scenario-unhappy-1-bg)", text: "var(--scenario-unhappy-1-text)" },
   },
   "unhappy-2": {
     path: "unhappy",
     number: 2,
     label: "Invalid / missing data",
     source: "Middleware",
-    description:
-      "During validation on ingest from OEM: a mandatory field is missing or a value fails format/business rules. NON-recoverable — no retry.",
-    color: { bg: "#ffe4e6", text: "#e11d48" },
+    description: "During validation on ingest from OEM: a mandatory field is missing or a value fails format/business rules. NON-recoverable — no retry.",
+    color: { bg: "var(--scenario-unhappy-2-bg)", text: "var(--scenario-unhappy-2-text)" },
   },
   "unhappy-3": {
     path: "unhappy",
@@ -123,7 +116,7 @@ const SCENARIO_CATALOG = {
     label: "Dealer unavailable (after 24h retry)",
     source: "Scheduler",
     description: "Mapped dealer is inactive/unavailable and the retry window (24h) is exhausted.",
-    color: { bg: "#ffedd5", text: "#ea580c" },
+    color: { bg: "var(--scenario-unhappy-3-bg)", text: "var(--scenario-unhappy-3-text)" },
   },
   "unhappy-4": {
     path: "unhappy",
@@ -131,16 +124,15 @@ const SCENARIO_CATALOG = {
     label: "Status update failure (dealer → OEM)",
     source: "Middleware",
     description: "A dealer update is received but the write to OEM fails (recoverable).",
-    color: { bg: "#fef3c7", text: "#d97706" },
+    color: { bg: "var(--scenario-unhappy-4-bg)", text: "var(--scenario-unhappy-4-text)" },
   },
   "unhappy-5": {
     path: "unhappy",
     number: 5,
     label: "Wrong / rejected dealer mapping",
     source: "Middleware",
-    description:
-      "During routing: postcode resolves to no dealer, an ambiguous dealer, or an invalid postcode-to-dealer configuration.",
-    color: { bg: "#fce7f3", text: "#db2777" },
+    description: "During routing: postcode resolves to no dealer, an ambiguous dealer, or an invalid postcode-to-dealer configuration.",
+    color: { bg: "var(--scenario-unhappy-5-bg)", text: "var(--scenario-unhappy-5-text)" },
   },
   "unhappy-6": {
     path: "unhappy",
@@ -148,7 +140,7 @@ const SCENARIO_CATALOG = {
     label: "Ownership conflict",
     source: "Middleware",
     description: "OEM and dealer independently update the same enquiry/field (concurrent edits).",
-    color: { bg: "#fae8ff", text: "#c026d3" },
+    color: { bg: "var(--scenario-unhappy-6-bg)", text: "var(--scenario-unhappy-6-text)" },
   },
   "unhappy-7": {
     path: "unhappy",
@@ -156,16 +148,15 @@ const SCENARIO_CATALOG = {
     label: "Out-of-order events",
     source: "Middleware",
     description: "A status update arrives before the enquiry-created record exists.",
-    color: { bg: "#fee2e2", text: "#7f1d1d" },
+    color: { bg: "var(--scenario-unhappy-7-bg)", text: "var(--scenario-unhappy-7-text)" },
   },
   "unhappy-8": {
     path: "unhappy",
     number: 8,
     label: "Consent / privacy mismatch",
     source: "Middleware",
-    description:
-      "Consent/privacy data is incomplete or incorrect (e.g. Privacy Opt-In missing/mismatched) at OEM→dealer send or on dealer receipt.",
-    color: { bg: "#ede9fe", text: "#7c3aed" },
+    description: "Consent/privacy data is incomplete or incorrect (e.g. Privacy Opt-In missing/mismatched) at OEM→dealer send or on dealer receipt.",
+    color: { bg: "var(--scenario-unhappy-8-bg)", text: "var(--scenario-unhappy-8-text)" },
   },
   "unhappy-9": {
     path: "unhappy",
@@ -173,7 +164,7 @@ const SCENARIO_CATALOG = {
     label: "Dealer rejects enquiry",
     source: "Dealer CRM",
     description: "Dealer marks the enquiry as rejected (spam/invalid). A rejection event is received.",
-    color: { bg: "#ffedd5", text: "#9a3412" },
+    color: { bg: "var(--scenario-unhappy-9-bg)", text: "var(--scenario-unhappy-9-text)" },
   },
   "unhappy-10": {
     path: "unhappy",
@@ -181,27 +172,26 @@ const SCENARIO_CATALOG = {
     label: "SLA breach",
     source: "Scheduler",
     description: "Dealer received the enquiry but takes no action within 24 hours. The SLA monitor fires.",
-    color: { bg: "#ffe4e6", text: "#be123c" },
+    color: { bg: "var(--scenario-unhappy-10-bg)", text: "var(--scenario-unhappy-10-text)" },
   },
   "unhappy-11": {
     path: "unhappy",
     number: 11,
     label: "Partial transaction",
     source: "Middleware",
-    description:
-      "OEM records the enquiry successfully but the dealer creation fails, leaving a mismatch.",
-    color: { bg: "#fef3c7", text: "#92400e" },
+    description: "OEM records the enquiry successfully but the dealer creation fails, leaving a mismatch.",
+    color: { bg: "var(--scenario-unhappy-11-bg)", text: "var(--scenario-unhappy-11-text)" },
   },
   "unhappy-12": {
     path: "unhappy",
     number: 12,
     label: "Dealer CRM migration / offboarding",
     source: "Scheduler",
-    description:
-      "Dealer changes CRM or leaves the network. Eligible enquiries = status NOT IN (Not Qualified, Lost, Dropped) AND age_in_days < 14.",
-    color: { bg: "#f1f5f9", text: "#475569" },
+    description: "Dealer changes CRM or leaves the network. Eligible enquiries = status NOT IN (Not Qualified, Lost, Dropped) AND age_in_days < 14.",
+    color: { bg: "var(--scenario-unhappy-12-bg)", text: "var(--scenario-unhappy-12-text)" },
   },
 };
+
 
 // Sort key so bucket lists always render in a stable, sensible order:
 // all Happy scenarios (by number) before all Unhappy ones (by number).

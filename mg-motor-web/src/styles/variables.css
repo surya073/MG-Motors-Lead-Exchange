@@ -194,6 +194,42 @@
   --z-modal: 1000;
   --z-popover: 900;
   --z-dropdown: 800;
+
+   --scenario-happy-1-bg: #dcfce7;
+  --scenario-happy-1-text: #16a34a;
+  --scenario-happy-2-bg: #ccfbf1;
+  --scenario-happy-2-text: #0d9488;
+  --scenario-happy-3-bg: #cffafe;
+  --scenario-happy-3-text: #0891b2;
+  --scenario-happy-4-bg: #dbeafe;
+  --scenario-happy-4-text: #2563eb;
+  --scenario-happy-5-bg: #d1fae5;
+  --scenario-happy-5-text: #059669;
+
+  --scenario-unhappy-1-bg: #fee2e2;
+  --scenario-unhappy-1-text: #dc2626;
+  --scenario-unhappy-2-bg: #ffe4e6;
+  --scenario-unhappy-2-text: #e11d48;
+  --scenario-unhappy-3-bg: #ffedd5;
+  --scenario-unhappy-3-text: #ea580c;
+  --scenario-unhappy-4-bg: #fef3c7;
+  --scenario-unhappy-4-text: #d97706;
+  --scenario-unhappy-5-bg: #fce7f3;
+  --scenario-unhappy-5-text: #db2777;
+  --scenario-unhappy-6-bg: #fae8ff;
+  --scenario-unhappy-6-text: #c026d3;
+  --scenario-unhappy-7-bg: #fee2e2;
+  --scenario-unhappy-7-text: #7f1d1d;
+  --scenario-unhappy-8-bg: #ede9fe;
+  --scenario-unhappy-8-text: #7c3aed;
+  --scenario-unhappy-9-bg: #ffedd5;
+  --scenario-unhappy-9-text: #9a3412;
+  --scenario-unhappy-10-bg: #ffe4e6;
+  --scenario-unhappy-10-text: #be123c;
+  --scenario-unhappy-11-bg: #fef3c7;
+  --scenario-unhappy-11-text: #92400e;
+  --scenario-unhappy-12-bg: #f1f5f9;
+  --scenario-unhappy-12-text: #475569;
 }
 
 /* ============================================================
@@ -271,6 +307,48 @@
   --sidebar-logout-border-hover: rgba(210, 60, 60, 0.5);
 
   --sidebar-logo-invert: 0;
+
+    /* Scenario badges — soft translucent tints (readable against pure
+     black, unlike the light theme's pastel fills) paired with brighter
+     text for contrast. unhappy-1/7 and unhappy-2/10 and unhappy-3/9 and
+     unhappy-4/11 intentionally keep DIFFERENT tints from each other here
+     (they share a bg in light mode) so the two scenarios in each pair
+     stay visually distinguishable at a glance on dark backgrounds too. */
+  --scenario-happy-1-bg: rgba(34, 197, 94, 0.16);
+  --scenario-happy-1-text: #4ade80;
+  --scenario-happy-2-bg: rgba(45, 212, 191, 0.16);
+  --scenario-happy-2-text: #2dd4bf;
+  --scenario-happy-3-bg: rgba(34, 211, 238, 0.16);
+  --scenario-happy-3-text: #22d3ee;
+  --scenario-happy-4-bg: rgba(59, 130, 246, 0.18);
+  --scenario-happy-4-text: #60a5fa;
+  --scenario-happy-5-bg: rgba(16, 185, 129, 0.18);
+  --scenario-happy-5-text: #34d399;
+
+  --scenario-unhappy-1-bg: rgba(248, 113, 113, 0.16);
+  --scenario-unhappy-1-text: #f87171;
+  --scenario-unhappy-2-bg: rgba(251, 113, 133, 0.16);
+  --scenario-unhappy-2-text: #fb7185;
+  --scenario-unhappy-3-bg: rgba(251, 146, 60, 0.18);
+  --scenario-unhappy-3-text: #fb923c;
+  --scenario-unhappy-4-bg: rgba(251, 191, 36, 0.18);
+  --scenario-unhappy-4-text: #fbbf24;
+  --scenario-unhappy-5-bg: rgba(244, 114, 182, 0.16);
+  --scenario-unhappy-5-text: #f472b6;
+  --scenario-unhappy-6-bg: rgba(232, 121, 249, 0.16);
+  --scenario-unhappy-6-text: #e879f9;
+  --scenario-unhappy-7-bg: rgba(127, 29, 29, 0.35);
+  --scenario-unhappy-7-text: #fca5a5;
+  --scenario-unhappy-8-bg: rgba(167, 139, 250, 0.18);
+  --scenario-unhappy-8-text: #a78bfa;
+  --scenario-unhappy-9-bg: rgba(154, 52, 18, 0.3);
+  --scenario-unhappy-9-text: #fdba74;
+  --scenario-unhappy-10-bg: rgba(190, 18, 60, 0.28);
+  --scenario-unhappy-10-text: #fda4af;
+  --scenario-unhappy-11-bg: rgba(146, 64, 14, 0.3);
+  --scenario-unhappy-11-text: #fcd34d;
+  --scenario-unhappy-12-bg: rgba(100, 116, 139, 0.2);
+  --scenario-unhappy-12-text: #94a3b8;
 }
 
 /* ---------- Base ---------- */
