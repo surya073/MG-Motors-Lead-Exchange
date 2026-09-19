@@ -59,6 +59,21 @@ import "../../ui/Skeleton/Skeleton.css";
  *
  * ?dealerCode= in the URL deep-links directly to a dealer's config.
  *
+ * SAVE ACTIONS ARE SPLIT ON PURPOSE (handleSaveConnection vs
+ * handleSaveMappings) — they used to be one combined handleSave that
+ * always PUT the full connection config (including credentials) before
+ * ever touching mappings. The backend's PUT /integration route demotes
+ * status from CONNECTED back to CONFIGURING on every save (so admins
+ * re-verify after a connection-affecting edit) — but that demotion was
+ * firing even when the admin only clicked "Save Field Mapping" or "Save
+ * Status Mapping", since handleSave always hit the connection endpoint
+ * first. loadIntegration() would then pull the demoted status back in,
+ * mappingsLocked would flip true, and whichever mapping tab the admin
+ * was on would immediately show its own "test the connection first"
+ * locked state right after saving — so mappings could never accumulate
+ * past the first save. Splitting these means a mapping save only ever
+ * calls saveMappings(), and never touches connection status.
+ *
  * ACTIVITY LOG SCENARIO CLASSIFICATION
  * -----------------------------------------------------------------------
  * Each row in integration_logs (written by crmIntegrationService.js) is
@@ -99,6 +114,54 @@ const HTTP_METHODS = [
   { value: "POST", label: "POST" },
   { value: "PUT", label: "PUT" },
   { value: "PATCH", label: "PATCH" },
+];
+
+const OUR_FIELDS = [
+  "dealer_code",
+  "customer_name",
+  "mobile_number",
+  "email_address",
+  "vehicle_model",
+  "lead_source",
+  "lead_status",
+  "assigned_date",
+  "last_status_update",
+  "dealer_remarks",
+  "crm_record_id",
+  "next_followup_date",
+  "enquiry_status",
+  "nature_of_enquiry",
+  "purchase_classification",
+  "enquiry_outcome",
+  "lead_department",
+  "franchise",
+  "enquiry_id",
+  "customer_message",
+  "accept_privacy_policy",
+  "receive_marketing_updates",
+  "postcode",
+  "unit_suite",
+  "enquiry_model",
+  "enquiry_variant",
+  "enquiry_powertrain",
+  "chat_transcript",
+  "lead_owner_email",
+];
+
+// Humanized label only — the stored value stays the exact internal
+// field name (source_field), unchanged, since that's what
+// leadMappingService.js reads off leadRow[mapping.source_field] at
+// sync time.
+function humanizeFieldName(field) {
+  return field
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+const OUR_FIELD_OPTIONS = [
+  { value: "", label: "Select field…" },
+  ...OUR_FIELDS.map((f) => ({ value: f, label: `${humanizeFieldName(f)} (${f})` })),
 ];
 
 const INTEGRATION_STATUS_TONES = {
@@ -625,7 +688,25 @@ export default function DealerCRMConfig() {
     setStatusMappings((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: value } : m)));
   };
 
-  const handleSave = async () => {
+  // NEW — status mapping previously had no way to grow past the six
+  // DEFAULT_STATUS_MAPPINGS rows, and source_status rendered as a
+  // read-only <span> in the JSX below (now an editable input), so a new
+  // status pair had nowhere to go. Mirrors addFieldMapping/removeFieldMapping.
+  const addStatusMapping = () => {
+    setSaveSuccess(false);
+    setStatusMappings((prev) => [...prev, { source_status: "", target_status: "" }]);
+  };
+
+  const removeStatusMapping = (index) => {
+    setSaveSuccess(false);
+    setStatusMappings((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // ---- Connection tab save ----
+  // Only ever touches /integration (config + credentials). Never call
+  // this from a mapping-tab button — see the file-level note above on
+  // why that combination was silently re-locking the mapping tabs.
+  const handleSaveConnection = async () => {
     if (!selectedDealer) return;
     setSaving(true);
     try {
@@ -637,33 +718,59 @@ export default function DealerCRMConfig() {
         oauth_refresh_token: oauthRefreshToken || undefined,
       });
 
-      if (config.integration_type === "EXTERNAL_CRM") {
-        await dealerCrmIntegrationService.saveMappings(selectedDealer.dealer_code, {
-          fieldMappings,
-          statusMappings,
-        });
-      }
-
-      showAlert("success", `Saved integration settings for ${selectedDealer.dealer_name}.`, {
+      showAlert("success", `Saved connection settings for ${selectedDealer.dealer_name}.`, {
         title: "Configuration saved",
       });
-      // Visual-only confirmation on the button itself — this must NOT
-      // touch the top connection badge, which only reflects the last
-      // Test Connection result / persisted status.
       setSaveSuccess(true);
       clearSaveSuccessSoon();
-      // After a successful save, any credential just entered is now
-      // persisted server-side — collapse back to the masked/disabled
-      // view rather than leaving raw values sitting in the inputs.
+      // Any credential just entered is now persisted server-side —
+      // collapse back to the masked/disabled view.
       resetCredentialInputs();
       await loadIntegration(selectedDealer);
-      // loadIntegration() resets saveSuccess to false (it also runs
-      // right after Test Connection), so re-assert the confirmation
-      // state for this save action specifically.
+      // loadIntegration() resets saveSuccess to false — re-assert the
+      // confirmation state for this save action specifically.
       setSaveSuccess(true);
       clearSaveSuccessSoon();
     } catch (err) {
       showAlert("error", err?.response?.data?.error || "Couldn't save the configuration. Try again.", {
+        title: "Save failed",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---- Field/Status mapping tab save ----
+  // Only ever touches /integration/mappings — never the connection
+  // endpoint, so it can't demote the integration's status and re-lock
+  // these tabs on itself. Re-fetches only the mappings afterward, not
+  // the whole integration, for the same reason.
+  const handleSaveMappings = async () => {
+    if (!selectedDealer) return;
+    setSaving(true);
+    try {
+      await dealerCrmIntegrationService.saveMappings(selectedDealer.dealer_code, {
+        fieldMappings,
+        statusMappings,
+      });
+
+      showAlert("success", `Saved mapping settings for ${selectedDealer.dealer_name}.`, {
+        title: "Mappings saved",
+      });
+      setSaveSuccess(true);
+      clearSaveSuccessSoon();
+
+      const mappingsResult = await dealerCrmIntegrationService.getMappings(selectedDealer.dealer_code);
+      setFieldMappings(
+        mappingsResult?.fieldMappings?.length ? mappingsResult.fieldMappings : DEFAULT_FIELD_MAPPINGS
+      );
+      setStatusMappings(
+        mappingsResult?.statusMappings?.length ? mappingsResult.statusMappings : DEFAULT_STATUS_MAPPINGS
+      );
+      setSaveSuccess(true);
+      clearSaveSuccessSoon();
+    } catch (err) {
+      showAlert("error", err?.response?.data?.error || "Couldn't save the mapping. Try again.", {
         title: "Save failed",
       });
     } finally {
@@ -1290,7 +1397,7 @@ export default function DealerCRMConfig() {
                           className={`dealer-crm-config__button--primary ${
                             saveSuccess ? "dealer-crm-config__button--success" : ""
                           }`}
-                          onClick={handleSave}
+                          onClick={handleSaveConnection}
                           disabled={saving}
                         >
                           {saveButtonContent("Save Configuration")}
@@ -1320,10 +1427,11 @@ export default function DealerCRMConfig() {
                         </div>
                         {fieldMappings.map((mapping, index) => (
                           <div className="dealer-crm-config__mapping-row" key={index}>
-                            <input
+                            <Dropdown
+                              ariaLabel="Our field"
                               value={mapping.source_field}
-                              onChange={(e) => handleFieldMappingChange(index, "source_field", e.target.value)}
-                              placeholder="customer_name"
+                              onChange={(v) => handleFieldMappingChange(index, "source_field", v)}
+                              options={OUR_FIELD_OPTIONS}
                             />
                             <span className="dealer-crm-config__mapping-arrow">→</span>
                             <input
@@ -1358,7 +1466,7 @@ export default function DealerCRMConfig() {
                             className={`dealer-crm-config__button--primary ${
                               saveSuccess ? "dealer-crm-config__button--success" : ""
                             }`}
-                            onClick={handleSave}
+                            onClick={handleSaveMappings}
                             disabled={saving}
                           >
                             {saveButtonContent("Save Field Mapping")}
@@ -1383,18 +1491,34 @@ export default function DealerCRMConfig() {
                           <span>Our Status</span>
                           <span />
                           <span>Dealer CRM Status</span>
+                          <span />
                         </div>
                         {statusMappings.map((mapping, index) => (
                           <div className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--status" key={index}>
-                            <span className="dealer-crm-config__status-source">{mapping.source_status}</span>
+                            <input
+                              value={mapping.source_status}
+                              onChange={(e) => handleStatusMappingChange(index, "source_status", e.target.value)}
+                              placeholder="e.g. New, Contacted…"
+                            />
                             <span className="dealer-crm-config__mapping-arrow">→</span>
                             <input
                               value={mapping.target_status}
                               onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
                               placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
                             />
+                            <button
+                              type="button"
+                              className="dealer-crm-config__remove-mapping"
+                              onClick={() => removeStatusMapping(index)}
+                              aria-label="Remove mapping"
+                            >
+                              ×
+                            </button>
                           </div>
                         ))}
+                        <button type="button" className="dealer-crm-config__add-mapping" onClick={addStatusMapping}>
+                          + Add another status
+                        </button>
 
                         <div className="dealer-crm-config__actions">
                           <button
@@ -1402,7 +1526,7 @@ export default function DealerCRMConfig() {
                             className={`dealer-crm-config__button--primary ${
                               saveSuccess ? "dealer-crm-config__button--success" : ""
                             }`}
-                            onClick={handleSave}
+                            onClick={handleSaveMappings}
                             disabled={saving}
                           >
                             {saveButtonContent("Save Status Mapping")}

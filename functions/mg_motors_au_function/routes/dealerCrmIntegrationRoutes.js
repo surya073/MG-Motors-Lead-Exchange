@@ -214,40 +214,136 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       return res.status(400).json({ error: 'FIELD_MAPPING_INVALID' });
     }
 
-    const existingFieldRows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT ROWID FROM integration_field_mappings WHERE integration_id = ${integration.ROWID}`
-    );
     const fieldTable = catalystApp.datastore().table('integration_field_mappings');
-    await Promise.all(existingFieldRows.map((r) => fieldTable.deleteRow(r.integration_field_mappings.ROWID)));
-    await Promise.all(validFieldMappings.map((m) => fieldTable.insertRow({
-      integration_id: integration.ROWID,
-      source_field: m.source_field,
-      target_field: m.target_field,
-      data_type: m.data_type || 'string',
-      required: Boolean(m.required),
-    })));
-
-    const existingStatusRows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT ROWID FROM integration_status_mappings WHERE integration_id = ${integration.ROWID}`
+    const existingFieldRowsRaw = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM integration_field_mappings WHERE integration_id = ${integration.ROWID}`
     );
-    const statusTable = catalystApp.datastore().table('integration_status_mappings');
-    await Promise.all(existingStatusRows.map((r) => statusTable.deleteRow(r.integration_status_mappings.ROWID)));
+    const existingFieldRows = existingFieldRowsRaw.map((r) => r.integration_field_mappings);
 
+    // Rows already persisted carry their ROWID from the earlier GET
+    // /integration/mappings response — the frontend round-trips them
+    // unchanged in the array. A row WITHOUT a ROWID is new (added via
+    // "+ Add another field" this session) — insert only that. A row
+    // whose ROWID no longer appears in the incoming array was removed
+    // by the admin — delete only that. Everything else is untouched.
+    const incomingRowIds = new Set(validFieldMappings.filter((m) => m.ROWID).map((m) => String(m.ROWID)));
+    const rowsToDelete = existingFieldRows.filter((r) => !incomingRowIds.has(String(r.ROWID)));
+    const rowsToInsert = validFieldMappings.filter((m) => !m.ROWID);
+    // Rows that carry a ROWID AND still exist AND may have had their
+    // values edited in place (e.g. admin changed target_field on an
+    // existing row) — update these rather than leaving stale data.
+    const existingById = new Map(existingFieldRows.map((r) => [String(r.ROWID), r]));
+    const rowsToUpdate = validFieldMappings.filter((m) => {
+      if (!m.ROWID) return false;
+      const existing = existingById.get(String(m.ROWID));
+      if (!existing) return false;
+      return (
+        existing.source_field !== m.source_field ||
+        existing.target_field !== m.target_field ||
+        existing.data_type !== (m.data_type || 'string') ||
+        Boolean(existing.required) !== Boolean(m.required)
+      );
+    });
+
+    for (const r of rowsToDelete) {
+      await fieldTable.deleteRow(r.ROWID);
+    }
+    for (const m of rowsToInsert) {
+      try {
+        await fieldTable.insertRow({
+          integration_id: integration.ROWID,
+          source_field: m.source_field,
+          target_field: m.target_field,
+          data_type: m.data_type || 'string',
+          required: Boolean(m.required),
+        });
+      } catch (rowErr) {
+        logger.error('dealerCrmIntegrationRoutes', `Field mapping insert failed for ${dealerCode}: ${JSON.stringify(m)}`, rowErr);
+        throw rowErr;
+      }
+    }
+    for (const m of rowsToUpdate) {
+      await fieldTable.updateRow({
+        ROWID: m.ROWID,
+        source_field: m.source_field,
+        target_field: m.target_field,
+        data_type: m.data_type || 'string',
+        required: Boolean(m.required),
+      });
+    }
+
+    // Status mappings: same diff approach, but each admin-facing "pair"
+    // is actually 2 DB rows (ZOHO_TO_EXTERNAL + EXTERNAL_TO_ZOHO). We
+    // diff on the pair's own ROWID pairing rather than per-direction-row,
+    // so both directions of an unchanged pair are left alone.
+    const statusTable = catalystApp.datastore().table('integration_status_mappings');
+    const existingStatusRowsRaw = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM integration_status_mappings WHERE integration_id = ${integration.ROWID}`
+    );
+    const existingStatusRows = existingStatusRowsRaw.map((r) => r.integration_status_mappings);
     const validStatusMappings = statusMappings.filter((m) => m.source_status && m.target_status);
-    await Promise.all(validStatusMappings.flatMap((m) => [
-      statusTable.insertRow({
-        integration_id: integration.ROWID,
-        source_status: m.source_status,
-        target_status: m.target_status,
-        direction: 'ZOHO_TO_EXTERNAL',
-      }),
-      statusTable.insertRow({
-        integration_id: integration.ROWID,
-        source_status: m.target_status,
-        target_status: m.source_status,
-        direction: 'EXTERNAL_TO_ZOHO',
-      }),
-    ]));
+
+    // Group existing rows into pairs by (source_status, target_status)
+    // sitting on the ZOHO_TO_EXTERNAL side — its ROWID is what the
+    // frontend echoes back on the pair object.
+    const existingPairsByRowId = new Map(
+      existingStatusRows
+        .filter((r) => r.direction === 'ZOHO_TO_EXTERNAL')
+        .map((r) => [String(r.ROWID), r])
+    );
+
+    const incomingPairRowIds = new Set(validStatusMappings.filter((m) => m.ROWID).map((m) => String(m.ROWID)));
+
+    // Pairs removed entirely — delete both direction rows for each.
+    for (const [rowId, forwardRow] of existingPairsByRowId) {
+      if (!incomingPairRowIds.has(rowId)) {
+        const reverseRow = existingStatusRows.find(
+          (r) => r.direction === 'EXTERNAL_TO_ZOHO' && r.source_status === forwardRow.target_status && r.target_status === forwardRow.source_status
+        );
+        await statusTable.deleteRow(forwardRow.ROWID);
+        if (reverseRow) await statusTable.deleteRow(reverseRow.ROWID);
+      }
+    }
+
+    // New pairs — insert both direction rows.
+    const newPairs = validStatusMappings.filter((m) => !m.ROWID);
+    for (const m of newPairs) {
+      try {
+        await statusTable.insertRow({
+          integration_id: integration.ROWID,
+          source_status: m.source_status,
+          target_status: m.target_status,
+          direction: 'ZOHO_TO_EXTERNAL',
+        });
+        await statusTable.insertRow({
+          integration_id: integration.ROWID,
+          source_status: m.target_status,
+          target_status: m.source_status,
+          direction: 'EXTERNAL_TO_ZOHO',
+        });
+      } catch (rowErr) {
+        logger.error('dealerCrmIntegrationRoutes', `Status mapping insert failed for ${dealerCode}: ${JSON.stringify(m)}`, rowErr);
+        throw rowErr;
+      }
+    }
+
+    // Edited pairs — update both direction rows' text in place.
+    const editedPairs = validStatusMappings.filter((m) => {
+      if (!m.ROWID) return false;
+      const existing = existingPairsByRowId.get(String(m.ROWID));
+      if (!existing) return false;
+      return existing.source_status !== m.source_status || existing.target_status !== m.target_status;
+    });
+    for (const m of editedPairs) {
+      const forwardRow = existingPairsByRowId.get(String(m.ROWID));
+      const reverseRow = existingStatusRows.find(
+        (r) => r.direction === 'EXTERNAL_TO_ZOHO' && r.source_status === forwardRow.target_status && r.target_status === forwardRow.source_status
+      );
+      await statusTable.updateRow({ ROWID: forwardRow.ROWID, source_status: m.source_status, target_status: m.target_status });
+      if (reverseRow) {
+        await statusTable.updateRow({ ROWID: reverseRow.ROWID, source_status: m.target_status, target_status: m.source_status });
+      }
+    }
 
     res.json({ ok: true });
   } catch (err) {

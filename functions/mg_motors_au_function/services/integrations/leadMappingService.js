@@ -57,13 +57,29 @@ function mapExternalLeadToZoho(externalPayload, fieldMappings) {
 }
 
 function mapStatus(status, statusMappings, direction) {
-  const match = statusMappings.find((m) => m.direction === direction && m.source_status === status);
-  if (!match) {
-    const err = new Error(`No status mapping found for "${status}" (${direction})`);
-    err.code = 'STATUS_MAPPING_NOT_FOUND';
-    throw err;
+  if (direction === 'ZOHO_TO_EXTERNAL') {
+    const match = statusMappings.find((m) => m.source_status === status);
+    if (!match) {
+      const err = new Error(`No status mapping found for "${status}" (${direction})`);
+      err.code = 'STATUS_MAPPING_NOT_FOUND';
+      throw err;
+    }
+    return match.target_status;
   }
-  return match.target_status;
+
+  if (direction === 'EXTERNAL_TO_ZOHO') {
+    const match = statusMappings.find((m) => m.target_status === status);
+    if (!match) {
+      const err = new Error(`No status mapping found for "${status}" (${direction})`);
+      err.code = 'STATUS_MAPPING_NOT_FOUND';
+      throw err;
+    }
+    return match.source_status;
+  }
+
+  const err = new Error(`Unknown mapping direction "${direction}"`);
+  err.code = 'STATUS_MAPPING_NOT_FOUND';
+  throw err;
 }
 
 module.exports = { mapZohoLeadToExternal, mapExternalLeadToZoho, mapStatus };
