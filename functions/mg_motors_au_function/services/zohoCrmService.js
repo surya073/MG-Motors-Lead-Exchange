@@ -187,4 +187,45 @@ async function updateOemLead(crmRecordId, fields) {
   return result;
 }
 
-module.exports = { fetchDealerMaster, fetchOemLeads, updateOemLead };
+/**
+ * Fetches the picklist values configured for a single field on a Zoho
+ * CRM module, via the field-metadata API. Used to keep our cached
+ * oem_status_picklist table in sync with whatever an admin has
+ * configured as valid Lead Status values in Zoho itself, rather than
+ * hardcoding them here.
+ */
+async function fetchFieldPicklistValues(moduleApiName, fieldApiName) {
+  const { apiDomain } = getZohoConfig();
+  const accessToken = await getAccessToken();
+
+  let response;
+  try {
+    response = await axios.get(`${apiDomain}/crm/v8/settings/fields`, {
+      headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+      params: { module: moduleApiName },
+    });
+  } catch (err) {
+    logger.error('zohoCrmService', `Field metadata fetch failed for ${moduleApiName}`, err);
+    throw new Error(`Zoho CRM API call failed: ${err.response?.data?.message || err.message}`);
+  }
+
+  const fields = response.data?.fields || [];
+  const field = fields.find((f) => f.api_name === fieldApiName);
+  if (!field) {
+    throw new Error(`Field "${fieldApiName}" not found on module "${moduleApiName}"`);
+  }
+  if (!Array.isArray(field.pick_list_values)) {
+    throw new Error(`Field "${fieldApiName}" is not a picklist field`);
+  }
+
+  // Zoho's pick_list_values already carry a "sequence_number" giving
+  // display order — preserved so our cached dropdown matches Zoho's own
+  // admin-configured ordering, not alphabetical or insertion order.
+  return field.pick_list_values.map((v) => ({
+    value: v.actual_value,
+    displayLabel: v.display_value,
+    sequence: v.sequence_number,
+  }));
+}
+
+module.exports = { fetchDealerMaster, fetchOemLeads, updateOemLead, fetchFieldPicklistValues };

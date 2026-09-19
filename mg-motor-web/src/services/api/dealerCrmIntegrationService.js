@@ -55,4 +55,14 @@ export const dealerCrmIntegrationService = {
   return data;
 },
 
+async getStatusPicklist() {
+  const { data } = await axiosInstance.get(`${BASE}/oem-crm/status-picklist`);
+  return data;
+},
+
+async refreshStatusPicklist() {
+  const { data } = await axiosInstance.post(`${BASE}/oem-crm/status-picklist/refresh`);
+  return data;
+},
+
 };

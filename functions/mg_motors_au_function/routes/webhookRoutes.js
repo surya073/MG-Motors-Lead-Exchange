@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
@@ -9,6 +9,7 @@ const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
 const logger = require('../utils/logger');
+const { toCatalystDateTime } = require('../utils/dateFormat');
 
 const router = express.Router();
 
@@ -30,11 +31,6 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
     if (moduleName === 'Dealer_Master') {
       await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
     } else if (moduleName === 'Leads') {
-      // FIX: Zoho's real CRM module API name is "Leads" (see
-      // zohoCrmService.js / zohoWebhookService.js) — this previously
-      // checked for "OEM_Leads", which is not a real module name, so
-      // notifications for lead changes always fell through to the
-      // "unhandled module" branch below and syncLeads() never ran.
       await syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
     } else {
       logger.info('webhookRoutes', `Notification for unhandled module: ${moduleName}`);
@@ -43,18 +39,24 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
     logger.error('webhookRoutes', 'Webhook processing failed', err);
   }
 });
-/**
- * POST /webhooks/dealers/:dealerCode
- * -----------------------------------------------------------------------
- * Inbound from a dealer's own external CRM. Requires raw body (Buffer)
- * for exact-byte HMAC verification — express.raw() is scoped to just
- * this route so it doesn't interfere with express.json() used elsewhere
- * in index.js for the app's normal JSON routes.
- */
+
 router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/json' }), async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
   const rawBody = req.body; // Buffer
+
+  try {
+    await catalystApp.datastore().table('webhook_events').insertRow({
+      dealer_code: dealerCode,
+      event_id: 'DEBUG_RAW_PAYLOAD',
+      payload_hash: 'debug',
+      processing_status: 'DEBUG',
+      error_message: rawBody.toString('utf8').slice(0, 500),
+      received_at: toCatalystDateTime(new Date()),
+    });
+  } catch (e) {
+    logger.error('webhookRoutes', 'DEBUG insert failed', e.message || e);
+  }
 
   try {
     const dealer = await crmIntegrationService.findDealerByCode(catalystApp, dealerCode);

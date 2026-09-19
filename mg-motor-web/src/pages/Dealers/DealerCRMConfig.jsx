@@ -531,6 +531,9 @@ export default function DealerCRMConfig() {
   const [fieldMappings, setFieldMappings] = useState(DEFAULT_FIELD_MAPPINGS);
   const [statusMappings, setStatusMappings] = useState(DEFAULT_STATUS_MAPPINGS);
 
+  const [oemStatusOptions, setOemStatusOptions] = useState([]);
+  const [picklistRefreshing, setPicklistRefreshing] = useState(false);
+
   const [logs, setLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [activeLogDetail, setActiveLogDetail] = useState(null);
@@ -702,6 +705,32 @@ export default function DealerCRMConfig() {
     setStatusMappings((prev) => prev.filter((_, i) => i !== index));
   };
 
+
+   const loadStatusPicklist = async () => {
+    try {
+      const result = await dealerCrmIntegrationService.getStatusPicklist();
+      setOemStatusOptions(
+        (result?.values || []).map((v) => ({ value: v.value, label: v.display_label || v.value }))
+      );
+    } catch (err) {
+      showAlert("error", "Couldn't load OEM status list.", { title: "Load failed" });
+    }
+  };
+
+  const handleRefreshStatusPicklist = async () => {
+    setPicklistRefreshing(true);
+    try {
+      const result = await dealerCrmIntegrationService.refreshStatusPicklist();
+      showAlert("success", `Refreshed ${result.count} statuses from CRM.`, { title: "Picklist refreshed" });
+      await loadStatusPicklist();
+    } catch (err) {
+      showAlert("error", err?.response?.data?.error || "Refresh failed.", { title: "Refresh failed" });
+    } finally {
+      setPicklistRefreshing(false);
+    }
+  };
+
+
   // ---- Connection tab save ----
   // Only ever touches /integration (config + credentials). Never call
   // this from a mapping-tab button — see the file-level note above on
@@ -811,10 +840,11 @@ export default function DealerCRMConfig() {
     }
   };
 
-  const handleTabChange = (nextTab) => {
-    setTab(nextTab);
-    if (nextTab === "logs") loadLogs();
-  };
+ const handleTabChange = (nextTab) => {
+  setTab(nextTab);
+  if (nextTab === "logs") loadLogs();
+  if (nextTab === "status") loadStatusPicklist();
+};
 
   const handleRetrySync = async (log) => {
     try {
@@ -1221,6 +1251,17 @@ export default function DealerCRMConfig() {
                                       <label>Refresh Token</label>
                                       <input type="password" value={MASKED_CREDENTIAL_PLACEHOLDER} disabled readOnly />
                                     </div>
+                                    <div className="dealer-crm-config__field-row">
+                                      <label>Webhook lead ID field</label>
+                                      <input
+                                        value={config.webhook_id_field || "id"}
+                                        onChange={(e) => handleConfigChange("webhook_id_field", e.target.value)}
+                                        placeholder="id"
+                                      />
+                                      <span className="dealer-crm-config__field-hint">
+                                        The JSON key the dealer's CRM uses for the lead's ID in its webhook payload (e.g. "id", "leadId", "recordId").
+                                      </span>
+                                    </div>
                                   </div>
                                   <span className="dealer-crm-config__field-hint">
                                     Credentials are saved and encrypted.{" "}
@@ -1314,6 +1355,7 @@ export default function DealerCRMConfig() {
                                 </button>
                               )}
                             </div>
+
                           )}
 
                           <div className="dealer-crm-config__section-title">Lead endpoints</div>
@@ -1485,37 +1527,35 @@ export default function DealerCRMConfig() {
                     ) : (
                       <div className="dealer-crm-config__mapping-table">
                         <p className="dealer-crm-config__mapping-intro">
-                          Match each of our lead statuses to the equivalent status name in the dealer's CRM.
-                        </p>
-                        <div className="dealer-crm-config__mapping-header dealer-crm-config__mapping-header--status">
-                          <span>Our Status</span>
-                          <span />
-                          <span>Dealer CRM Status</span>
-                          <span />
-                        </div>
-                        {statusMappings.map((mapping, index) => (
-                          <div className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--status" key={index}>
-                            <input
-                              value={mapping.source_status}
-                              onChange={(e) => handleStatusMappingChange(index, "source_status", e.target.value)}
-                              placeholder="e.g. New, Contacted…"
-                            />
-                            <span className="dealer-crm-config__mapping-arrow">→</span>
-                            <input
-                              value={mapping.target_status}
-                              onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
-                              placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
-                            />
-                            <button
-                              type="button"
-                              className="dealer-crm-config__remove-mapping"
-                              onClick={() => removeStatusMapping(index)}
-                              aria-label="Remove mapping"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
+                            Match each of our lead statuses to the equivalent status name in the dealer's CRM.
+                          </p>
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={handleRefreshStatusPicklist}
+                            disabled={picklistRefreshing}
+                          >
+                            {picklistRefreshing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
+                            {picklistRefreshing ? "Refreshing…" : "Refresh statuses from CRM"}
+                          </button>
+
+                          {statusMappings.map((mapping, index) => (
+                            <div className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--status" key={index}>
+                              <Dropdown
+                                ariaLabel="Our status"
+                                value={mapping.source_status}
+                                onChange={(v) => handleStatusMappingChange(index, "source_status", v)}
+                                options={[{ value: "", label: "Select status…" }, ...oemStatusOptions]}
+                              />
+                              <span className="dealer-crm-config__mapping-arrow">→</span>
+                              <input
+                                value={mapping.target_status}
+                                onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
+                                placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
+                              />
+                              <button type="button" className="dealer-crm-config__remove-mapping" onClick={() => removeStatusMapping(index)} aria-label="Remove mapping">×</button>
+                            </div>
+                          ))}
                         <button type="button" className="dealer-crm-config__add-mapping" onClick={addStatusMapping}>
                           + Add another status
                         </button>
