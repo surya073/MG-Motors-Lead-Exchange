@@ -1081,3 +1081,284 @@
   flex-shrink: 0;
   margin-top: 2px;
 }
+
+/* CHANGE this existing rule from:
+.dealer-crm-config__mapping-row--status {
+  grid-template-columns: 1fr 24px 1fr;
+}
+   to: */
+.dealer-crm-config__mapping-row--status {
+  grid-template-columns: 1fr 24px 1fr 28px;
+}
+
+/* =========================================================
+   TOGGLE SWITCH — replaces plain checkboxes for webhook_enabled
+   and the per-mapping "Required" flag
+   ========================================================= */
+
+.dealer-crm-config__toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.dealer-crm-config__toggle-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.dealer-crm-config__toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--color-border-strong);
+  border-radius: 999px;
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  top: 3px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__toggle-switch input:checked + .dealer-crm-config__toggle-slider {
+  background-color: var(--color-primary);
+}
+
+.dealer-crm-config__toggle-switch input:checked + .dealer-crm-config__toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.dealer-crm-config__toggle-switch input:focus-visible + .dealer-crm-config__toggle-slider {
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+/* Smaller variant used inline in mapping-table rows */
+.dealer-crm-config__toggle-switch--compact {
+  width: 32px;
+  height: 18px;
+  margin: 0 auto;
+}
+
+.dealer-crm-config__toggle-switch--compact .dealer-crm-config__toggle-slider::before {
+  height: 12px;
+  width: 12px;
+  left: 3px;
+  top: 3px;
+}
+
+.dealer-crm-config__toggle-switch--compact input:checked + .dealer-crm-config__toggle-slider::before {
+  transform: translateX(14px);
+}
+
+.dealer-crm-config__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  width: fit-content;
+}
+
+.dealer-crm-config__toggle-row-label {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+/* =========================================================
+   MAPPING ROW — saved/view state (label + green tick, pencil, trash)
+   ========================================================= */
+
+.dealer-crm-config__mapping-row--saved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface-alt);
+  transition: background-color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__mapping-row--saved:hover {
+  background-color: var(--color-border);
+}
+
+.dealer-crm-config__mapping-saved-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__mapping-check {
+  color: var(--color-success, #16a34a);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__mapping-saved-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--fw-medium);
+}
+
+.dealer-crm-config__mapping-arrow-inline {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__mapping-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__icon-button:hover {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-primary);
+}
+
+.dealer-crm-config__icon-button--danger {
+  color: var(--color-danger);
+}
+
+.dealer-crm-config__icon-button--danger:hover {
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.dealer-crm-config__unsaved-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-md);
+  background-color: var(--color-warning-soft, #fffbeb);
+  border: 1px solid var(--color-warning, #d97706);
+  animation: dcc-fade-in 0.15s ease;
+}
+
+.dealer-crm-config__unsaved-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-warning, #92400e);
+}
+
+.dealer-crm-config__unsaved-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--color-warning, #d97706);
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__unsaved-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* ---------- Connection tab: Test Connection row (always visible) ---------- */
+
+.dealer-crm-config__test-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
+}
+
+.dealer-crm-config__test-row-hint {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+/* ---------- Connection tab: two-column layout on wide screens ---------- */
+
+@media (min-width: 960px) {
+  .dealer-crm-config__field-row-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+  }
+}
+
+/* ---------- Section card wrapper — groups CRM details / Credentials /
+   Lead endpoints into visually distinct blocks instead of a flat
+   stack of fields ---------- */
+
+.dealer-crm-config__section-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface-alt);
+}
+
+.dealer-crm-config__section-card .dealer-crm-config__section-title {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dealer-crm-config__dealer-logo-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.dealer-crm-config__dealer-connected-tick {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: var(--color-success, #16a34a);
+  color: #ffffff;
+  border: 1.5px solid var(--color-bg-elevated);
+}

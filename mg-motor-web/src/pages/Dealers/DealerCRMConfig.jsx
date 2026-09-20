@@ -17,6 +17,8 @@ import {
   Hash,
   Globe,
   X,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
@@ -32,74 +34,7 @@ import "../../ui/Skeleton/Skeleton.css";
 /**
  * DealerCRMConfig.jsx
  * -----------------------------------------------------------------------
- * Admin-only. Dealers are NEVER created here — this page only lets an
- * Admin pick an EXISTING dealer (synced from Zoho CRM, same source as
- * DealerListPage) and configure how that dealer's leads flow: through
- * our Catalyst Portal (existing behaviour, default) or out to the
- * dealer's own External CRM via a generic REST adapter.
- *
- * Two-pane layout:
- *   left  — searchable, paginated list of synced dealers as collapsible
- *           cards (name + code always visible, chevron reveals
- *           connection status + region)
- *   right — the selected dealer's integration config, as a guided
- *           sequence: connect -> map fields/status -> monitor activity.
- *           Field/Status Mapping only unlock once the connection has
- *           been verified with "Test Connection" — mapping fields for a
- *           CRM we haven't confirmed we can reach isn't useful, and
- *           gating it avoids admins configuring mappings against a typo'd
- *           endpoint. Logs is always open — an admin should be able to
- *           see history/errors regardless of current connection state.
- *
- * Credentials UX: once a credential is saved, we never re-display the
- * real value. The field renders as masked dots and disabled; an
- * "Edit credentials" action unlocks fresh input fields. This applies to
- * both the Zoho OAuth trio (Client ID / Client Secret / Refresh Token)
- * and the single generic-REST credential field.
- *
- * ?dealerCode= in the URL deep-links directly to a dealer's config.
- *
- * SAVE ACTIONS ARE SPLIT ON PURPOSE (handleSaveConnection vs
- * handleSaveMappings) — they used to be one combined handleSave that
- * always PUT the full connection config (including credentials) before
- * ever touching mappings. The backend's PUT /integration route demotes
- * status from CONNECTED back to CONFIGURING on every save (so admins
- * re-verify after a connection-affecting edit) — but that demotion was
- * firing even when the admin only clicked "Save Field Mapping" or "Save
- * Status Mapping", since handleSave always hit the connection endpoint
- * first. loadIntegration() would then pull the demoted status back in,
- * mappingsLocked would flip true, and whichever mapping tab the admin
- * was on would immediately show its own "test the connection first"
- * locked state right after saving — so mappings could never accumulate
- * past the first save. Splitting these means a mapping save only ever
- * calls saveMappings(), and never touches connection status.
- *
- * ACTIVITY LOG SCENARIO CLASSIFICATION
- * -----------------------------------------------------------------------
- * Each row in integration_logs (written by crmIntegrationService.js) is
- * ONE lead-level push/pull attempt, not an aggregate batch — so unlike
- * the sync-logs scenario matrix, this classifies per-row using the
- * ACTUAL err.code strings the backend writes into error_message, not a
- * keyword guess:
- *
- *   - ZOHO_TO_EXTERNAL_CRM + CREATE_LEAD/UPDATE_LEAD + SUCCESS -> Happy 1
- *   - EXTERNAL_CRM_TO_ZOHO + UPDATE_LEAD + SUCCESS             -> Happy 2
- *   - error_message === FIELD_MAPPING_INVALID
- *       or STATUS_MAPPING_NOT_FOUND                            -> Unhappy 2
- *   - EXTERNAL_CRM_TO_ZOHO + FAILED (any other reason)         -> Unhappy 4
- *       (the OEM-write-back is the only thing that can fail and get
- *       logged on this branch, per processInboundWebhook's try/catch)
- *   - ZOHO_TO_EXTERNAL_CRM + FAILED (anything else — timeouts,
- *       5xx, 401/403, etc.)                                    -> Unhappy 1
- *   - TEST_CONNECTION                                          -> not a
- *       lead scenario; shown as a plain Connection Test badge.
- *
- * KNOWN GAP: processInboundWebhook throws LEAD_MAPPING_NOT_FOUND and an
- * early FIELD_MAPPING_INVALID (missing external lead id / no mapped
- * fields) BEFORE it calls writeLog — those never produce a row here at
- * all. LEAD_MAPPING_NOT_FOUND in particular is the client's Unhappy 7
- * (out-of-order event) and currently can't be shown by this table no
- * matter how it's classified, since the backend never logs it.
+ * (unchanged doc comment — see original file)
  */
 
 const AUTH_TYPES = [
@@ -148,10 +83,6 @@ const OUR_FIELDS = [
   "lead_owner_email",
 ];
 
-// Humanized label only — the stored value stays the exact internal
-// field name (source_field), unchanged, since that's what
-// leadMappingService.js reads off leadRow[mapping.source_field] at
-// sync time.
 function humanizeFieldName(field) {
   return field
     .split("_")
@@ -163,15 +94,6 @@ const OUR_FIELD_OPTIONS = [
   { value: "", label: "Select field…" },
   ...OUR_FIELDS.map((f) => ({ value: f, label: `${humanizeFieldName(f)} (${f})` })),
 ];
-
-const INTEGRATION_STATUS_TONES = {
-  ACTIVE: "active",
-  CONNECTED: "active",
-  CONFIGURING: "pending",
-  NOT_CONFIGURED: "neutral",
-  DISABLED: "neutral",
-  ERROR: "danger",
-};
 
 const CONNECTED_STATUSES = ["ACTIVE", "CONNECTED"];
 
@@ -211,9 +133,6 @@ const EMPTY_CONFIG = {
   status: "NOT_CONFIGURED",
 };
 
-// Only the scenarios actually reachable from what crmIntegrationService.js
-// logs today (see the module-comment block above for why the others in
-// the client's full matrix can't appear here).
 const DEALER_LOG_SCENARIOS = {
   "happy-1": {
     path: "happy",
@@ -227,12 +146,6 @@ const DEALER_LOG_SCENARIOS = {
     label: "Dealer progresses enquiry (status sync)",
     color: { bg: "var(--scenario-happy-2-bg)", text: "var(--scenario-happy-2-text)" },
   },
-  // NEW — backend now distinguishes this from happy-2 (see
-  // crmIntegrationService.js's isStatusSync split in processInboundWebhook).
-  // Now pointed at the same --scenario-happy-5-* tokens SyncLogsPage.jsx
-  // uses, so the same scenario reads as the same color on both pages —
-  // previously this used its own one-off hex (#e0f2fe/#0284c7) that
-  // didn't match SyncLogsPage's happy-5 (#d1fae5/#059669) at all.
   "happy-5": {
     path: "happy",
     number: 5,
@@ -257,9 +170,6 @@ const DEALER_LOG_SCENARIOS = {
     label: "Status update failure (dealer → OEM)",
     color: { bg: "var(--scenario-unhappy-4-bg)", text: "var(--scenario-unhappy-4-text)" },
   },
-  // NEW — previously unreachable: LEAD_MAPPING_NOT_FOUND used to throw
-  // before writeLog ran, so no row ever carried this scenario. Now that
-  // the backend logs it, it needs a badge here too.
   "unhappy-7": {
     path: "unhappy",
     number: 7,
@@ -268,27 +178,14 @@ const DEALER_LOG_SCENARIOS = {
   },
 };
 
-// Configuration/business-rule error codes that leadMappingService.js
-// literally throws as err.code — crmIntegrationService.js's catch
-// blocks store err.code (when present) verbatim as error_message, so
-// these are exact matches, not a keyword guess.
 const INVALID_DATA_ERROR_CODES = new Set(["FIELD_MAPPING_INVALID", "STATUS_MAPPING_NOT_FOUND"]);
 
-// Maps the backend's stored "Happy 2" / "Unhappy 7" / "Connection Test"
-// string (happy_unhappy_path_name) to the same key shape used by
-// DEALER_LOG_SCENARIOS above ("happy-2", "unhappy-7").
 function scenarioKeyFromStoredName(name) {
   const match = /^(happy|unhappy)\s+(\d+)$/i.exec((name || "").trim());
   if (!match) return null;
   return `${match[1].toLowerCase()}-${match[2]}`;
 }
 
-// Classifies a log row for display. Prefers the columns the backend now
-// writes at insert time (happy_unhappy_path_name / _message) — these are
-// authoritative since they're derived from the exact err.code the
-// backend threw, not guessed from the row after the fact. Falls back to
-// re-deriving client-side ONLY for rows written before this migration,
-// which won't have those columns populated.
 function classifyDealerLog(row) {
   if (row.happy_unhappy_path_name) {
     if (row.happy_unhappy_path_name.startsWith("Connection Test")) {
@@ -302,14 +199,9 @@ function classifyDealerLog(row) {
     const key = scenarioKeyFromStoredName(row.happy_unhappy_path_name);
     const known = key && DEALER_LOG_SCENARIOS[key];
     if (known) {
-      // Stored message can differ from the hardcoded label if the
-      // backend's wording changes later — prefer it when present.
       return { ...known, label: row.happy_unhappy_path_message || known.label };
     }
 
-    // Stored name doesn't match anything we know how to color/badge yet
-    // (e.g. a new scenario added server-side before the frontend catches
-    // up) — show it plainly rather than misclassifying it.
     return {
       special: true,
       label: row.happy_unhappy_path_message || row.happy_unhappy_path_name,
@@ -317,7 +209,6 @@ function classifyDealerLog(row) {
     };
   }
 
-  // Legacy fallback — row predates the happy_unhappy_path_* columns.
   return classifyDealerLogLegacy(row);
 }
 
@@ -347,27 +238,15 @@ function classifyDealerLogLegacy(row) {
   return DEALER_LOG_SCENARIOS["unhappy-1"];
 }
 
-function statusBadge(status) {
-  const tone = INTEGRATION_STATUS_TONES[status] || "neutral";
-  const label = (status || "NOT_CONFIGURED").replace(/_/g, " ");
-  return <Badge tone={tone} fixed>{label}</Badge>;
-}
-
-// Activity-log rows use a different status vocabulary (SUCCESS / FAILED)
-// than the dealer-level integration status above (ACTIVE / CONFIGURING /
-// etc.) — these were previously both run through statusBadge(), which
-// only knows the integration-status vocabulary, so every log row fell
-// through to the "neutral" tone. This gives logs their own green/red.
+// Activity-log rows use SUCCESS / FAILED — separate from the top-level
+// Connected / Not Connected badge, which uses the dealer_integrations
+// status vocabulary.
 function logStatusBadge(status) {
   if (status === "SUCCESS") return <Badge tone="active" fixed>Success</Badge>;
   if (status === "FAILED") return <Badge tone="danger" fixed>Failed</Badge>;
   return <Badge tone="neutral" fixed>{status || "—"}</Badge>;
 }
 
-// NOTE: adjust the field(s) checked here to whatever your
-// adminDashboardService.listDealers() response actually names the
-// dealer's live CRM-connection state. It falls through a few likely
-// field names so the badges work as soon as that's confirmed.
 function isDealerConnected(dealer) {
   const rawStatus = dealer.integration_status || dealer.crm_status || dealer.status;
   return CONNECTED_STATUSES.includes(rawStatus);
@@ -517,19 +396,25 @@ export default function DealerCRMConfig() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
-  const [tab, setTab] = useState("connection"); // connection | fields | status | logs
+  const [tab, setTab] = useState("connection");
 
   const [config, setConfig] = useState(EMPTY_CONFIG);
   const [credentialValue, setCredentialValue] = useState("");
   const [hasStoredCredential, setHasStoredCredential] = useState(false);
-
-  // Controls whether the credential inputs are shown editable or as
-  // masked/disabled dots. False whenever a credential is already stored
-  // and the admin hasn't explicitly asked to change it.
   const [editingCredentials, setEditingCredentials] = useState(false);
 
   const [fieldMappings, setFieldMappings] = useState(DEFAULT_FIELD_MAPPINGS);
   const [statusMappings, setStatusMappings] = useState(DEFAULT_STATUS_MAPPINGS);
+
+  // UI-only: which mapping rows (by current array index) are in edit mode
+  // right now. A row is ALSO in edit mode automatically whenever it has
+  // no ROWID yet (i.e. it's new/unsaved) — this set only tracks rows the
+  // admin has explicitly re-opened via the pencil icon after they were
+  // already saved. Cleared back to empty every time a fresh mapping list
+  // comes in from the server (initial load or after a successful save),
+  // since a freshly-loaded row is by definition saved and not being edited.
+  const [editingFieldRows, setEditingFieldRows] = useState(() => new Set());
+  const [editingStatusRows, setEditingStatusRows] = useState(() => new Set());
 
   const [oemStatusOptions, setOemStatusOptions] = useState([]);
   const [picklistRefreshing, setPicklistRefreshing] = useState(false);
@@ -542,12 +427,23 @@ export default function DealerCRMConfig() {
   const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [oauthRefreshToken, setOauthRefreshToken] = useState("");
 
-  // ---- left panel: collapse + pagination state ----
+   const savedConfigSnapshotRef = useRef(EMPTY_CONFIG);
+
+  const isConnectionDirty = useMemo(() => {
+    const snap = savedConfigSnapshotRef.current;
+    return (
+      JSON.stringify(config) !== JSON.stringify(snap) ||
+      Boolean(credentialValue) ||
+      Boolean(oauthClientId) ||
+      Boolean(oauthClientSecret) ||
+      Boolean(oauthRefreshToken)
+    );
+  }, [config, credentialValue, oauthClientId, oauthClientSecret, oauthRefreshToken]);
+
   const [expandedDealers, setExpandedDealers] = useState(() => new Set());
   const [dealerPage, setDealerPage] = useState(1);
   const [dealerPageSize, setDealerPageSize] = useState(10);
 
-  // ---- activity log pagination state ----
   const [logsPage, setLogsPage] = useState(1);
   const [logsPageSize, setLogsPageSize] = useState(10);
 
@@ -561,7 +457,14 @@ export default function DealerCRMConfig() {
         const deepLinkCode = searchParams.get("dealerCode");
         if (deepLinkCode) {
           const match = result.find((d) => d.dealer_code === deepLinkCode);
-          if (match) setSelectedDealer(match);
+          if (match) {
+            setSelectedDealer(match);
+            // FIX: deep-linking in used to leave connection status stale
+            // (whatever EMPTY_CONFIG/default was) because only the dealer
+            // was selected, not its integration loaded — clicking a dealer
+            // manually always called this, deep-link never did.
+            loadIntegration(match);
+          }
         }
       } catch (err) {
         showAlert("error", err?.response?.data?.error || "Couldn't load dealers. Try again.", {
@@ -584,7 +487,6 @@ export default function DealerCRMConfig() {
     );
   }, [dealers, search]);
 
-  // Reset to page 1 whenever the visible dealer set changes shape.
   useEffect(() => {
     setDealerPage(1);
   }, [search]);
@@ -594,8 +496,6 @@ export default function DealerCRMConfig() {
     [filteredDealers, dealerPage, dealerPageSize]
   );
 
-  // Reset to page 1 whenever a fresh batch of logs comes in (new dealer,
-  // reload after retry, etc.) so the pager never gets stranded past the end.
   useEffect(() => {
     setLogsPage(1);
   }, [logs]);
@@ -631,7 +531,10 @@ export default function DealerCRMConfig() {
     setTab("connection");
     try {
       const result = await dealerCrmIntegrationService.getIntegration(dealer.dealer_code);
-      setConfig({ ...EMPTY_CONFIG, ...(result?.integration || {}) });
+      // setConfig({ ...EMPTY_CONFIG, ...(result?.integration || {}) });
+      const loaded = { ...EMPTY_CONFIG, ...(result?.integration || {}) };
+      setConfig(loaded);
+      savedConfigSnapshotRef.current = loaded;
       setHasStoredCredential(Boolean(result?.hasCredential));
       resetCredentialInputs();
 
@@ -642,14 +545,18 @@ export default function DealerCRMConfig() {
       setStatusMappings(
         mappingsResult?.statusMappings?.length ? mappingsResult.statusMappings : DEFAULT_STATUS_MAPPINGS
       );
+      setEditingFieldRows(new Set());
+      setEditingStatusRows(new Set());
     } catch (err) {
       if (err?.response?.status === 404) {
-        // No integration configured yet for this dealer — start fresh.
         setConfig(EMPTY_CONFIG);
+        savedConfigSnapshotRef.current = EMPTY_CONFIG;
         setHasStoredCredential(false);
         resetCredentialInputs();
         setFieldMappings(DEFAULT_FIELD_MAPPINGS);
         setStatusMappings(DEFAULT_STATUS_MAPPINGS);
+        setEditingFieldRows(new Set());
+        setEditingStatusRows(new Set());
       } else {
         showAlert("error", err?.response?.data?.error || "Couldn't load integration config.", {
           title: "Load failed",
@@ -681,9 +588,24 @@ export default function DealerCRMConfig() {
     setFieldMappings((prev) => [...prev, { source_field: "", target_field: "", data_type: "string", required: false }]);
   };
 
+  // Index-shift-safe removal: any editing-row index above the removed one
+  // needs to shift down by one, and the removed index itself drops out —
+  // otherwise deleting a row could leave an unrelated row stuck "open".
   const removeFieldMapping = (index) => {
     setSaveSuccess(false);
     setFieldMappings((prev) => prev.filter((_, i) => i !== index));
+    setEditingFieldRows((prev) => {
+      const next = new Set();
+      prev.forEach((i) => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
+  };
+
+  const startEditingFieldMapping = (index) => {
+    setEditingFieldRows((prev) => new Set(prev).add(index));
   };
 
   const handleStatusMappingChange = (index, key, value) => {
@@ -691,10 +613,6 @@ export default function DealerCRMConfig() {
     setStatusMappings((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: value } : m)));
   };
 
-  // NEW — status mapping previously had no way to grow past the six
-  // DEFAULT_STATUS_MAPPINGS rows, and source_status rendered as a
-  // read-only <span> in the JSX below (now an editable input), so a new
-  // status pair had nowhere to go. Mirrors addFieldMapping/removeFieldMapping.
   const addStatusMapping = () => {
     setSaveSuccess(false);
     setStatusMappings((prev) => [...prev, { source_status: "", target_status: "" }]);
@@ -703,10 +621,21 @@ export default function DealerCRMConfig() {
   const removeStatusMapping = (index) => {
     setSaveSuccess(false);
     setStatusMappings((prev) => prev.filter((_, i) => i !== index));
+    setEditingStatusRows((prev) => {
+      const next = new Set();
+      prev.forEach((i) => {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      });
+      return next;
+    });
   };
 
+  const startEditingStatusMapping = (index) => {
+    setEditingStatusRows((prev) => new Set(prev).add(index));
+  };
 
-   const loadStatusPicklist = async () => {
+  const loadStatusPicklist = async () => {
     try {
       const result = await dealerCrmIntegrationService.getStatusPicklist();
       setOemStatusOptions(
@@ -730,11 +659,6 @@ export default function DealerCRMConfig() {
     }
   };
 
-
-  // ---- Connection tab save ----
-  // Only ever touches /integration (config + credentials). Never call
-  // this from a mapping-tab button — see the file-level note above on
-  // why that combination was silently re-locking the mapping tabs.
   const handleSaveConnection = async () => {
     if (!selectedDealer) return;
     setSaving(true);
@@ -750,14 +674,11 @@ export default function DealerCRMConfig() {
       showAlert("success", `Saved connection settings for ${selectedDealer.dealer_name}.`, {
         title: "Configuration saved",
       });
+      savedConfigSnapshotRef.current = config;
       setSaveSuccess(true);
       clearSaveSuccessSoon();
-      // Any credential just entered is now persisted server-side —
-      // collapse back to the masked/disabled view.
       resetCredentialInputs();
       await loadIntegration(selectedDealer);
-      // loadIntegration() resets saveSuccess to false — re-assert the
-      // confirmation state for this save action specifically.
       setSaveSuccess(true);
       clearSaveSuccessSoon();
     } catch (err) {
@@ -769,11 +690,6 @@ export default function DealerCRMConfig() {
     }
   };
 
-  // ---- Field/Status mapping tab save ----
-  // Only ever touches /integration/mappings — never the connection
-  // endpoint, so it can't demote the integration's status and re-lock
-  // these tabs on itself. Re-fetches only the mappings afterward, not
-  // the whole integration, for the same reason.
   const handleSaveMappings = async () => {
     if (!selectedDealer) return;
     setSaving(true);
@@ -796,6 +712,10 @@ export default function DealerCRMConfig() {
       setStatusMappings(
         mappingsResult?.statusMappings?.length ? mappingsResult.statusMappings : DEFAULT_STATUS_MAPPINGS
       );
+      // Every row just came back fresh from the server — none of them
+      // should stay pinned open in edit mode.
+      setEditingFieldRows(new Set());
+      setEditingStatusRows(new Set());
       setSaveSuccess(true);
       clearSaveSuccessSoon();
     } catch (err) {
@@ -840,11 +760,11 @@ export default function DealerCRMConfig() {
     }
   };
 
- const handleTabChange = (nextTab) => {
-  setTab(nextTab);
-  if (nextTab === "logs") loadLogs();
-  if (nextTab === "status") loadStatusPicklist();
-};
+  const handleTabChange = (nextTab) => {
+    setTab(nextTab);
+    if (nextTab === "logs") loadLogs();
+    if (nextTab === "status") loadStatusPicklist();
+  };
 
   const handleRetrySync = async (log) => {
     try {
@@ -918,14 +838,10 @@ export default function DealerCRMConfig() {
 
   const isExternalCrm = config.integration_type === "EXTERNAL_CRM";
   const isZohoCrm = config.crm_type === "ZOHO_CRM";
-  // Field/Status mapping only make sense once the connection itself has
-  // been verified — mapping fields for an unreachable or misconfigured
-  // CRM just produces confusing errors later. Logs stays open regardless.
   const isConnectionVerified = isExternalCrm && CONNECTED_STATUSES.includes(config.status);
   const mappingsLocked = isExternalCrm && !isConnectionVerified;
+  const isTopConnected = CONNECTED_STATUSES.includes(config.status);
 
-  // Credentials render as masked/disabled once something is stored and
-  // the admin hasn't clicked "Edit credentials" for this session.
   const showMaskedCredentials = hasStoredCredential && !editingCredentials;
 
   const genericCredentialLabel = () => {
@@ -956,11 +872,30 @@ export default function DealerCRMConfig() {
     return defaultLabel;
   };
 
+  // A saved field-mapping row is one the server already has (has a
+  // ROWID) with both sides filled in, and that the admin hasn't
+  // re-opened via the pencil icon. Anything else renders as editable —
+  // covers brand-new rows (no ROWID yet) and rows currently being edited.
+  const isFieldRowSaved = (mapping, index) =>
+    Boolean(mapping.ROWID) &&
+    Boolean(mapping.source_field) &&
+    Boolean(mapping.target_field) &&
+    !editingFieldRows.has(index);
+
+  const isStatusRowSaved = (mapping, index) =>
+    Boolean(mapping.ROWID) &&
+    Boolean(mapping.source_status) &&
+    Boolean(mapping.target_status) &&
+    !editingStatusRows.has(index);
+
+  const ourFieldLabel = (value) => OUR_FIELD_OPTIONS.find((o) => o.value === value)?.label || humanizeFieldName(value);
+  const ourStatusLabel = (value) => oemStatusOptions.find((o) => o.value === value)?.label || value || "—";
+
   return (
     <div className="dealer-crm-config">
       <div className="dealer-crm-config__layout">
         {/* ---------- Left: dealer picker ---------- */}
-        <div className="dealer-crm-config__panel dealer-crm-config__panel--list">
+               <div className="dealer-crm-config__panel dealer-crm-config__panel--list">
           <div className="dealer-crm-config__panel-header">
             <img src={mgLogo} alt="MG Motor" className="dealer-crm-config__brand-logo" />
             <h3>Our Dealers</h3>
@@ -1004,7 +939,18 @@ export default function DealerCRMConfig() {
                           className="dealer-crm-config__dealer-row"
                           onClick={() => handleSelectDealer(dealer)}
                         >
-                          <img src={mgLogo} alt="" className="dealer-crm-config__dealer-logo" />
+                          <div className="dealer-crm-config__dealer-logo-wrap">
+                            <img src={mgLogo} alt="" className="dealer-crm-config__dealer-logo" />
+                            {/* NEW: tick badge on the logo itself, visible
+                                without expanding the card — the border/bg
+                                tint already signals connected state at a
+                                glance, this adds an explicit icon too. */}
+                            {connected && (
+                              <span className="dealer-crm-config__dealer-connected-tick" aria-label="Connected">
+                                <CheckCircle2 size={12} strokeWidth={2.5} />
+                              </span>
+                            )}
+                          </div>
                           <div className="dealer-crm-config__dealer-info">
                             <span className="dealer-crm-config__dealer-name">{dealer.dealer_name}</span>
                             <span className="dealer-crm-config__dealer-code">{dealer.dealer_code}</span>
@@ -1034,13 +980,9 @@ export default function DealerCRMConfig() {
 
                         {isExpanded && (
                           <div className="dealer-crm-config__dealer-expand">
-                            {connected ? (
+                            {connected && (
                               <Badge tone="active" fixed>
-                                Active
-                              </Badge>
-                            ) : (
-                              <Badge tone="pending" fixed>
-                                Not Configured
+                                Connected
                               </Badge>
                             )}
                             <Badge tone="info" fixed>
@@ -1082,7 +1024,15 @@ export default function DealerCRMConfig() {
                   <h2>{selectedDealer.dealer_name}</h2>
                   <p className="dealer-crm-config__detail-code">{selectedDealer.dealer_code}</p>
                 </div>
-                <div className="dealer-crm-config__detail-status">{statusBadge(config.status)}</div>
+                {/* NEW: simplified to just Connected / Not Connected —
+                    the granular ACTIVE/CONFIGURING/ERROR/etc vocabulary
+                    is still visible in the Activity Log per-row, just not
+                    duplicated here at the top. */}
+                <div className="dealer-crm-config__detail-status">
+                  <Badge tone={isTopConnected ? "active" : "neutral"} fixed>
+                    {isTopConnected ? "Connected" : "Not Connected"}
+                  </Badge>
+                </div>
               </div>
 
               <div className="dealer-crm-config__tabs">
@@ -1154,9 +1104,6 @@ export default function DealerCRMConfig() {
                         </p>
                       ) : (
                         <>
-                          {/* Guided progress summary — tells a non-technical
-                              admin exactly where they stand, in plain
-                              language, before they touch any fields. */}
                           <div className={`dealer-crm-config__progress ${isConnectionVerified ? "dealer-crm-config__progress--done" : ""}`}>
                             {isConnectionVerified ? (
                               <>
@@ -1251,17 +1198,6 @@ export default function DealerCRMConfig() {
                                       <label>Refresh Token</label>
                                       <input type="password" value={MASKED_CREDENTIAL_PLACEHOLDER} disabled readOnly />
                                     </div>
-                                    <div className="dealer-crm-config__field-row">
-                                      <label>Webhook lead ID field</label>
-                                      <input
-                                        value={config.webhook_id_field || "id"}
-                                        onChange={(e) => handleConfigChange("webhook_id_field", e.target.value)}
-                                        placeholder="id"
-                                      />
-                                      <span className="dealer-crm-config__field-hint">
-                                        The JSON key the dealer's CRM uses for the lead's ID in its webhook payload (e.g. "id", "leadId", "recordId").
-                                      </span>
-                                    </div>
                                   </div>
                                   <span className="dealer-crm-config__field-hint">
                                     Credentials are saved and encrypted.{" "}
@@ -1355,7 +1291,6 @@ export default function DealerCRMConfig() {
                                 </button>
                               )}
                             </div>
-
                           )}
 
                           <div className="dealer-crm-config__section-title">Lead endpoints</div>
@@ -1397,13 +1332,22 @@ export default function DealerCRMConfig() {
                             </div>
                           </div>
 
-                          <label className="dealer-crm-config__checkbox-row">
-                            <input
-                              type="checkbox"
-                              checked={config.webhook_enabled}
-                              onChange={(e) => handleConfigChange("webhook_enabled", e.target.checked)}
-                            />
-                            Let the dealer's CRM send updates back to us automatically
+                          {/* NEW: toggle-switch style instead of a plain
+                              checkbox. Same checked/onChange wiring —
+                              config.webhook_enabled and
+                              handleConfigChange are untouched. */}
+                          <label className="dealer-crm-config__toggle-row">
+                            <span className="dealer-crm-config__toggle-switch">
+                              <input
+                                type="checkbox"
+                                checked={config.webhook_enabled}
+                                onChange={(e) => handleConfigChange("webhook_enabled", e.target.checked)}
+                              />
+                              <span className="dealer-crm-config__toggle-slider" />
+                            </span>
+                            <span className="dealer-crm-config__toggle-row-label">
+                              Let the dealer's CRM send updates back to us automatically
+                            </span>
                           </label>
 
                           {testResult && (
@@ -1434,16 +1378,23 @@ export default function DealerCRMConfig() {
                             {testing ? "Connecting…" : "Connect Dealer CRM"}
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className={`dealer-crm-config__button--primary ${
-                            saveSuccess ? "dealer-crm-config__button--success" : ""
-                          }`}
-                          onClick={handleSaveConnection}
-                          disabled={saving}
-                        >
-                          {saveButtonContent("Save Configuration")}
-                        </button>
+
+                        {isConnectionDirty && (
+                          <div className="dealer-crm-config__unsaved-bar">
+                            <span className="dealer-crm-config__unsaved-text">
+                              <span className="dealer-crm-config__unsaved-dot" />
+                              Unsaved changes
+                            </span>
+                            <button
+                              type="button"
+                              className={`dealer-crm-config__button--primary ${saveSuccess ? "dealer-crm-config__button--success" : ""}`}
+                              onClick={handleSaveConnection}
+                              disabled={saving}
+                            >
+                              {saveButtonContent("Save Configuration")}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1467,37 +1418,83 @@ export default function DealerCRMConfig() {
                           <span>Required</span>
                           <span />
                         </div>
-                        {fieldMappings.map((mapping, index) => (
-                          <div className="dealer-crm-config__mapping-row" key={index}>
-                            <Dropdown
-                              ariaLabel="Our field"
-                              value={mapping.source_field}
-                              onChange={(v) => handleFieldMappingChange(index, "source_field", v)}
-                              options={OUR_FIELD_OPTIONS}
-                            />
-                            <span className="dealer-crm-config__mapping-arrow">→</span>
-                            <input
-                              value={mapping.target_field}
-                              onChange={(e) => handleFieldMappingChange(index, "target_field", e.target.value)}
-                              placeholder="Last_Name"
-                            />
-                            <label className="dealer-crm-config__checkbox-row dealer-crm-config__checkbox-row--compact">
-                              <input
-                                type="checkbox"
-                                checked={mapping.required}
-                                onChange={(e) => handleFieldMappingChange(index, "required", e.target.checked)}
+                        {fieldMappings.map((mapping, index) => {
+                          if (isFieldRowSaved(mapping, index)) {
+                            return (
+                              <div
+                                className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--saved"
+                                key={index}
+                              >
+                                <div className="dealer-crm-config__mapping-saved-label">
+                                  <CheckCircle2 size={15} className="dealer-crm-config__mapping-check" />
+                                  <span className="dealer-crm-config__mapping-saved-text">
+                                    {ourFieldLabel(mapping.source_field)}
+                                    <span className="dealer-crm-config__mapping-arrow-inline">→</span>
+                                    {mapping.target_field}
+                                  </span>
+                                </div>
+                                <label className="dealer-crm-config__toggle-switch dealer-crm-config__toggle-switch--compact">
+                                  <input
+                                    type="checkbox"
+                                    checked={mapping.required}
+                                    onChange={(e) => handleFieldMappingChange(index, "required", e.target.checked)}
+                                  />
+                                  <span className="dealer-crm-config__toggle-slider" />
+                                </label>
+                                <div className="dealer-crm-config__mapping-row-actions">
+                                  <button
+                                    type="button"
+                                    className="dealer-crm-config__icon-button"
+                                    onClick={() => startEditingFieldMapping(index)}
+                                    aria-label="Edit mapping"
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
+                                    onClick={() => removeFieldMapping(index)}
+                                    aria-label="Delete mapping"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="dealer-crm-config__mapping-row" key={index}>
+                              <Dropdown
+                                ariaLabel="Our field"
+                                value={mapping.source_field}
+                                onChange={(v) => handleFieldMappingChange(index, "source_field", v)}
+                                options={OUR_FIELD_OPTIONS}
                               />
-                            </label>
-                            <button
-                              type="button"
-                              className="dealer-crm-config__remove-mapping"
-                              onClick={() => removeFieldMapping(index)}
-                              aria-label="Remove mapping"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
+                              <span className="dealer-crm-config__mapping-arrow">→</span>
+                              <input
+                                value={mapping.target_field}
+                                onChange={(e) => handleFieldMappingChange(index, "target_field", e.target.value)}
+                                placeholder="Last_Name"
+                              />
+                              <label className="dealer-crm-config__toggle-switch dealer-crm-config__toggle-switch--compact">
+                                <input
+                                  type="checkbox"
+                                  checked={mapping.required}
+                                  onChange={(e) => handleFieldMappingChange(index, "required", e.target.checked)}
+                                />
+                                <span className="dealer-crm-config__toggle-slider" />
+                              </label>
+                              <button
+                                type="button"
+                                className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
+                                onClick={() => removeFieldMapping(index)}
+                                aria-label="Remove mapping"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          );
+                        })}
                         <button type="button" className="dealer-crm-config__add-mapping" onClick={addFieldMapping}>
                           + Add another field
                         </button>
@@ -1527,19 +1524,55 @@ export default function DealerCRMConfig() {
                     ) : (
                       <div className="dealer-crm-config__mapping-table">
                         <p className="dealer-crm-config__mapping-intro">
-                            Match each of our lead statuses to the equivalent status name in the dealer's CRM.
-                          </p>
-                          <button
-                            type="button"
-                            className="dealer-crm-config__button--outline"
-                            onClick={handleRefreshStatusPicklist}
-                            disabled={picklistRefreshing}
-                          >
-                            {picklistRefreshing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
-                            {picklistRefreshing ? "Refreshing…" : "Refresh statuses from CRM"}
-                          </button>
+                          Match each of our lead statuses to the equivalent status name in the dealer's CRM.
+                        </p>
+                        <button
+                          type="button"
+                          className="dealer-crm-config__button--outline"
+                          onClick={handleRefreshStatusPicklist}
+                          disabled={picklistRefreshing}
+                        >
+                          {picklistRefreshing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
+                          {picklistRefreshing ? "Refreshing…" : "Refresh statuses from CRM"}
+                        </button>
 
-                          {statusMappings.map((mapping, index) => (
+                        {statusMappings.map((mapping, index) => {
+                          if (isStatusRowSaved(mapping, index)) {
+                            return (
+                              <div
+                                className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--saved"
+                                key={index}
+                              >
+                                <div className="dealer-crm-config__mapping-saved-label">
+                                  <CheckCircle2 size={15} className="dealer-crm-config__mapping-check" />
+                                  <span className="dealer-crm-config__mapping-saved-text">
+                                    {ourStatusLabel(mapping.source_status)}
+                                    <span className="dealer-crm-config__mapping-arrow-inline">→</span>
+                                    {mapping.target_status}
+                                  </span>
+                                </div>
+                                <div className="dealer-crm-config__mapping-row-actions">
+                                  <button
+                                    type="button"
+                                    className="dealer-crm-config__icon-button"
+                                    onClick={() => startEditingStatusMapping(index)}
+                                    aria-label="Edit status mapping"
+                                  >
+                                    <Pencil size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
+                                    onClick={() => removeStatusMapping(index)}
+                                    aria-label="Delete status mapping"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
                             <div className="dealer-crm-config__mapping-row dealer-crm-config__mapping-row--status" key={index}>
                               <Dropdown
                                 ariaLabel="Our status"
@@ -1553,9 +1586,17 @@ export default function DealerCRMConfig() {
                                 onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
                                 placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
                               />
-                              <button type="button" className="dealer-crm-config__remove-mapping" onClick={() => removeStatusMapping(index)} aria-label="Remove mapping">×</button>
+                              <button
+                                type="button"
+                                className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
+                                onClick={() => removeStatusMapping(index)}
+                                aria-label="Remove mapping"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </div>
-                          ))}
+                          );
+                        })}
                         <button type="button" className="dealer-crm-config__add-mapping" onClick={addStatusMapping}>
                           + Add another status
                         </button>

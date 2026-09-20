@@ -49,9 +49,12 @@ async function getAllRows(catalystApp, tableName) {
   return allRows;
 }
 
+const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
+
 async function getAllDealersWithLeadCounts(catalystApp) {
   const dealers = await getAllRows(catalystApp, DEALERS_TABLE);
   const leads = await getAllRows(catalystApp, LEADS_TABLE);
+  const integrations = await getAllRows(catalystApp, DEALER_INTEGRATIONS_TABLE);
 
   const leadCountByDealerCode = {};
   leads.forEach((lead) => {
@@ -59,9 +62,20 @@ async function getAllDealersWithLeadCounts(catalystApp) {
     leadCountByDealerCode[code] = (leadCountByDealerCode[code] || 0) + 1;
   });
 
+  // dealer_integrations.status carries the real CRM connection state
+  // (ACTIVE/CONNECTED/CONFIGURING/ERROR/NOT_CONFIGURED) — separate from
+  // dealers.status, which is the Zoho-sync active/inactive/pending flag
+  // and always blank for these rows. Exposed as integration_status so
+  // the two never collide on the same field name.
+  const integrationStatusByDealerCode = {};
+  integrations.forEach((i) => {
+    integrationStatusByDealerCode[i.dealer_code] = i.status;
+  });
+
   return dealers.map((dealer) => ({
     ...dealer,
     lead_count: leadCountByDealerCode[dealer.dealer_code] || 0,
+    integration_status: integrationStatusByDealerCode[dealer.dealer_code] || null,
   }));
 }
 
@@ -306,6 +320,9 @@ async function getDealerInvitationStatus(catalystApp, crmDealers) {
     };
   });
 }
+
+
+
 
 module.exports = {
   getAllDealersWithLeadCounts,
