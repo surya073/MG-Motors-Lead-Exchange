@@ -306,7 +306,12 @@ router.get('/:dealerCode/integration/logs', requireAdminRole, async (req, res) =
     const rows = await catalystApp.zcql().executeZCQLQuery(
       `SELECT * FROM integration_logs WHERE dealer_code = '${dealerCode}' ORDER BY CREATEDTIME DESC LIMIT 0, ${limit}`
     );
-    res.json({ logs: rows.map((r) => r.integration_logs) });
+    res.json({
+      logs: rows.map((r) => {
+        const log = r.integration_logs;
+        return { ...log, created_at: log.CREATEDTIME }; 
+      }),
+    });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET logs failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });

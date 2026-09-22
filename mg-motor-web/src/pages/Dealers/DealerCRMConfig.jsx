@@ -1474,7 +1474,7 @@ export default function DealerCRMConfig() {
                               <input
                                 value={mapping.target_field}
                                 onChange={(e) => handleFieldMappingChange(index, "target_field", e.target.value)}
-                                placeholder="Last_Name"
+                                placeholder="Dealer CRM field name"
                               />
                               <label className="dealer-crm-config__toggle-switch dealer-crm-config__toggle-switch--compact">
                                 <input

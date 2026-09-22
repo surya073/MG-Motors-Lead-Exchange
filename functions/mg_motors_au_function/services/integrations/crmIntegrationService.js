@@ -43,6 +43,24 @@ function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
 
+function extractAffectedFieldNames(externalPayload, externalLeadId) {
+  const raw = externalPayload.affected_fields;
+  if (!Array.isArray(raw)) return null;
+  const flattened = [];
+  raw.forEach((entry) => {
+    if (typeof entry === 'string') {
+      flattened.push(entry);
+    } else if (entry && typeof entry === 'object') {
+      Object.entries(entry).forEach(([id, fields]) => {
+        if (Array.isArray(fields) && (!externalLeadId || id === externalLeadId)) {
+          flattened.push(...fields);
+        }
+      });
+    }
+  });
+  return flattened;
+}
+
 async function findDealerByCode(catalystApp, dealerCode) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${DEALERS_TABLE} WHERE dealer_code = '${safeQuoteForZcql(dealerCode)}' LIMIT 1`
@@ -224,13 +242,28 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
  */
 const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
   dealer_code: 'Dealer_Code',
-  customer_name: 'Customer_Name',
-  mobile_number: 'Mobile_Number',
-  email_address: 'Email_Address',
-  vehicle_model: 'Vehicle_Model',
-  lead_source: 'Lead_Source',
+  customer_name: 'Customer_Name', // see note below
+  mobile_number: 'Mobile',
+  email_address: 'Email',
+  vehicle_model: 'Enquiry_Model',
+  lead_source: 'Enquiry_Source',
   lead_status: 'Lead_Status',
   dealer_remarks: 'Dealer_Remarks',
+  enquiry_status: 'Enquiry_Status',
+  nature_of_enquiry: 'Nature_of_Enquiry',
+  purchase_classification: 'Purchase_Classification',
+  enquiry_outcome: 'Enquiry_Outcome',
+  lead_department: 'Lead_Department',
+  franchise: 'Franchise',
+  enquiry_id: 'Enquiry_ID',
+  customer_message: 'Customer_Message',
+  accept_privacy_policy: 'Accept_Privacy_Policy',
+  receive_marketing_updates: 'Receive_Marketing_Updates',
+  postcode: 'Postcode',
+  unit_suite: 'Unit_Suite',
+  enquiry_variant: 'Enquiry_Variant',
+  enquiry_powertrain: 'Enquiry_Powertrain',
+  chat_transcript: 'Chat_Transcript',
 };
 
 function toZohoApiFields(internalFieldsObject) {
@@ -423,9 +456,11 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
         throw Object.assign(new Error(`Could not fetch external lead ${externalLeadId} from dealer's Zoho org`), { code: 'FIELD_MAPPING_INVALID' });
       }
 
+      const affectedFields = extractAffectedFieldNames(externalPayload, externalLeadId); 
+
       const result = await processResolvedInboundLead(
         catalystApp, integration, externalLeadId, zohoRecord,
-        fieldMappings, statusMappings, requestReference, zohoCrmService
+        fieldMappings, statusMappings, requestReference, zohoCrmService,affectedFields 
       );
       results.push({ externalLeadId, ...result });
     } catch (err) {
@@ -450,7 +485,8 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
  */
 async function processResolvedInboundLead(
   catalystApp, integration, externalLeadId, externalRecord,
-  fieldMappings, statusMappings, requestReference, zohoCrmService
+  fieldMappings, statusMappings, requestReference, zohoCrmService,
+  affectedFields = null
 ) {
   // Dealer isolation: scoped by BOTH dealer_code and external_crm_lead_id.
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
@@ -487,7 +523,17 @@ async function processResolvedInboundLead(
   const statusTargetField = statusFieldMapping ? statusFieldMapping.target_field : 'status';
   const incomingStatusValue = externalRecord[statusTargetField];
 
-  const isStatusSync = Boolean(incomingStatusValue);
+  // When affectedFields is available (Zoho-as-dealer-CRM path, where
+  // externalRecord is always a FULL record fetch rather than a delta),
+  // use it to tell a genuine status change apart from any other field
+  // edit — otherwise Lead_Status is always present on the full record
+  // and every edit gets misclassified as a status sync (Happy 2).
+  // On the generic REST webhook path, affectedFields is null and the
+  // old behavior (payload already only carries what changed) still
+  // applies.
+  const isStatusSync = affectedFields
+    ? affectedFields.includes(statusTargetField)
+    : Boolean(incomingStatusValue);
 
   if (isStatusSync) {
     try {
@@ -514,6 +560,12 @@ async function processResolvedInboundLead(
         return { skipped: true, reason: 'STATUS_MAPPING_NOT_FOUND' };
       }
     }
+  } else {
+    // Full-record fetch still carries the (unchanged) status value in
+    // internalUpdate via mapExternalLeadToZoho — drop it so a
+    // non-status edit doesn't also push an untranslated raw dealer
+    // status string into Zoho's lead_status.
+    delete internalUpdate.lead_status;
   }
 
   if (Object.keys(internalUpdate).length === 0) {
