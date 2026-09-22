@@ -39,6 +39,8 @@ const STATUS_TONES = {
   "Not Qualified": "danger",
   Dropped: "danger",
   Lost: "danger",
+  "Lost Lead": "danger",
+  Rejected: "danger",
   "Dealer Unavailable": "danger",
   "Unattended Alert": "danger",
 };
@@ -47,15 +49,60 @@ const STATUS_TONES = {
 // toggle — everything else (new, in-progress, follow-up statuses)
 // defaults to "happy" so a new in-progress status added later doesn't
 // need to be whitelisted to show up on the happy side.
+// "Lost" / "Lost Lead" / "Rejected" all map to Unhappy 9 (dealer
+// rejects the enquiry) in the detail view, so they belong here too.
 const UNHAPPY_LEAD_STATUSES = new Set([
   "Not Qualified",
   "Dropped",
   "Lost",
+  "Lost Lead",
+  "Rejected",
   "Dealer Unavailable",
   "Unattended Alert",
 ]);
 
 const classifyLeadPath = (status) => (UNHAPPY_LEAD_STATUSES.has(status) ? "unhappy" : "happy");
+
+// ===== HAPPY 3: DUPLICATE DETECTION =====
+// Check if a lead is a duplicate by matching email + phone with existing leads
+// Same logic as backend dedupeService.findBusinessDuplicate()
+const findDuplicateLead = (currentLead, allLeads) => {
+  if (!currentLead.email_address && !currentLead.mobile_number) {
+    return null; // No contact info to match
+  }
+
+  return allLeads.find((other) => {
+    // Don't compare lead with itself
+    if (other.ROWID === currentLead.ROWID) return false;
+
+    // Don't compare if already marked as duplicate link
+    if (currentLead.sync_status === "DUPLICATE_LINKED") return false;
+
+    // Match email + phone (same logic as backend)
+    const emailMatch =
+      currentLead.email_address &&
+      other.email_address &&
+      currentLead.email_address.toLowerCase() === other.email_address.toLowerCase();
+
+    const phoneMatch =
+      currentLead.mobile_number &&
+      other.mobile_number &&
+      currentLead.mobile_number.replace(/\D/g, "") === other.mobile_number.replace(/\D/g, "");
+
+    return emailMatch || phoneMatch;
+  });
+};
+
+const classifyLeadWithDuplicate = (lead, allLeads) => {
+  // Happy 3: duplicate detected
+  const duplicate = findDuplicateLead(lead, allLeads);
+  if (duplicate) {
+    return { path: "happy", number: 3, isDuplicate: true, duplicateId: duplicate.ROWID };
+  }
+
+  // Original classification (Happy or Unhappy based on status)
+  return { path: classifyLeadPath(lead.lead_status), isDuplicate: false };
+};
 
 const PATH_FILTER_OPTIONS = [
   { value: "all", label: "All leads" },
@@ -83,7 +130,9 @@ function cellText(value) {
 function initialsFor(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
-  return parts.length === 1 ? parts[0].charAt(0).toUpperCase() : (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+  return parts.length === 1
+    ? parts[0].charAt(0).toUpperCase()
+    : (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 }
 
 /** Skeleton placeholder matching the real lead-card's structure, shown
@@ -215,7 +264,9 @@ export default function LeadExchangePage() {
       showAlert(
         "success",
         `${result.recordsInserted} new, ${result.recordsUpdated} updated${removedNote}.`,
-        { title: "Sync complete" }
+        {
+          title: "Sync complete",
+        }
       );
       await loadLeads();
     } catch (err) {
@@ -285,7 +336,8 @@ export default function LeadExchangePage() {
   const pathCounts = useMemo(() => {
     const counts = { happy: 0, unhappy: 0 };
     leads.forEach((l) => {
-      counts[classifyLeadPath(l.lead_status)] += 1;
+      const classification = classifyLeadWithDuplicate(l, leads);
+      counts[classification.path] += 1;
     });
     return counts;
   }, [leads]);
@@ -300,7 +352,8 @@ export default function LeadExchangePage() {
           .some((field) => field.toLowerCase().includes(term));
       const matchesStatus = !statusFilter || l.lead_status === statusFilter;
       const matchesDealer = !dealerFilter || l.dealer_code === dealerFilter;
-      const matchesPath = pathFilter === "all" || classifyLeadPath(l.lead_status) === pathFilter;
+      const classification = classifyLeadWithDuplicate(l, leads);
+      const matchesPath = pathFilter === "all" || classification.path === pathFilter;
       const matchesRemoved = showRemoved || l.sync_status !== "Removed";
       return matchesSearch && matchesStatus && matchesDealer && matchesPath && matchesRemoved;
     });
@@ -368,7 +421,9 @@ export default function LeadExchangePage() {
   };
 
   const dimmed = (row, content) => (
-    <span className={row.sync_status === "Removed" ? "lead-exchange__cell--removed" : ""}>{content}</span>
+    <span className={row.sync_status === "Removed" ? "lead-exchange__cell--removed" : ""}>
+      {content}
+    </span>
   );
 
   const columnRenderers = {
@@ -387,7 +442,11 @@ export default function LeadExchangePage() {
       dimmed(
         row,
         row.mobile_number ? (
-          <a href={`tel:${row.mobile_number}`} className="lead-exchange__contact-link" onClick={(e) => e.stopPropagation()}>
+          <a
+            href={`tel:${row.mobile_number}`}
+            className="lead-exchange__contact-link"
+            onClick={(e) => e.stopPropagation()}
+          >
             {row.mobile_number}
           </a>
         ) : (
@@ -398,7 +457,11 @@ export default function LeadExchangePage() {
       dimmed(
         row,
         row.email_address ? (
-          <a href={`mailto:${row.email_address}`} className="lead-exchange__contact-link" onClick={(e) => e.stopPropagation()}>
+          <a
+            href={`mailto:${row.email_address}`}
+            className="lead-exchange__contact-link"
+            onClick={(e) => e.stopPropagation()}
+          >
             {row.email_address}
           </a>
         ) : (
@@ -466,8 +529,8 @@ export default function LeadExchangePage() {
                 option.value === "happy"
                   ? pathCounts.happy
                   : option.value === "unhappy"
-                  ? pathCounts.unhappy
-                  : leads.length;
+                    ? pathCounts.unhappy
+                    : leads.length;
               return (
                 <button
                   key={option.value}
@@ -550,7 +613,11 @@ export default function LeadExchangePage() {
                   <div className="lead-exchange__column-dropdown">
                     {ALL_COLUMNS.map((c) => (
                       <label key={c.key} className="lead-exchange__checkbox">
-                        <input type="checkbox" checked={visibleColumns[c.key]} onChange={() => toggleColumn(c.key)} />
+                        <input
+                          type="checkbox"
+                          checked={visibleColumns[c.key]}
+                          onChange={() => toggleColumn(c.key)}
+                        />
                         {c.label}
                       </label>
                     ))}
@@ -600,31 +667,50 @@ export default function LeadExchangePage() {
               ) : (
                 pageRows.map((row) => {
                   const removed = row.sync_status === "Removed";
-                  const tone = removed ? "neutral" : STATUS_TONES[row.lead_status] || "neutral";
+                  const classification = classifyLeadWithDuplicate(row, leads);
+                  const isDuplicate = classification.isDuplicate && !removed;
+                  const tone = removed
+                    ? "neutral"
+                    : isDuplicate
+                      ? "success"
+                      : STATUS_TONES[row.lead_status] || "neutral";
                   return (
                     <div
                       key={row.ROWID || row.dealer_code + row.customer_name}
-                      className={`lead-card lead-card--tone-${tone} ${removed ? "lead-card--removed" : ""}`}
+                      className={`lead-card lead-card--tone-${tone} ${removed ? "lead-card--removed" : ""} ${
+                        isDuplicate ? "lead-card--duplicate" : ""
+                      }`}
                       onClick={() => openDetail(row)}
                     >
                       <div className="lead-card__top">
                         <div className="lead-card__identity">
-                          <span className="lead-card__avatar">{initialsFor(row.customer_name)}</span>
+                          <span className="lead-card__avatar">
+                            {initialsFor(row.customer_name)}
+                          </span>
                           <div>
                             <div className="lead-card__name-row">
                               <h3>{row.customer_name || "Unnamed lead"}</h3>
                               {row.lead_status === "Not Contacted" && !removed && (
                                 <span className="lead-card__new-pill">New Lead</span>
                               )}
+                              {isDuplicate && (
+                                <span className="lead-card__duplicate-pill">
+                                  Duplicate (Happy 3)
+                                </span>
+                              )}
                             </div>
-                            {row.ROWID && <span className="lead-card__id">Lead ID: {row.ROWID}</span>}
+                            {row.ROWID && (
+                              <span className="lead-card__id">Lead ID: {row.ROWID}</span>
+                            )}
                           </div>
                         </div>
                         <div className="lead-card__top-actions">
                           {removed ? (
                             <Badge tone="danger">Removed</Badge>
                           ) : (
-                            <Badge tone={STATUS_TONES[row.lead_status] || "neutral"}>{row.lead_status || "—"}</Badge>
+                            <Badge tone={STATUS_TONES[row.lead_status] || "neutral"}>
+                              {row.lead_status || "—"}
+                            </Badge>
                           )}
                           <button
                             className="lead-card__more"
@@ -638,28 +724,36 @@ export default function LeadExchangePage() {
 
                       <div className="lead-card__body">
                         <div className="lead-card__field">
-                          <span className="lead-card__icon"><Store size={16} /></span>
+                          <span className="lead-card__icon">
+                            <Store size={16} />
+                          </span>
                           <div>
                             <span className="lead-card__label">Dealer</span>
                             <span className="lead-card__value">{row.dealer_name || "—"}</span>
                           </div>
                         </div>
                         <div className="lead-card__field">
-                          <span className="lead-card__icon"><Hash size={16} /></span>
+                          <span className="lead-card__icon">
+                            <Hash size={16} />
+                          </span>
                           <div>
                             <span className="lead-card__label">Dealer code</span>
                             <span className="lead-card__value">{row.dealer_code || "—"}</span>
                           </div>
                         </div>
                         <div className="lead-card__field">
-                          <span className="lead-card__icon"><Car size={16} /></span>
+                          <span className="lead-card__icon">
+                            <Car size={16} />
+                          </span>
                           <div>
                             <span className="lead-card__label">Vehicle</span>
                             <span className="lead-card__value">{cellText(row.vehicle_model)}</span>
                           </div>
                         </div>
                         <div className="lead-card__field">
-                          <span className="lead-card__icon"><Megaphone size={16} /></span>
+                          <span className="lead-card__icon">
+                            <Megaphone size={16} />
+                          </span>
                           <div>
                             <span className="lead-card__label">Source</span>
                             <span className="lead-card__value">{cellText(row.lead_source)}</span>
@@ -728,7 +822,10 @@ export default function LeadExchangePage() {
             </div>
 
             <div className="lead-exchange__page-nav">
-              <button onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={currentPage === 0}>
+              <button
+                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                disabled={currentPage === 0}
+              >
                 Previous
               </button>
               <span>

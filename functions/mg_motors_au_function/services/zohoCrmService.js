@@ -32,6 +32,9 @@ async function fetchDealerMaster() {
   const { apiDomain } = getZohoConfig();
   const accessToken = await getAccessToken();
 
+    logger.info('zohoCrmService', `updateOemLead payload for ${crmRecordId}: ${JSON.stringify(fields)}`);
+
+
   const allRecords = [];
   let page = 1;
   let moreRecords = true;

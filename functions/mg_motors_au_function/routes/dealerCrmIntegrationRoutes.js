@@ -25,6 +25,26 @@ function safeConfig(integration) {
     status, last_tested_at, last_sync_at };
 }
 
+const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
+
+router.post('/admin/dealers/:dealerCode/register-webhook', async (req, res) => {
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const { dealerCode } = req.params;
+
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) {
+      return res.status(404).json({ error: 'INTEGRATION_NOT_FOUND' });
+    }
+
+    const result = await registerDealerWatchChannel(catalystApp, integration);
+    res.status(200).json({ ok: true, result });
+  } catch (err) {
+    logger.error('webhookRoutes', 'Manual watch registration failed', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:dealerCode/integration', requireAdminRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;

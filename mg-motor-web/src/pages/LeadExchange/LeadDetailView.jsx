@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import Badge from "../../ui/Badge/Badge";
 import {
@@ -32,6 +31,7 @@ const STATUS_TONES = {
   Converted: "success",
   Won: "success",
   Lost: "danger",
+  "Lost Lead": "danger",
   Dropped: "danger",
   "Not Qualified": "danger",
   Rejected: "danger",
@@ -52,24 +52,17 @@ const HAPPY_PATHS = [
     match: ["Update Pending", "Not Contacted"],
     description:
       "Enquiry created in the OEM, mandatory fields validated, dealer resolved by postcode, and pushed to the dealer CRM successfully.",
-    outcome:
-      "Status moves Update Pending → Not Contacted once the dealer acknowledges receipt.",
+    outcome: "Status moves Update Pending → Not Contacted once the dealer acknowledges receipt.",
   },
   {
     id: "Happy 2",
     type: "happy",
     title: "Dealer progresses enquiry (status sync)",
     trigger: "Dealer CRM",
-    match: [
-      "Follow-up 1",
-      "Follow-up 2",
-      "Contacted",
-      "Contact in Future",
-    ],
+    match: ["Follow-up 1", "Follow-up 2", "Contacted", "Contact in Future"],
     description:
       "Dealer is actively working the lead in their own CRM; each status change syncs back to the OEM automatically.",
-    outcome:
-      "OEM status mirrors the dealer pipeline in real time, plus a daily reconcile.",
+    outcome: "OEM status mirrors the dealer pipeline in real time, plus a daily reconcile.",
   },
   {
     id: "Happy 3",
@@ -79,8 +72,7 @@ const HAPPY_PATHS = [
     match: ["Duplicate", "Linked"],
     description:
       "An inbound enquiry matched an existing record (same ID, or same email/mobile + name) and was safely linked instead of creating a duplicate.",
-    outcome:
-      "No duplicate dealer record created; existing record linked with an audit note.",
+    outcome: "No duplicate dealer record created; existing record linked with an audit note.",
   },
   {
     id: "Happy 4",
@@ -90,8 +82,7 @@ const HAPPY_PATHS = [
     match: ["Replayed", "Recovered"],
     description:
       "Connectivity was restored after an outage and queued enquiries were replayed in order without creating duplicates.",
-    outcome:
-      "All valid enquiries delivered exactly once after recovery.",
+    outcome: "All valid enquiries delivered exactly once after recovery.",
   },
   {
     id: "Happy 5",
@@ -101,8 +92,7 @@ const HAPPY_PATHS = [
     match: ["Synced", "Reconciled"],
     description:
       "Dealer-side field updates are mapped back to the OEM using per-field source-of-truth ownership rules.",
-    outcome:
-      "Both systems reflect the agreed source-of-truth data.",
+    outcome: "Both systems reflect the agreed source-of-truth data.",
   },
 ];
 
@@ -129,8 +119,7 @@ const UNHAPPY_PATHS = [
     match: ["Quarantined", "Data Error", "Validation Failed"],
     description:
       "A mandatory field was missing or failed validation on ingest from the OEM. Not recoverable — no retry.",
-    outcome:
-      "Rejected / quarantined and logged for correction; the dealer CRM is never called.",
+    outcome: "Rejected / quarantined and logged for correction; the dealer CRM is never called.",
   },
   {
     id: "Unhappy 3",
@@ -138,8 +127,7 @@ const UNHAPPY_PATHS = [
     title: "Dealer unavailable",
     trigger: "Scheduler",
     match: ["Dealer Unavailable"],
-    description:
-      "The mapped dealer is inactive and the 24h retry window has been exhausted.",
+    description: "The mapped dealer is inactive and the 24h retry window has been exhausted.",
     outcome:
       "Moved to a holding queue; status set to Dealer Unavailable; alert raised for admin re-route.",
   },
@@ -149,10 +137,8 @@ const UNHAPPY_PATHS = [
     title: "Status update failure (dealer → OEM)",
     trigger: "Middleware",
     match: ["Sync Failed"],
-    description:
-      "A dealer update was received but writing it back to the OEM failed.",
-    outcome:
-      "Retried with backoff and reconciled once successful; alert raised if it persists.",
+    description: "A dealer update was received but writing it back to the OEM failed.",
+    outcome: "Retried with backoff and reconciled once successful; alert raised if it persists.",
   },
   {
     id: "Unhappy 5",
@@ -162,8 +148,7 @@ const UNHAPPY_PATHS = [
     match: ["Routing Exception"],
     description:
       "Postcode routing resolved to no dealer, an ambiguous dealer, or an invalid mapping.",
-    outcome:
-      "Held as a routing exception until the mapping is corrected, then reprocessed.",
+    outcome: "Held as a routing exception until the mapping is corrected, then reprocessed.",
   },
   {
     id: "Unhappy 6",
@@ -171,10 +156,8 @@ const UNHAPPY_PATHS = [
     title: "Ownership conflict",
     trigger: "Middleware",
     match: ["Ownership Conflict"],
-    description:
-      "OEM and dealer updated the same field on the same enquiry at the same time.",
-    outcome:
-      "Resolved automatically using field-level source-of-truth and timestamp rules.",
+    description: "OEM and dealer updated the same field on the same enquiry at the same time.",
+    outcome: "Resolved automatically using field-level source-of-truth and timestamp rules.",
   },
   {
     id: "Unhappy 7",
@@ -182,10 +165,8 @@ const UNHAPPY_PATHS = [
     title: "Out-of-order events",
     trigger: "Middleware",
     match: ["Pending Sequence"],
-    description:
-      "A status update arrived before its enquiry-created record existed.",
-    outcome:
-      "Held in a buffer and released once the prerequisite record exists.",
+    description: "A status update arrived before its enquiry-created record existed.",
+    outcome: "Held in a buffer and released once the prerequisite record exists.",
   },
   {
     id: "Unhappy 8",
@@ -193,8 +174,7 @@ const UNHAPPY_PATHS = [
     title: "Consent / privacy mismatch",
     trigger: "Middleware",
     match: ["Consent Hold"],
-    description:
-      "Consent or privacy data was missing or mismatched.",
+    description: "Consent or privacy data was missing or mismatched.",
     outcome:
       "Held/flagged until consent is validated; marketing-dependent data withheld until then.",
   },
@@ -203,11 +183,12 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Dealer rejects enquiry",
     trigger: "Dealer CRM",
-    match: ["Rejected", "Not Qualified"],
-    description:
-      "The dealer marked the enquiry as spam or invalid.",
-    outcome:
-      "Rejection reason captured and mapped to an OEM status.",
+    // Any of these lead/sync statuses means the dealer closed the enquiry
+    // out as rejected — including the "Lost" / "Lost Lead" wording some
+    // dealer CRMs send back instead of "Rejected" / "Not Qualified".
+    match: ["Rejected", "Not Qualified", "Lost", "Lost Lead"],
+    description: "The dealer marked the enquiry as spam or invalid.",
+    outcome: "Rejection reason captured and mapped to an OEM status.",
   },
   {
     id: "Unhappy 10",
@@ -215,10 +196,8 @@ const UNHAPPY_PATHS = [
     title: "SLA breach",
     trigger: "Scheduler",
     match: ["Unattended Alert"],
-    description:
-      "The dealer received the enquiry but took no action within 24 hours.",
-    outcome:
-      "Escalated; status set to Unattended Alert; dealer notified to action it.",
+    description: "The dealer received the enquiry but took no action within 24 hours.",
+    outcome: "Escalated; status set to Unattended Alert; dealer notified to action it.",
   },
   {
     id: "Unhappy 11",
@@ -226,10 +205,8 @@ const UNHAPPY_PATHS = [
     title: "Partial transaction",
     trigger: "Middleware",
     match: ["Reconciling"],
-    description:
-      "The OEM recorded the enquiry but dealer creation failed, leaving a mismatch.",
-    outcome:
-      "A reconciliation job re-attempts delivery or flags the mismatch for review.",
+    description: "The OEM recorded the enquiry but dealer creation failed, leaving a mismatch.",
+    outcome: "A reconciliation job re-attempts delivery or flags the mismatch for review.",
   },
   {
     id: "Unhappy 12",
@@ -237,10 +214,8 @@ const UNHAPPY_PATHS = [
     title: "Dealer CRM migration / offboarding",
     trigger: "Scheduler",
     match: ["Re-routing"],
-    description:
-      "The dealer changed CRM or left the network while the enquiry was still open.",
-    outcome:
-      "Re-routed to the next closest dealer without creating duplicates.",
+    description: "The dealer changed CRM or left the network while the enquiry was still open.",
+    outcome: "Re-routed to the next closest dealer without creating duplicates.",
   },
 ];
 
@@ -251,35 +226,46 @@ function normalize(value) {
   return (value ?? "").toString().trim().toLowerCase();
 }
 
-function matchPathScenario(lead) {
-  const leadStatus = normalize(lead.lead_status);
-  const syncStatus = normalize(lead.sync_status);
+// Finds the first scenario whose `match` list contains this exact
+// (normalized) status string, or null if nothing matches / status is empty.
+function findScenarioForStatus(status, scenarios) {
+  const normalizedTarget = normalize(status);
+  if (!normalizedTarget) return null;
 
+  return (
+    scenarios.find((scenario) =>
+      scenario.match.some((candidate) => normalize(candidate) === normalizedTarget)
+    ) || null
+  );
+}
+
+// lead_status is the real business outcome the dealer/OEM agreed on
+// (Lost, Rejected, Contacted, etc.) and must win over sync_status, which
+// only reflects whether the last sync attempt to/from Catalyst succeeded.
+// A lot of historical rows carry sync_status = "Removed" as a leftover
+// default even though lead_status clearly resolves to something else
+// (e.g. "Lost") — checking lead_status first stops those rows from being
+// mis-classified as Unhappy 3 before Unhappy 9 ever gets a look.
+function matchPathScenario(lead) {
   const all = [...UNHAPPY_PATHS, ...HAPPY_PATHS];
 
-  for (const scenario of all) {
-    const hit = scenario.match.some((status) => {
-      const normalizedStatus = normalize(status);
-
-      return (
-        normalizedStatus === leadStatus ||
-        normalizedStatus === syncStatus
-      );
-    });
-
-    if (hit) {
-      return scenario;
-    }
-  }
-
-  return null;
+  return (
+    findScenarioForStatus(lead.lead_status, all) || findScenarioForStatus(lead.sync_status, all)
+  );
 }
 
 function classifyPath(lead) {
+  const match = matchPathScenario(lead);
+
+  if (match) {
+    return match;
+  }
+
+  // Nothing in lead_status or sync_status matched a known scenario —
+  // only now fall back to treating sync_status = "Removed" as an
+  // inferred Unhappy 3 (dealer unavailable).
   if (normalize(lead.sync_status) === "removed") {
-    const base = UNHAPPY_PATHS.find(
-      (scenario) => scenario.id === "Unhappy 3"
-    );
+    const base = UNHAPPY_PATHS.find((scenario) => scenario.id === "Unhappy 3");
 
     return {
       ...base,
@@ -287,20 +273,12 @@ function classifyPath(lead) {
     };
   }
 
-  const match = matchPathScenario(lead);
-
-  if (match) {
-    return match;
-  }
-
   return {
     id: "Unclassified",
     type: "neutral",
     title: "Status not yet mapped",
     trigger: "—",
-    description: `Neither lead_status ("${
-      lead.lead_status || "—"
-    }") nor sync_status ("${
+    description: `Neither lead_status ("${lead.lead_status || "—"}") nor sync_status ("${
       lead.sync_status || "—"
     }") matches a known Happy/Unhappy scenario yet.`,
     outcome:
@@ -406,9 +384,7 @@ function StatusPill({ status }) {
   const tone = STATUS_TONES[status] || "neutral";
 
   return (
-    <span
-      className={`lead-detail__status-pill lead-detail__status-pill--${tone}`}
-    >
+    <span className={`lead-detail__status-pill lead-detail__status-pill--${tone}`}>
       <span className="lead-detail__status-dot" />
       {status || "—"}
     </span>
@@ -453,26 +429,16 @@ function IntegrationPathCard({ path }) {
       </h3>
 
       <div className="lead-detail__path-card-body">
-        <span
-          className={`lead-detail__path-id lead-detail__path-id--${path.type}`}
-        >
-          {path.id}
-        </span>
+        <span className={`lead-detail__path-id lead-detail__path-id--${path.type}`}>{path.id}</span>
 
         <div className="lead-detail__path-card-text">
-          <p className="lead-detail__path-card-title">
-            {path.title}
-          </p>
+          <p className="lead-detail__path-card-title">{path.title}</p>
 
           {path.trigger && path.trigger !== "—" && (
-            <p className="lead-detail__path-card-trigger">
-              Trigger source: {path.trigger}
-            </p>
+            <p className="lead-detail__path-card-trigger">Trigger source: {path.trigger}</p>
           )}
 
-          <p className="lead-detail__path-card-desc">
-            {path.description}
-          </p>
+          <p className="lead-detail__path-card-desc">{path.description}</p>
 
           {path.outcome && (
             <p className="lead-detail__path-card-outcome">
@@ -482,8 +448,8 @@ function IntegrationPathCard({ path }) {
 
           {path.assumed && (
             <p className="lead-detail__path-card-note">
-              Inferred from sync_status = "Removed" — confirm this
-              maps to Unhappy 3 for your real data.
+              Inferred from sync_status = "Removed" — confirm this maps to Unhappy 3 for your real
+              data.
             </p>
           )}
         </div>
@@ -504,8 +470,7 @@ export default function LeadDetailView({ lead, onBack }) {
     return value && String(value).trim() ? value : "—";
   };
 
-  const isRemoved =
-    normalize(lead.sync_status) === "removed";
+  const isRemoved = normalize(lead.sync_status) === "removed";
 
   const mobile = val("mobile_number");
   const email = val("email_address");
@@ -531,11 +496,7 @@ export default function LeadDetailView({ lead, onBack }) {
   return (
     <div className="lead-detail">
       {/* ---------- Back ---------- */}
-      <button
-        type="button"
-        className="lead-detail__back"
-        onClick={onBack}
-      >
+      <button type="button" className="lead-detail__back" onClick={onBack}>
         <ChevronLeftIcon size={16} />
         Back to Leads
       </button>
@@ -544,32 +505,19 @@ export default function LeadDetailView({ lead, onBack }) {
           HERO
       ========================================================== */}
       <div className="lead-detail__hero">
-        <div
-          className="lead-detail__hero-decor"
-          aria-hidden="true"
-        >
-          <img
-            src={mgLogo}
-            alt=""
-            className="lead-detail__hero-logo"
-          />
+        <div className="lead-detail__hero-decor" aria-hidden="true">
+          <img src={mgLogo} alt="" className="lead-detail__hero-logo" />
         </div>
 
         {/* Customer avatar */}
-        <span className="lead-detail__avatar">
-          {initials(lead.customer_name)}
-        </span>
+        <span className="lead-detail__avatar">{initials(lead.customer_name)}</span>
 
         {/* Customer information */}
         <div className="lead-detail__hero-main">
           <div className="lead-detail__hero-top">
             <h1>{lead.customer_name || "Unnamed Customer"}</h1>
 
-            {isRemoved ? (
-              <StatusPill status="Removed" />
-            ) : (
-              <StatusPill status={lead.lead_status} />
-            )}
+            {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
 
             <PathBadge path={path} />
           </div>
@@ -585,9 +533,7 @@ export default function LeadDetailView({ lead, onBack }) {
             <span className="lead-detail__meta-item">
               <ArrowRightIcon size={14} />
 
-              <span className="lead-detail__meta-label">
-                Dealer Code
-              </span>
+              <span className="lead-detail__meta-label">Dealer Code</span>
 
               {val("dealer_code")}
             </span>
@@ -614,13 +560,9 @@ export default function LeadDetailView({ lead, onBack }) {
           </span>
 
           <div className="lead-detail__vehicle-content">
-            <span className="lead-detail__vehicle-label">
-              Vehicle
-            </span>
+            <span className="lead-detail__vehicle-label">Vehicle</span>
 
-            <span className="lead-detail__vehicle-model">
-              {val("vehicle_model")}
-            </span>
+            <span className="lead-detail__vehicle-model">{val("vehicle_model")}</span>
           </div>
         </div>
       </div>
@@ -636,9 +578,7 @@ export default function LeadDetailView({ lead, onBack }) {
           </span>
 
           <div className="lead-detail__infobar-body">
-            <span className="lead-detail__infobar-label">
-              Mobile
-            </span>
+            <span className="lead-detail__infobar-label">Mobile</span>
 
             <span className="lead-detail__infobar-value">
               {mobile}
@@ -647,20 +587,14 @@ export default function LeadDetailView({ lead, onBack }) {
                 <button
                   type="button"
                   className="lead-detail__copy-btn"
-                  onClick={() =>
-                    handleCopy("mobile", mobile)
-                  }
+                  onClick={() => handleCopy("mobile", mobile)}
                   aria-label="Copy mobile number"
                 >
                   <CopyIcon />
                 </button>
               )}
 
-              {copied === "mobile" && (
-                <span className="lead-detail__copied-tag">
-                  Copied
-                </span>
-              )}
+              {copied === "mobile" && <span className="lead-detail__copied-tag">Copied</span>}
             </span>
 
             {mobile !== "—" && (
@@ -684,9 +618,7 @@ export default function LeadDetailView({ lead, onBack }) {
           </span>
 
           <div className="lead-detail__infobar-body">
-            <span className="lead-detail__infobar-label">
-              Email
-            </span>
+            <span className="lead-detail__infobar-label">Email</span>
 
             <span className="lead-detail__infobar-value">
               {email}
@@ -695,20 +627,14 @@ export default function LeadDetailView({ lead, onBack }) {
                 <button
                   type="button"
                   className="lead-detail__copy-btn"
-                  onClick={() =>
-                    handleCopy("email", email)
-                  }
+                  onClick={() => handleCopy("email", email)}
                   aria-label="Copy email address"
                 >
                   <CopyIcon />
                 </button>
               )}
 
-              {copied === "email" && (
-                <span className="lead-detail__copied-tag">
-                  Copied
-                </span>
-              )}
+              {copied === "email" && <span className="lead-detail__copied-tag">Copied</span>}
             </span>
 
             {email !== "—" && (
@@ -743,9 +669,7 @@ export default function LeadDetailView({ lead, onBack }) {
           </h3>
 
           <p className="lead-detail__remarks-text">
-            {val("dealer_remarks") !== "—"
-              ? val("dealer_remarks")
-              : "No remarks yet."}
+            {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
           </p>
         </section>
 
@@ -766,13 +690,9 @@ export default function LeadDetailView({ lead, onBack }) {
                 </span>
 
                 <div>
-                  <p className="lead-detail__timeline-title">
-                    Lead Assigned
-                  </p>
+                  <p className="lead-detail__timeline-title">Lead Assigned</p>
 
-                  <p className="lead-detail__timeline-time">
-                    {assignedAt}
-                  </p>
+                  <p className="lead-detail__timeline-time">{assignedAt}</p>
                 </div>
               </li>
             )}
@@ -784,27 +704,19 @@ export default function LeadDetailView({ lead, onBack }) {
                 </span>
 
                 <div>
-                  <p className="lead-detail__timeline-title">
-                    Last Updated
-                  </p>
+                  <p className="lead-detail__timeline-title">Last Updated</p>
 
-                  <p className="lead-detail__timeline-time">
-                    {lastUpdatedAt}
-                  </p>
+                  <p className="lead-detail__timeline-time">{lastUpdatedAt}</p>
                 </div>
               </li>
             )}
 
-            {assignedAt === "—" &&
-              lastUpdatedAt === "—" && (
-                <li className="lead-detail__timeline-empty">
-                  No activity recorded yet.
-                </li>
-              )}
+            {assignedAt === "—" && lastUpdatedAt === "—" && (
+              <li className="lead-detail__timeline-empty">No activity recorded yet.</li>
+            )}
           </ul>
         </section>
       </div>
     </div>
   );
 }
-

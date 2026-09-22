@@ -8,6 +8,7 @@ const { syncLeads } = require('../services/leadSyncService');
 const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
+const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
 const logger = require('../utils/logger');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 
@@ -102,6 +103,32 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
   } catch (err) {
     logger.error('webhookRoutes', `Dealer webhook failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+/**
+ * TEMPORARY ADMIN ROUTE — manually (re-)registers a Zoho CRM watch
+ * channel on a dealer's own org so their Lead updates notify
+ * /webhooks/dealers/:dealerCode. Watch channels expire ~23h after
+ * registration (see zohoWebhookService.js), so this needs to be called
+ * again periodically until a scheduled Cron job takes over renewal.
+ * Consider removing or protecting this route before production.
+ */
+router.post('/admin/dealers/:dealerCode/register-webhook', async (req, res) => {
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const { dealerCode } = req.params;
+
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) {
+      return res.status(404).json({ error: 'INTEGRATION_NOT_FOUND' });
+    }
+
+    const result = await registerDealerWatchChannel(catalystApp, integration);
+    res.status(200).json({ ok: true, result });
+  } catch (err) {
+    logger.error('webhookRoutes', 'Manual watch registration failed', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
