@@ -1100,3 +1100,6 @@
   }
 }
 
+.lead-detail__timeline-dot--happy { background: var(--scenario-happy-1-bg, #e6f7ee); color: var(--scenario-happy-1-text, #1a7f4e); }
+.lead-detail__timeline-dot--unhappy { background: var(--scenario-unhappy-1-bg, #fdeaea); color: var(--scenario-unhappy-1-text, #c0392b); }
+.lead-detail__timeline-dot--neutral { background: var(--color-surface-muted, #f0f0f0); color: var(--color-text-muted, #666); }

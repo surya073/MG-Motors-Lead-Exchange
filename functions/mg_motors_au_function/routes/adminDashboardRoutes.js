@@ -13,6 +13,7 @@ const {
 } = require('../services/adminDashboardService');
 const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
+const crmIntegrationService = require('../services/integrations/crmIntegrationService'); // NEW
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -41,6 +42,29 @@ router.get('/admin/leads', requireAdminRole, async (req, res) => {
     res.status(200).json({ success: true, count: leads.length, leads });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'GET /admin/leads failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /admin/leads/:crmRecordId/timeline
+ * -----------------------------------------------------------------------
+ * Chronological Happy/Unhappy activity history for one lead, sourced
+ * from integration_logs (dealer-CRM sync events), keyed by the lead's
+ * crm_record_id (== zoho_lead_id in integration_logs). Powers the
+ * Activity Timeline on LeadDetailView.jsx. Placed ABOVE
+ * /admin/leads/summary so Express's route matching doesn't need param
+ * disambiguation, but since this is a distinct literal segment
+ * (:crmRecordId/timeline vs. summary) either order is actually fine —
+ * kept here for readability next to the sibling /admin/leads route.
+ */
+router.get('/admin/leads/:crmRecordId/timeline', requireAdminRole, async (req, res) => {
+  try {
+    const { crmRecordId } = req.params;
+    const timeline = await crmIntegrationService.getLeadActivityTimeline(res.locals.catalystApp, crmRecordId);
+    res.status(200).json({ success: true, count: timeline.length, timeline });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', `GET /admin/leads/${req.params.crmRecordId}/timeline failed`, err);
     res.status(502).json({ success: false, error: err.message });
   }
 });
@@ -89,11 +113,6 @@ router.get('/admin/dashboard-summary', requireAdminRole, async (req, res) => {
 
 router.get('/admin/dealer-invitations', requireAdminRole, async (req, res) => {
   try {
-    // Reads from our own synced `dealers` table rather than calling
-    // fetchDealerMaster() live — avoids depending on a second CRM
-    // permission/scope for this tab, and dealers here are only ever
-    // stale by however long ago the last sync ran (same staleness the
-    // Synced Dealers tab already tolerates).
     const syncedDealers = await getAllDealersWithLeadCounts(res.locals.catalystApp);
     const dealers = syncedDealers
       .filter((d) => d.sync_status !== 'Removed')
@@ -113,14 +132,6 @@ router.get('/admin/dealer-invitations', requireAdminRole, async (req, res) => {
   }
 });
 
-/**
- * DELETE /admin/dealers/:dealerCode
- * -----------------------------------------------------------------------
- * Super Admin removes a dealer that has completed signup — deletes the
- * Catalyst account and its dealer_user_mapping row, revoking portal
- * access. Placed alongside the other /admin/dealers* routes rather than
- * in dealerInviteRoutes.js for consistency with this file's convention.
- */
 router.delete('/admin/dealers/:dealerCode', requireAdminRole, async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;

@@ -43,8 +43,16 @@ export const adminDashboardService = {
   },
 
   async dealerInvitations() {
-  const { data } = await axiosInstance.get("/mg_motors_au_function/admin/dealer-invitations");
-  return data.dealers;
- },
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/dealer-invitations");
+    return data.dealers;
+  },
 
+  // NEW — chronological Happy/Unhappy activity history for one lead,
+  // pulled from integration_logs, keyed by the lead's crm_record_id.
+    async getLeadTimeline(crmRecordId) {
+    const { data } = await axiosInstance.get(
+      `/mg_motors_au_function/admin/leads/${crmRecordId}/timeline`
+    );
+    return data.timeline;
+  },
 };

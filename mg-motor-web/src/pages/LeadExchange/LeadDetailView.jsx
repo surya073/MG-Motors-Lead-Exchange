@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Badge from "../../ui/Badge/Badge";
+import { adminDashboardService } from "../../services/api/adminDashboardService";
 import {
   ChevronLeftIcon,
   PhoneIcon,
@@ -222,6 +223,51 @@ const UNHAPPY_PATHS = [
 /* ----------------------------------------------------------------
    Helpers
 ------------------------------------------------------------------ */
+
+
+function scenarioFromLog(entry) {
+  const name = (entry.happy_unhappy_path_name || "").trim();
+  const isHappy = /^happy/i.test(name);
+  const isUnhappy = /^unhappy/i.test(name);
+  return {
+    tone: isHappy ? "happy" : isUnhappy ? "unhappy" : "neutral",
+    label: entry.happy_unhappy_path_message || name || entry.operation || "Activity",
+  };
+}
+
+function ActivityTimeline({ timeline, loading }) {
+  if (loading) {
+    return <li className="lead-detail__timeline-empty">Loading activity…</li>;
+  }
+  if (!timeline || timeline.length === 0) {
+    return <li className="lead-detail__timeline-empty">No activity recorded yet.</li>;
+  }
+  return timeline.map((entry, idx) => {
+    const scenario = scenarioFromLog(entry);
+    return (
+      <li
+        className={`lead-detail__timeline-item lead-detail__timeline-item--${scenario.tone}`}
+        key={entry.ROWID || idx}
+      >
+        <span className={`lead-detail__timeline-dot lead-detail__timeline-dot--${scenario.tone}`}>
+          {scenario.tone === "happy" ? (
+            <CheckCircleIcon />
+          ) : scenario.tone === "unhappy" ? (
+            <AlertCircleIcon />
+          ) : (
+            <DotsCircleIcon />
+          )}
+        </span>
+        <div>
+          <p className="lead-detail__timeline-title">{scenario.label}</p>
+          <p className="lead-detail__timeline-time">{entry.created_at || "—"}</p>
+        </div>
+      </li>
+    );
+  });
+}
+
+
 function normalize(value) {
   return (value ?? "").toString().trim().toLowerCase();
 }
@@ -463,6 +509,21 @@ function IntegrationPathCard({ path }) {
 ------------------------------------------------------------------ */
 export default function LeadDetailView({ lead, onBack }) {
   const [copied, setCopied] = useState(null);
+   const [timeline, setTimeline] = useState([]);
+  const [timelineLoading, setTimelineLoading] = useState(true);
+    useEffect(() => {
+    if (!lead.crm_record_id) {
+      setTimelineLoading(false);
+      return;
+    }
+    setTimelineLoading(true);
+    adminDashboardService
+      .getLeadTimeline(lead.crm_record_id)
+      .then((rows) => setTimeline(rows || []))
+      .catch(() => setTimeline([]))
+      .finally(() => setTimelineLoading(false));
+  }, [lead.crm_record_id]);
+
 
   const val = (key) => {
     const value = lead[key];
@@ -683,37 +744,7 @@ export default function LeadDetailView({ lead, onBack }) {
           </h3>
 
           <ul className="lead-detail__timeline">
-            {assignedAt !== "—" && (
-              <li className="lead-detail__timeline-item">
-                <span className="lead-detail__timeline-dot">
-                  <UserIcon size={13} />
-                </span>
-
-                <div>
-                  <p className="lead-detail__timeline-title">Lead Assigned</p>
-
-                  <p className="lead-detail__timeline-time">{assignedAt}</p>
-                </div>
-              </li>
-            )}
-
-            {lastUpdatedAt !== "—" && (
-              <li className="lead-detail__timeline-item">
-                <span className="lead-detail__timeline-dot">
-                  <PencilIcon size={13} />
-                </span>
-
-                <div>
-                  <p className="lead-detail__timeline-title">Last Updated</p>
-
-                  <p className="lead-detail__timeline-time">{lastUpdatedAt}</p>
-                </div>
-              </li>
-            )}
-
-            {assignedAt === "—" && lastUpdatedAt === "—" && (
-              <li className="lead-detail__timeline-empty">No activity recorded yet.</li>
-            )}
+            <ActivityTimeline timeline={timeline} loading={timelineLoading} />
           </ul>
         </section>
       </div>

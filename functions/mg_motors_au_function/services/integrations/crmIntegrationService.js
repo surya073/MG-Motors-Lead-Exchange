@@ -333,8 +333,9 @@ function classifyLogScenario({ direction, operation, status, error_message }, { 
 }
 
 async function writeLog(catalystApp, entry, classificationHint) {
+  const scenario = classifyLogScenario(entry, classificationHint);
+
   try {
-    const scenario = classifyLogScenario(entry, classificationHint);
     await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).insertRow({
       ...entry,
       happy_unhappy_path_name: scenario.name,
@@ -342,6 +343,32 @@ async function writeLog(catalystApp, entry, classificationHint) {
     });
   } catch (err) {
     logger.error('crmIntegrationService', 'Failed to write integration log', err);
+  }
+
+  // Mirror the same classification onto the lead row itself, so
+  // LeadDetailView's hero badge can read a stored value instead of
+  // re-guessing the scenario from lead_status/sync_status. Only
+  // attempted when this log entry is actually tied to a known Zoho
+  // lead (zoho_lead_id) — TEST_CONNECTION and early validation
+  // failures (bad webhook payload, no lead mapping yet) have no
+  // zoho_lead_id and are skipped here; they're still fully visible in
+  // the dealer's raw Activity Log via integration_logs, just not
+  // mirrored onto any specific lead.
+  if (entry.zoho_lead_id) {
+    try {
+      const leadRows = await catalystApp.zcql().executeZCQLQuery(
+        `SELECT ROWID FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(entry.zoho_lead_id)}' LIMIT 1`
+      );
+      if (leadRows.length > 0) {
+        await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+          ROWID: leadRows[0][LEADS_TABLE].ROWID,
+          happy_unhappy_path_name: scenario.name,
+          happy_unhappy_path_message: scenario.message,
+        });
+      }
+    } catch (err) {
+      logger.error('crmIntegrationService', `Failed to mirror scenario onto lead ${entry.zoho_lead_id}`, err);
+    }
   }
 }
 
@@ -694,6 +721,16 @@ async function testConnection(catalystApp, integration) {
   return result;
 }
 
+async function getLeadActivityTimeline(catalystApp, crmRecordId) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${INTEGRATION_LOGS_TABLE} WHERE zoho_lead_id = '${safeQuoteForZcql(crmRecordId)}' ORDER BY CREATEDTIME ASC`
+  );
+  return rows.map((r) => {
+    const log = r[INTEGRATION_LOGS_TABLE];
+    return { ...log, created_at: log.CREATEDTIME };
+  });
+}
+
 module.exports = {
   findDealerByCode,
   getIntegrationByDealerCode,
@@ -704,4 +741,5 @@ module.exports = {
   checkAndRecordWebhookEvent,
   markWebhookEventStatus,
   testConnection,
+  getLeadActivityTimeline
 };

@@ -379,4 +379,16 @@ router.get('/oem-crm/status-picklist', requireAdminRole, async (req, res) => {
   }
 });
 
+router.get('/leads/:crmRecordId/timeline', async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { crmRecordId } = req.params;
+  try {
+    const timeline = await crmIntegrationService.getLeadActivityTimeline(catalystApp, crmRecordId);
+    res.json({ timeline });
+  } catch (err) {
+    logger.error('leadRoutes', `GET timeline failed for ${crmRecordId}`, err);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
 module.exports = router;
