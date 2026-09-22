@@ -16,6 +16,16 @@ const INTEGRATION_LOGS_TABLE = 'integration_logs';
 const WEBHOOK_EVENTS_TABLE = 'webhook_events';
 const LEADS_TABLE = 'leads';
 
+const REJECTION_STATUS_VALUES = new Set([
+  'rejected',
+  'not qualified',
+  'lost',
+  'lost lead',
+  'junk lead',
+  'junk',
+  'spam',
+  'Junk Lead / Spam',
+]);
    
 
 /**
@@ -289,7 +299,7 @@ const INVALID_DATA_ERROR_CODES = new Set(['FIELD_MAPPING_INVALID', 'STATUS_MAPPI
  * that shortcut would misclassify them, so those exact codes are
  * checked first.
  */
-function classifyLogScenario({ direction, operation, status, error_message }, { isStatusSync } = {}) {
+function classifyLogScenario({ direction, operation, status, error_message }, { isStatusSync, leadStatusValue } = {}) {
   if (operation === 'TEST_CONNECTION') {
     return status === 'SUCCESS'
       ? { name: 'Connection Test', message: 'Connection test succeeded.' }
@@ -298,6 +308,13 @@ function classifyLogScenario({ direction, operation, status, error_message }, { 
 
   if (status === 'SUCCESS') {
     if (direction === 'EXTERNAL_CRM_TO_ZOHO') {
+      // A status sync that resolves to a rejection-type status (Junk
+      // Lead, Spam, Rejected, etc.) is genuinely an Unhappy 9 outcome
+      // even though the sync itself succeeded without error — the
+      // dealer is closing the enquiry out as invalid, not progressing it.
+      if (isStatusSync && REJECTION_STATUS_VALUES.has((leadStatusValue || '').trim().toLowerCase())) {
+        return { name: 'Unhappy 9', message: 'Dealer rejects enquiry' };
+      }
       return isStatusSync
         ? { name: 'Happy 2', message: 'Dealer progresses enquiry (status sync)' }
         : { name: 'Happy 5', message: 'Data synchronisation (dealer → OEM)' };
@@ -641,7 +658,7 @@ async function processResolvedInboundLead(
       status: 'SUCCESS',
       request_reference: requestReference,
       field_changes: fieldChanges.length > 0 ? JSON.stringify(fieldChanges) : null,
-    }, { isStatusSync });
+    }, { isStatusSync, leadStatusValue: internalUpdate.lead_status  });
 
     return { ok: true, zohoLeadId: mapping.zoho_lead_id };
   } catch (err) {
