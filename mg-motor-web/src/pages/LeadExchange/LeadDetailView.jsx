@@ -184,9 +184,6 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Dealer rejects enquiry",
     trigger: "Dealer CRM",
-    // Any of these lead/sync statuses means the dealer closed the enquiry
-    // out as rejected — including the "Lost" / "Lost Lead" wording some
-    // dealer CRMs send back instead of "Rejected" / "Not Qualified".
     match: ["Rejected", "Not Qualified", "Lost", "Lost Lead"],
     description: "The dealer marked the enquiry as spam or invalid.",
     outcome: "Rejection reason captured and mapped to an OEM status.",
@@ -224,15 +221,76 @@ const UNHAPPY_PATHS = [
    Helpers
 ------------------------------------------------------------------ */
 
+function formatFieldName(key) {
+  return key
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function formatBoolean(value) {
+  if (value === true || value === "true") return "Yes";
+  if (value === false || value === "false") return "No";
+  return "—";
+}
+
+function parseFieldChanges(entry) {
+  if (!entry.field_changes) return [];
+  try {
+    const parsed = JSON.parse(entry.field_changes);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function timelineDetailText(entry) {
+  const changes = parseFieldChanges(entry);
+  if (changes.length === 0) return null;
+
+  const statusChange = changes.find((c) => c.field === "lead_status");
+  const otherChanges = changes.filter((c) => c.field !== "lead_status");
+
+  if (statusChange) {
+    return `Status changed: ${statusChange.from || "—"} → ${statusChange.to || "—"}`;
+  }
+
+  if (otherChanges.length > 0) {
+    return otherChanges
+      .map((c) => `${formatFieldName(c.field)}: "${c.from || "—"}" → "${c.to || "—"}"`)
+      .join(", ");
+  }
+
+  return null;
+}
 
 function scenarioFromLog(entry) {
   const name = (entry.happy_unhappy_path_name || "").trim();
   const isHappy = /^happy/i.test(name);
   const isUnhappy = /^unhappy/i.test(name);
   return {
+    id: name || null,
     tone: isHappy ? "happy" : isUnhappy ? "unhappy" : "neutral",
     label: entry.happy_unhappy_path_message || name || entry.operation || "Activity",
   };
+}
+
+// Every distinct Happy/Unhappy scenario this lead has passed through,
+// in the order it first happened — used to show the lead's full
+// "journey" (e.g. Happy 1 → Happy 2 → Happy 5) rather than only its
+// current/latest state.
+function getDistinctPaths(timeline) {
+  const seen = new Map();
+  timeline.forEach((entry) => {
+    const name = (entry.happy_unhappy_path_name || "").trim();
+    if (!name || seen.has(name)) return;
+    seen.set(name, {
+      id: name,
+      type: /^happy/i.test(name) ? "happy" : "unhappy",
+      message: entry.happy_unhappy_path_message || name,
+    });
+  });
+  return Array.from(seen.values());
 }
 
 function ActivityTimeline({ timeline, loading }) {
@@ -244,6 +302,7 @@ function ActivityTimeline({ timeline, loading }) {
   }
   return timeline.map((entry, idx) => {
     const scenario = scenarioFromLog(entry);
+    const detailText = timelineDetailText(entry);
     return (
       <li
         className={`lead-detail__timeline-item lead-detail__timeline-item--${scenario.tone}`}
@@ -259,7 +318,17 @@ function ActivityTimeline({ timeline, loading }) {
           )}
         </span>
         <div>
-          <p className="lead-detail__timeline-title">{scenario.label}</p>
+          <div className="lead-detail__timeline-title-row">
+            <p className="lead-detail__timeline-title">{scenario.label}</p>
+            {scenario.id && (
+              <span
+                className={`lead-detail__timeline-badge lead-detail__timeline-badge--${scenario.tone}`}
+              >
+                {scenario.id}
+              </span>
+            )}
+          </div>
+          {detailText && <p className="lead-detail__timeline-detail">{detailText}</p>}
           <p className="lead-detail__timeline-time">{entry.created_at || "—"}</p>
         </div>
       </li>
@@ -267,13 +336,10 @@ function ActivityTimeline({ timeline, loading }) {
   });
 }
 
-
 function normalize(value) {
   return (value ?? "").toString().trim().toLowerCase();
 }
 
-// Finds the first scenario whose `match` list contains this exact
-// (normalized) status string, or null if nothing matches / status is empty.
 function findScenarioForStatus(status, scenarios) {
   const normalizedTarget = normalize(status);
   if (!normalizedTarget) return null;
@@ -285,13 +351,6 @@ function findScenarioForStatus(status, scenarios) {
   );
 }
 
-// lead_status is the real business outcome the dealer/OEM agreed on
-// (Lost, Rejected, Contacted, etc.) and must win over sync_status, which
-// only reflects whether the last sync attempt to/from Catalyst succeeded.
-// A lot of historical rows carry sync_status = "Removed" as a leftover
-// default even though lead_status clearly resolves to something else
-// (e.g. "Lost") — checking lead_status first stops those rows from being
-// mis-classified as Unhappy 3 before Unhappy 9 ever gets a look.
 function matchPathScenario(lead) {
   const all = [...UNHAPPY_PATHS, ...HAPPY_PATHS];
 
@@ -307,9 +366,6 @@ function classifyPath(lead) {
     return match;
   }
 
-  // Nothing in lead_status or sync_status matched a known scenario —
-  // only now fall back to treating sync_status = "Removed" as an
-  // inferred Unhappy 3 (dealer unavailable).
   if (normalize(lead.sync_status) === "removed") {
     const base = UNHAPPY_PATHS.find((scenario) => scenario.id === "Unhappy 3");
 
@@ -346,17 +402,7 @@ function initials(name) {
 ------------------------------------------------------------------ */
 function CopyIcon(props) {
   return (
-    <svg
-      width={14}
-      height={14}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
@@ -365,17 +411,7 @@ function CopyIcon(props) {
 
 function CheckCircleIcon(props) {
   return (
-    <svg
-      width={13}
-      height={13}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
+    <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
       <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
@@ -384,17 +420,7 @@ function CheckCircleIcon(props) {
 
 function AlertCircleIcon(props) {
   return (
-    <svg
-      width={13}
-      height={13}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
+    <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <circle cx="12" cy="12" r="10" />
       <line x1="12" y1="8" x2="12" y2="12" />
       <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -404,21 +430,20 @@ function AlertCircleIcon(props) {
 
 function DotsCircleIcon(props) {
   return (
-    <svg
-      width={13}
-      height={13}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
+    <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
       <circle cx="12" cy="12" r="10" />
       <circle cx="8" cy="12" r="0.6" fill="currentColor" />
       <circle cx="12" cy="12" r="0.6" fill="currentColor" />
       <circle cx="16" cy="12" r="0.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+function CloseIcon(props) {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
@@ -438,21 +463,14 @@ function StatusPill({ status }) {
 }
 
 /* ----------------------------------------------------------------
-   Path Badge
+   Path Badge (current path — used in hero and Integration Path card)
 ------------------------------------------------------------------ */
 function PathBadge({ path }) {
   const Icon =
-    path.type === "happy"
-      ? CheckCircleIcon
-      : path.type === "unhappy"
-        ? AlertCircleIcon
-        : DotsCircleIcon;
+    path.type === "happy" ? CheckCircleIcon : path.type === "unhappy" ? AlertCircleIcon : DotsCircleIcon;
 
   return (
-    <span
-      className={`lead-detail__path-badge lead-detail__path-badge--${path.type}`}
-      title={path.title}
-    >
+    <span className={`lead-detail__path-badge lead-detail__path-badge--${path.type}`} title={path.title}>
       <Icon />
       {path.id}
     </span>
@@ -460,19 +478,65 @@ function PathBadge({ path }) {
 }
 
 /* ----------------------------------------------------------------
+   Path Chips — every distinct scenario this lead's journey has
+   passed through, shown together in the hero and Integration Path
+   card. The current/latest scenario is visually emphasized.
+------------------------------------------------------------------ */
+function PathChips({ paths, currentId }) {
+  if (!paths || paths.length === 0) return null;
+
+  return (
+    <div className="lead-detail__path-chips">
+      {paths.map((p) => {
+        const isCurrent = p.id === currentId;
+        const Icon = p.type === "happy" ? CheckCircleIcon : AlertCircleIcon;
+        return (
+          <span
+            key={p.id}
+            className={`lead-detail__path-chip lead-detail__path-chip--${p.type} ${
+              isCurrent ? "lead-detail__path-chip--current" : ""
+            }`}
+            title={p.message}
+          >
+            <Icon />
+            {p.id}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------
    Integration Path Card
 ------------------------------------------------------------------ */
-function IntegrationPathCard({ path }) {
+function IntegrationPathCard({ path, journeyPaths }) {
   return (
-    <section
-      className={`lead-detail__group lead-detail__path-card lead-detail__path-card--${path.type}`}
-    >
+    <section className={`lead-detail__group lead-detail__path-card lead-detail__path-card--${path.type}`}>
       <h3>
         <span className="lead-detail__group-icon">
           <ClipboardIcon size={15} />
         </span>
         Integration Path
       </h3>
+
+      {journeyPaths.length > 1 && (
+        <div className="lead-detail__journey">
+          <span className="lead-detail__journey-label">This lead's journey:</span>
+          <div className="lead-detail__journey-chips">
+            {journeyPaths.map((p, idx) => (
+              <span key={p.id} className="lead-detail__journey-step">
+                <span className={`lead-detail__journey-chip lead-detail__journey-chip--${p.type}`} title={p.message}>
+                  {p.id}
+                </span>
+                {idx < journeyPaths.length - 1 && (
+                  <ArrowRightIcon size={12} className="lead-detail__journey-arrow" />
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="lead-detail__path-card-body">
         <span className={`lead-detail__path-id lead-detail__path-id--${path.type}`}>{path.id}</span>
@@ -494,8 +558,7 @@ function IntegrationPathCard({ path }) {
 
           {path.assumed && (
             <p className="lead-detail__path-card-note">
-              Inferred from sync_status = "Removed" — confirm this maps to Unhappy 3 for your real
-              data.
+              Inferred from sync_status = "Removed" — confirm this maps to Unhappy 3 for your real data.
             </p>
           )}
         </div>
@@ -504,14 +567,90 @@ function IntegrationPathCard({ path }) {
   );
 }
 
+function MoreDetailsCard({ val, lead }) {
+  const items = [
+    { label: "CRM Record ID", value: val("crm_record_id"), icon: ClipboardIcon },
+    { label: "Enquiry ID", value: val("enquiry_id"), icon: ClipboardIcon },
+    { label: "Lead Source", value: val("lead_source"), icon: MegaphoneIcon },
+    { label: "Postcode", value: val("postcode"), icon: BuildingIcon },
+    { label: "Assigned Date", value: val("assigned_date"), icon: ClockIcon },
+    { label: "Last Status Update", value: val("last_status_update"), icon: ClockIcon },
+    { label: "Next Follow-up", value: val("next_followup_date"), icon: ClockIcon },
+    { label: "Privacy Policy Accepted", value: formatBoolean(lead.accept_privacy_policy), icon: UserIcon },
+    { label: "Marketing Opt-in", value: formatBoolean(lead.receive_marketing_updates), icon: MegaphoneIcon },
+  ];
+
+  return (
+    <section className="lead-detail__group lead-detail__more-details-card">
+      <h3>
+        <span className="lead-detail__group-icon">
+          <ClipboardIcon size={15} />
+        </span>
+        More Details
+      </h3>
+      <div className="lead-detail__more-details-grid">
+        {items.map(({ label, value, icon: Icon }) => (
+          <div className="lead-detail__more-details-item" key={label}>
+            <span className="lead-detail__more-details-icon">
+              <Icon size={15} />
+            </span>
+            <div>
+              <span className="lead-detail__more-details-label">{label}</span>
+              <span className="lead-detail__more-details-value">{value}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* ----------------------------------------------------------------
+   Full Timeline Offcanvas
+------------------------------------------------------------------ */
+function TimelineOffcanvas({ open, onClose, timeline, loading }) {
+  return (
+    <>
+      <div
+        className={`lead-detail__offcanvas-backdrop ${open ? "lead-detail__offcanvas-backdrop--open" : ""}`}
+        onClick={onClose}
+        aria-hidden={!open}
+      />
+      <aside
+        className={`lead-detail__offcanvas ${open ? "lead-detail__offcanvas--open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Full activity timeline"
+      >
+        <div className="lead-detail__offcanvas-header">
+          <h3>
+            <ClockIcon size={16} />
+            Full Activity Timeline
+          </h3>
+          <button type="button" className="lead-detail__offcanvas-close" onClick={onClose} aria-label="Close">
+            <CloseIcon />
+          </button>
+        </div>
+        <div className="lead-detail__offcanvas-body">
+          <ul className="lead-detail__timeline">
+            <ActivityTimeline timeline={timeline} loading={loading} />
+          </ul>
+        </div>
+      </aside>
+    </>
+  );
+}
+
 /* ----------------------------------------------------------------
    Lead Detail
 ------------------------------------------------------------------ */
 export default function LeadDetailView({ lead, onBack }) {
   const [copied, setCopied] = useState(null);
-   const [timeline, setTimeline] = useState([]);
+  const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
-    useEffect(() => {
+  const [timelineOffcanvasOpen, setTimelineOffcanvasOpen] = useState(false);
+
+  useEffect(() => {
     if (!lead.crm_record_id) {
       setTimelineLoading(false);
       return;
@@ -524,10 +663,20 @@ export default function LeadDetailView({ lead, onBack }) {
       .finally(() => setTimelineLoading(false));
   }, [lead.crm_record_id]);
 
+  // Lock background scroll while the offcanvas is open.
+  useEffect(() => {
+    if (timelineOffcanvasOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [timelineOffcanvasOpen]);
 
   const val = (key) => {
     const value = lead[key];
-
     return value && String(value).trim() ? value : "—";
   };
 
@@ -535,74 +684,64 @@ export default function LeadDetailView({ lead, onBack }) {
 
   const mobile = val("mobile_number");
   const email = val("email_address");
-  const assignedAt = val("assigned_date");
-  const lastUpdatedAt = val("last_status_update");
 
-  const path = classifyPath(lead);
+  const path = lead.happy_unhappy_path_name
+    ? {
+        id: lead.happy_unhappy_path_name,
+        type: /^happy/i.test(lead.happy_unhappy_path_name) ? "happy" : "unhappy",
+        title: lead.happy_unhappy_path_message || lead.happy_unhappy_path_name,
+        trigger: "—",
+        description: lead.happy_unhappy_path_message || "",
+      }
+    : classifyPath(lead);
+
+  const journeyPaths = getDistinctPaths(timeline);
 
   const handleCopy = (key, value) => {
-    if (!value || value === "—") {
-      return;
-    }
-
+    if (!value || value === "—") return;
     navigator.clipboard?.writeText(value);
-
     setCopied(key);
-
-    setTimeout(() => {
-      setCopied(null);
-    }, 1500);
+    setTimeout(() => setCopied(null), 1500);
   };
 
   return (
     <div className="lead-detail">
-      {/* ---------- Back ---------- */}
       <button type="button" className="lead-detail__back" onClick={onBack}>
         <ChevronLeftIcon size={16} />
         Back to Leads
       </button>
 
-      {/* ==========================================================
-          HERO
-      ========================================================== */}
+      {/* ========================================================== HERO ========================================================== */}
       <div className="lead-detail__hero">
         <div className="lead-detail__hero-decor" aria-hidden="true">
           <img src={mgLogo} alt="" className="lead-detail__hero-logo" />
         </div>
 
-        {/* Customer avatar */}
         <span className="lead-detail__avatar">{initials(lead.customer_name)}</span>
 
-        {/* Customer information */}
         <div className="lead-detail__hero-main">
           <div className="lead-detail__hero-top">
             <h1>{lead.customer_name || "Unnamed Customer"}</h1>
-
             {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
-
-            <PathBadge path={path} />
           </div>
+
+          {/* All distinct scenarios this lead has been through, not just the current one */}
+          <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />
 
           <div className="lead-detail__hero-meta">
             <span className="lead-detail__meta-item">
               <BuildingIcon size={15} />
               {val("dealer_name")}
             </span>
-
             <span className="lead-detail__meta-divider" />
-
             <span className="lead-detail__meta-item">
               <ArrowRightIcon size={14} />
-
               <span className="lead-detail__meta-label">Dealer Code</span>
-
               {val("dealer_code")}
             </span>
-
             {lead.lead_source && (
               <>
                 <span className="lead-detail__meta-divider" />
-
                 <span className="lead-detail__source-badge">
                   <MegaphoneIcon size={13} />
                   {lead.lead_source}
@@ -612,57 +751,36 @@ export default function LeadDetailView({ lead, onBack }) {
           </div>
         </div>
 
-        {/* ========================================================
-            VEHICLE HIGHLIGHT
-        ======================================================== */}
         <div className="lead-detail__vehicle-highlight">
           <span className="lead-detail__vehicle-icon">
             <CarIcon size={21} />
           </span>
-
           <div className="lead-detail__vehicle-content">
             <span className="lead-detail__vehicle-label">Vehicle</span>
-
             <span className="lead-detail__vehicle-model">{val("vehicle_model")}</span>
           </div>
         </div>
       </div>
 
-      {/* ==========================================================
-          CONTACT INFO
-      ========================================================== */}
+      {/* ========================================================== CONTACT INFO ========================================================== */}
       <div className="lead-detail__infobar">
-        {/* Mobile */}
         <div className="lead-detail__infobar-item">
           <span className="lead-detail__infobar-icon">
             <PhoneIcon size={18} />
           </span>
-
           <div className="lead-detail__infobar-body">
             <span className="lead-detail__infobar-label">Mobile</span>
-
             <span className="lead-detail__infobar-value">
               {mobile}
-
               {mobile !== "—" && (
-                <button
-                  type="button"
-                  className="lead-detail__copy-btn"
-                  onClick={() => handleCopy("mobile", mobile)}
-                  aria-label="Copy mobile number"
-                >
+                <button type="button" className="lead-detail__copy-btn" onClick={() => handleCopy("mobile", mobile)} aria-label="Copy mobile number">
                   <CopyIcon />
                 </button>
               )}
-
               {copied === "mobile" && <span className="lead-detail__copied-tag">Copied</span>}
             </span>
-
             {mobile !== "—" && (
-              <a
-                href={`tel:${mobile}`}
-                className="lead-detail__action-btn lead-detail__action-btn--call"
-              >
+              <a href={`tel:${mobile}`} className="lead-detail__action-btn lead-detail__action-btn--call">
                 <PhoneIcon size={13} />
                 Call Now
               </a>
@@ -672,37 +790,23 @@ export default function LeadDetailView({ lead, onBack }) {
 
         <span className="lead-detail__infobar-divider" />
 
-        {/* Email */}
         <div className="lead-detail__infobar-item">
           <span className="lead-detail__infobar-icon">
             <MailIcon size={18} />
           </span>
-
           <div className="lead-detail__infobar-body">
             <span className="lead-detail__infobar-label">Email</span>
-
             <span className="lead-detail__infobar-value">
               {email}
-
               {email !== "—" && (
-                <button
-                  type="button"
-                  className="lead-detail__copy-btn"
-                  onClick={() => handleCopy("email", email)}
-                  aria-label="Copy email address"
-                >
+                <button type="button" className="lead-detail__copy-btn" onClick={() => handleCopy("email", email)} aria-label="Copy email address">
                   <CopyIcon />
                 </button>
               )}
-
               {copied === "email" && <span className="lead-detail__copied-tag">Copied</span>}
             </span>
-
             {email !== "—" && (
-              <a
-                href={`mailto:${email}`}
-                className="lead-detail__action-btn lead-detail__action-btn--mail"
-              >
+              <a href={`mailto:${email}`} className="lead-detail__action-btn lead-detail__action-btn--mail">
                 <MailIcon size={13} />
                 Send Mail
               </a>
@@ -711,30 +815,25 @@ export default function LeadDetailView({ lead, onBack }) {
         </div>
       </div>
 
-      {/* ==========================================================
-          INTEGRATION PATH
-      ========================================================== */}
-      <IntegrationPathCard path={path} />
+      {/* ========================================================== INTEGRATION PATH ========================================================== */}
+      <IntegrationPathCard path={path} journeyPaths={journeyPaths} />
 
-      {/* ==========================================================
-          REMARKS + TIMELINE
-      ========================================================== */}
+      <MoreDetailsCard val={val} lead={lead} />
+
+      {/* ========================================================== CUSTOMER MESSAGE + TIMELINE ========================================================== */}
       <div className="lead-detail__footer-groups">
-        {/* Remarks */}
         <section className="lead-detail__group lead-detail__remarks-card">
           <h3>
             <span className="lead-detail__group-icon">
               <NoteIcon size={15} />
             </span>
-            Remarks
+            Customer Message
           </h3>
-
           <p className="lead-detail__remarks-text">
-            {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
+            {val("customer_message") !== "—" ? val("customer_message") : "No message from customer yet."}
           </p>
         </section>
 
-        {/* Timeline */}
         <section className="lead-detail__group lead-detail__timeline-card">
           <h3>
             <span className="lead-detail__group-icon">
@@ -743,11 +842,43 @@ export default function LeadDetailView({ lead, onBack }) {
             Activity Timeline
           </h3>
 
-          <ul className="lead-detail__timeline">
-            <ActivityTimeline timeline={timeline} loading={timelineLoading} />
-          </ul>
+          <div className="lead-detail__timeline-scroll">
+            <ul className="lead-detail__timeline">
+              <ActivityTimeline timeline={timeline.slice(-6)} loading={timelineLoading} />
+            </ul>
+          </div>
+
+          {timeline.length > 0 && (
+            <button
+              type="button"
+              className="lead-detail__timeline-viewfull-btn"
+              onClick={() => setTimelineOffcanvasOpen(true)}
+            >
+              View Full Timeline ({timeline.length})
+            </button>
+          )}
         </section>
       </div>
+
+      {/* ========================================================== DEALER REMARKS ========================================================== */}
+      <section className="lead-detail__group lead-detail__remarks-card">
+        <h3>
+          <span className="lead-detail__group-icon">
+            <PencilIcon size={15} />
+          </span>
+          Dealer Remarks
+        </h3>
+        <p className="lead-detail__remarks-text">
+          {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
+        </p>
+      </section>
+
+      <TimelineOffcanvas
+        open={timelineOffcanvasOpen}
+        onClose={() => setTimelineOffcanvasOpen(false)}
+        timeline={timeline}
+        loading={timelineLoading}
+      />
     </div>
   );
 }

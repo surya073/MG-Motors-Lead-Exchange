@@ -90,13 +90,7 @@ async function getStatusMappings(catalystApp, integrationId) {
   return rows.map((r) => r[STATUS_MAPPINGS_TABLE]);
 }
 
-async function writeLog(catalystApp, entry) {
-  try {
-    await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).insertRow(entry);
-  } catch (err) {
-    logger.error('crmIntegrationService', 'Failed to write integration log', err);
-  }
-}
+
 
 /**
  * ============================================================
@@ -515,7 +509,6 @@ async function processResolvedInboundLead(
   fieldMappings, statusMappings, requestReference, zohoCrmService,
   affectedFields = null
 ) {
-  // Dealer isolation: scoped by BOTH dealer_code and external_crm_lead_id.
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE dealer_code = '${safeQuoteForZcql(integration.dealer_code)}' AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
   );
@@ -538,11 +531,16 @@ async function processResolvedInboundLead(
 
   const mapping = mappingRows[0][LEAD_INTEGRATIONS_TABLE];
 
-  // Loop prevention.
   const incomingHash = crypto.createHash('sha256').update(JSON.stringify(externalRecord)).digest('hex');
   if (mapping.last_sync_direction === 'ZOHO_TO_EXTERNAL_CRM' && mapping.last_sync_source_hash === incomingHash) {
     return { skipped: true, reason: 'LOOP_PREVENTED' };
   }
+
+  // Snapshot BEFORE update — the only chance to capture "from" values.
+  const existingLeadRowsBefore = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
+  );
+  const existingLeadRow = existingLeadRowsBefore.length > 0 ? existingLeadRowsBefore[0][LEADS_TABLE] : null;
 
   const internalUpdate = leadMappingService.mapExternalLeadToZoho(externalRecord, fieldMappings);
 
@@ -550,14 +548,6 @@ async function processResolvedInboundLead(
   const statusTargetField = statusFieldMapping ? statusFieldMapping.target_field : 'status';
   const incomingStatusValue = externalRecord[statusTargetField];
 
-  // When affectedFields is available (Zoho-as-dealer-CRM path, where
-  // externalRecord is always a FULL record fetch rather than a delta),
-  // use it to tell a genuine status change apart from any other field
-  // edit — otherwise Lead_Status is always present on the full record
-  // and every edit gets misclassified as a status sync (Happy 2).
-  // On the generic REST webhook path, affectedFields is null and the
-  // old behavior (payload already only carries what changed) still
-  // applies.
   const isStatusSync = affectedFields
     ? affectedFields.includes(statusTargetField)
     : Boolean(incomingStatusValue);
@@ -588,10 +578,6 @@ async function processResolvedInboundLead(
       }
     }
   } else {
-    // Full-record fetch still carries the (unchanged) status value in
-    // internalUpdate via mapExternalLeadToZoho — drop it so a
-    // non-status edit doesn't also push an untranslated raw dealer
-    // status string into Zoho's lead_status.
     delete internalUpdate.lead_status;
   }
 
@@ -611,6 +597,15 @@ async function processResolvedInboundLead(
     err.code = 'FIELD_MAPPING_INVALID';
     throw err;
   }
+
+  // Diff old vs. new for the timeline's detail line.
+  const fieldChanges = Object.keys(internalUpdate)
+    .map((key) => ({
+      field: key,
+      from: existingLeadRow ? (existingLeadRow[key] ?? '') : '',
+      to: internalUpdate[key] ?? '',
+    }))
+    .filter((change) => String(change.from) !== String(change.to));
 
   const zohoApiFields = toZohoApiFields(internalUpdate);
 
@@ -645,6 +640,7 @@ async function processResolvedInboundLead(
       external_lead_id: externalLeadId,
       status: 'SUCCESS',
       request_reference: requestReference,
+      field_changes: fieldChanges.length > 0 ? JSON.stringify(fieldChanges) : null,
     }, { isStatusSync });
 
     return { ok: true, zohoLeadId: mapping.zoho_lead_id };
@@ -666,28 +662,40 @@ async function processResolvedInboundLead(
   }
 }
 
+
 async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eventId) {
   const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
 
-  const dupeQuery = eventId
-    ? `SELECT ROWID FROM ${WEBHOOK_EVENTS_TABLE} WHERE integration_id = ${integration.ROWID} AND event_id = '${safeQuoteForZcql(eventId)}'`
-    : `SELECT ROWID FROM ${WEBHOOK_EVENTS_TABLE} WHERE integration_id = ${integration.ROWID} AND payload_hash = '${payloadHash}'`;
+  // Single combined key so a plain "Is Unique" column-level constraint
+  // (rather than a composite index, which the Catalyst console may not
+  // expose) is enough to make the database reject a second concurrent
+  // insert for the same event. Falls back to payload_hash when the
+  // dealer CRM's webhook doesn't send an event_id.
+  const dedupeKey = `${integration.ROWID}:${eventId || payloadHash}`;
 
-  const existing = await catalystApp.zcql().executeZCQLQuery(dupeQuery);
-  if (existing.length > 0) {
-    return { isDuplicate: true };
+  try {
+    const inserted = await catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE).insertRow({
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      event_id: eventId || null,
+      payload_hash: payloadHash,
+      dedupe_key: dedupeKey, // NEW — the column with the unique constraint
+      processing_status: 'RECEIVED',
+      received_at: toCatalystDateTime(),
+    });
+    return { isDuplicate: false, eventRowId: inserted.ROWID };
+  } catch (err) {
+    const message = (err.message || '').toLowerCase();
+    const isDuplicateConstraintError =
+      message.includes('unique') || message.includes('duplicate') || err.code === 'DUPLICATE_DATA';
+
+    if (isDuplicateConstraintError) {
+      logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
+      return { isDuplicate: true };
+    }
+
+    throw err;
   }
-
-  const inserted = await catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE).insertRow({
-    integration_id: integration.ROWID,
-    dealer_code: integration.dealer_code,
-    event_id: eventId || null,
-    payload_hash: payloadHash,
-    processing_status: 'RECEIVED',
-    received_at: toCatalystDateTime(),
-  });
-
-  return { isDuplicate: false, eventRowId: inserted.ROWID };
 }
 
 async function markWebhookEventStatus(catalystApp, eventRowId, status, errorMessage) {
