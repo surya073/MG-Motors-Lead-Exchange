@@ -82,8 +82,15 @@ async function assertSafeUrl(rawUrl) {
   try {
     addresses = await dns.lookup(hostname, { all: true });
   } catch {
-    const err = new Error('Could not resolve host');
-    err.code = 'INVALID_CRM_CONFIGURATION';
+    // A host that does not resolve is a connectivity failure, not a
+    // configuration error: the URL is well formed and passed every check
+    // above, and a dealer's DNS or domain going down is a real outage.
+    // Per the flow it must be Unhappy 1 (retried, later Happy 4), not
+    // Unhappy 5 (held as a mapping exception, never retried). The
+    // malformed / non-HTTPS / disallowed / private-address cases around
+    // this remain INVALID_CRM_CONFIGURATION.
+    const err = new Error(`Could not resolve dealer CRM host ${hostname}`);
+    err.code = 'DEALER_HOST_UNREACHABLE';
     throw err;
   }
 

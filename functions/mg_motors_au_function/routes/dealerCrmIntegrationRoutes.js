@@ -187,7 +187,9 @@ router.post('/:dealerCode/integration/test', requireAdminRole, async (req, res) 
     res.json(result);
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `Test connection failed for ${dealerCode}`, err);
-    const status = err.code === 'INVALID_CRM_CONFIGURATION' ? 400 : 500;
+    let status = 500;
+    if (err.code === 'INVALID_CRM_CONFIGURATION') status = 400;
+    if (err.code === 'DEALER_HOST_UNREACHABLE') status = 502;
     res.status(status).json({ error: err.code || 'INTERNAL_ERROR' });
   }
 });
