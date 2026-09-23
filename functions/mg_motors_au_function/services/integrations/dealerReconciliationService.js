@@ -1,6 +1,7 @@
 'use strict';
 
 const logger = require('../../utils/logger');
+const { toCatalystDateTime } = require('../../utils/dateFormat');
 const crmIntegrationService = require('./crmIntegrationService');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
@@ -22,7 +23,7 @@ function isEnabled(value) {
  */
 async function runDealerReconciliation(catalystApp) {
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} LIMIT 0, ${MAX_RECORDS_PER_SWEEP}`
+    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} ORDER BY last_attempted_at ASC LIMIT 0, ${MAX_RECORDS_PER_SWEEP}`
   );
   const integrations = new Map();
   const results = {
@@ -62,11 +63,27 @@ async function runDealerReconciliation(catalystApp) {
         integration,
         mapping.external_crm_lead_id
       );
+      await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+        ROWID: mapping.ROWID,
+        last_attempted_at: toCatalystDateTime(),
+      });
       if (outcome?.held) results.held += 1;
       else if (outcome?.ok) results.changed += 1;
       else results.unchanged += 1;
     } catch (err) {
       results.failed += 1;
+      try {
+        await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+          ROWID: mapping.ROWID,
+          last_attempted_at: toCatalystDateTime(),
+        });
+      } catch (touchErr) {
+        logger.error(
+          'dealerReconciliationService',
+          `Could not rotate failed reconciliation mapping ROWID=${mapping.ROWID}`,
+          touchErr
+        );
+      }
       logger.error(
         'dealerReconciliationService',
         `Reconcile failed for lead_integrations ROWID=${mapping.ROWID}`,

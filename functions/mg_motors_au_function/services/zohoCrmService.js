@@ -133,6 +133,11 @@ async function fetchOemLeads() {
           fields: OEM_LEADS_FIELDS.join(','),
           page,
           per_page: CRM_PAGE_SIZE,
+          // Happy 3 is directional: keep the earliest enquiry and link the
+          // later exact repeat. Explicit ordering avoids API/default-ID order
+          // deciding which record is treated as the original.
+          sort_by: 'Created_Time',
+          sort_order: 'asc',
         },
       });
     } catch (err) {

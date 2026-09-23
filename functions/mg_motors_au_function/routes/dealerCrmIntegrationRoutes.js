@@ -66,7 +66,15 @@ router.post('/:dealerCode/register-webhook', requireAdminRole, async (req, res) 
     res.status(200).json({ ok: true, result });
   } catch (err) {
     logger.error('webhookRoutes', 'Manual watch registration failed', err);
-    res.status(500).json({ error: err.message });
+    const clientError = [
+      'WEBHOOK_AUTH_NOT_CONFIGURED',
+      'INVALID_CRM_CONFIGURATION',
+      'AUTHENTICATION_FAILED',
+    ].includes(err.code);
+    res.status(clientError ? 400 : 502).json({
+      error: err.code || 'WEBHOOK_REGISTRATION_FAILED',
+      message: err.message,
+    });
   }
 });
 

@@ -157,6 +157,20 @@ async function requestWithRetry(config, attempt = 1) {
   }
 }
 
+function toZohoUpsertUrl(url) {
+  const upsertUrl = new URL(url.toString());
+  upsertUrl.pathname = `${upsertUrl.pathname.replace(/\/$/, '')}/upsert`;
+  return upsertUrl;
+}
+
+function buildCreateRequestBody(isZohoCrm, payload, idempotencyField) {
+  if (!isZohoCrm) return payload;
+  return {
+    data: [payload],
+    ...(idempotencyField ? { duplicate_check_fields: [idempotencyField] } : {}),
+  };
+}
+
 async function createLead(
   catalystApp,
   integration,
@@ -173,16 +187,13 @@ async function createLead(
     // Its supported exactly-once mechanism is /upsert with a unique or
     // external field. `enquiry_id` is mandatory in our mapping and the
     // dealer target must be configured as unique during onboarding.
-    const upsertUrl = new URL(url.toString());
-    upsertUrl.pathname = `${upsertUrl.pathname.replace(/\/$/, '')}/upsert`;
-    url = upsertUrl;
+    url = toZohoUpsertUrl(url);
   }
-  const requestBody = isZohoCrm
-    ? {
-        data: [payload],
-        ...(useZohoUpsert ? { duplicate_check_fields: [idempotencyField] } : {}),
-      }
-    : payload;
+  const requestBody = buildCreateRequestBody(
+    isZohoCrm,
+    payload,
+    useZohoUpsert ? idempotencyField : null
+  );
 
   const response = await requestWithRetry({
     method: useZohoUpsert ? 'POST' : (integration.http_method || 'POST'),
@@ -309,4 +320,11 @@ async function testConnection(catalystApp, integration) {
   };
 }
 
-module.exports = { createLead, updateLead, getLead, testConnection, assertSafeUrl };
+module.exports = {
+  createLead,
+  updateLead,
+  getLead,
+  testConnection,
+  assertSafeUrl,
+  _test: { toZohoUpsertUrl, buildCreateRequestBody },
+};

@@ -1,6 +1,8 @@
 # Verified CRM Facts — Lead Exchange
 
-Every statement below was read from a **live system**, not inferred from code.
+Environment-specific statements below were read from a **live system**, not
+inferred from code. The notification/upsert protocol statements are verified
+against Zoho's official V8 API documentation.
 
 | Source | Access |
 |---|---|
@@ -118,3 +120,20 @@ upserts complete forward/reverse pairs before removing orphaned or duplicate row
 For AU008, the UI exposes a reviewed profile using exact live values, including
 `Received / Acknowledged` -> `Not Contacted`, `Lost (final)` -> `Lost`, and
 `Junk Lead` -> `Junk Lead`.
+
+## 9. Zoho notification contract
+
+Zoho's [V8 Enable Notifications documentation](https://www.zoho.com/crm/developer/docs/api/v8/notifications/enable.html)
+returns `token`, `channel_id`, `module`, `ids`, and `affected_fields`
+in the callback body. Its configured callback token is limited to 50
+characters; the application previously generated a 64-character hexadecimal
+secret and sent it directly, so dealer watch registration could be rejected as
+`INVALID_DATA`. Registration now sends a deterministic 48-character token
+derived from the encrypted credential, and verification accepts both that form
+and legacy short direct tokens.
+
+Dealer watches now request affected-field details and subscribe to `Leads.edit`
+only. An empty `affected_fields` array safely falls back to comparing the fetched
+full dealer record instead of being treated as “nothing to map.” The deployed
+AU008 watch channel must be renewed once for these subscription settings to take
+effect.

@@ -158,6 +158,10 @@ function hasChanges(existingRow, mappedRow) {
   });
 }
 
+function needsAssignedDateBackfill(existingRow, mappedRow) {
+  return !existingRow?.assigned_date && Boolean(mappedRow?.assigned_date);
+}
+
 const NON_DELIVERED_SYNC_STATUSES = new Set([
   'Removed',
   'VALIDATION_HOLD',
@@ -514,6 +518,21 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
             ? (scenarioHoldStatus || existingRow.sync_status)
             : 'SYNCED',
         });
+      } else if (needsAssignedDateBackfill(existingRow, mappedRow)) {
+        // Maintenance-only migration for rows created before Created_Time was
+        // mapped. Persist the real submission timestamp without classifying a
+        // business change or sending the lead back to the dealer.
+        await table.updateRow({
+          ROWID: existingRow.ROWID,
+          assigned_date: mappedRow.assigned_date,
+          last_synced_at: now,
+        });
+        existingLeadsByCrmId.set(crmRecord.id, {
+          ...existingRow,
+          assigned_date: mappedRow.assigned_date,
+          last_synced_at: now,
+        });
+        unchanged += 1;
       } else {
         unchanged += 1;
       }
@@ -585,6 +604,7 @@ module.exports = {
   _test: {
     mapCrmRecordToLeadRow,
     hasChanges,
+    needsAssignedDateBackfill,
     findDeliveredBusinessDuplicate,
   },
 };

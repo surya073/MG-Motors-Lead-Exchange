@@ -60,10 +60,23 @@ async function runSlaSweep(catalystApp, now = new Date()) {
       const integration = integrationRows[0]?.[DEALER_INTEGRATIONS_TABLE];
       const leadRow = leadRows[0]?.[LEADS_TABLE];
       if (!isIntegrationHealthy(integration)) {
+        await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+          ROWID: mapping.ROWID,
+          last_synced_at: toCatalystDateTime(now),
+          last_attempted_at: toCatalystDateTime(now),
+        });
         results.skippedUnhealthy += 1;
         continue;
       }
       if (!leadRow || !pathPolicy.isWaitingForDealerActionStatus(leadRow.lead_status)) {
+        // Rotate already-actioned rows out of the oldest-first candidate
+        // window. Leaving their old acknowledgement timestamp untouched made
+        // the same 200 rows occupy every sweep forever and starved later leads.
+        await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+          ROWID: mapping.ROWID,
+          last_synced_at: toCatalystDateTime(now),
+          last_attempted_at: toCatalystDateTime(now),
+        });
         results.skippedActioned += 1;
         continue;
       }

@@ -194,6 +194,7 @@ async function registerDealerWatchChannel(catalystApp, integration) {
         channel_expiry: channelExpiryStr,
         token: deriveZohoWatchToken(webhookSecret),
         return_affected_field_values: true,
+        notify_on_related_action: false,
       },
     ],
   };

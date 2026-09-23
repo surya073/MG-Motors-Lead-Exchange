@@ -7,6 +7,7 @@ const fingerprint = require('../services/integrations/leadFingerprintService');
 const crmIntegration = require('../services/integrations/crmIntegrationService');
 const syncLog = require('../services/syncLogService');
 const webhookVerification = require('../services/integrations/webhookVerificationService');
+const genericRestAdapter = require('../services/integrations/adapters/genericRestAdapter');
 
 const fieldMappings = [
   { source_field: 'customer_name', target_field: 'CustomerName', required: true },
@@ -23,6 +24,16 @@ const statusMappings = [
 test('status maps in the correct direction with normalized labels', () => {
   assert.equal(leadMapping.mapStatus('Update-Pending', statusMappings, 'ZOHO_TO_EXTERNAL'), 'New');
   assert.equal(leadMapping.mapStatus('new', statusMappings, 'EXTERNAL_TO_ZOHO'), 'Not Contacted');
+});
+
+test('ambiguous inbound status mappings are rejected instead of depending on row order', () => {
+  assert.throws(
+    () => leadMapping.mapStatus('Dealer New', [
+      { source_status: 'Dealer New', target_status: 'Not Contacted', direction: 'EXTERNAL_TO_ZOHO' },
+      { source_status: 'Dealer New', target_status: 'Attempted to Contact', direction: 'EXTERNAL_TO_ZOHO' },
+    ], 'EXTERNAL_TO_ZOHO'),
+    (err) => err.code === 'STATUS_MAPPING_AMBIGUOUS'
+  );
 });
 
 test('outbound payload writes one translated status to the configured target', () => {
@@ -174,5 +185,25 @@ test('empty Zoho affected_fields safely falls back to the fetched full record', 
       affected_fields: [{ '1': ['Lead_Status', 'Enquiry_Outcome'] }],
     }, '1'),
     ['Lead_Status', 'Enquiry_Outcome']
+  );
+});
+
+test('Zoho creates use the supported upsert endpoint and enquiry-id duplicate check', () => {
+  assert.equal(
+    genericRestAdapter._test.toZohoUpsertUrl(
+      new URL('https://www.zohoapis.com.au/crm/v8/Leads')
+    ).toString(),
+    'https://www.zohoapis.com.au/crm/v8/Leads/upsert'
+  );
+  assert.deepEqual(
+    genericRestAdapter._test.buildCreateRequestBody(
+      true,
+      { Enquiry_ID: 'ENQ-1001' },
+      'Enquiry_ID'
+    ),
+    {
+      data: [{ Enquiry_ID: 'ENQ-1001' }],
+      duplicate_check_fields: ['Enquiry_ID'],
+    }
   );
 });

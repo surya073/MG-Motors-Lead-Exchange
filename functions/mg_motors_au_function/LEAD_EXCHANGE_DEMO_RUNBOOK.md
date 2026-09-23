@@ -35,7 +35,9 @@ Configure these Catalyst environment variables before deployment:
 
 For each external dealer, complete and test the connection, generate a webhook secret, map every mandatory field shown in the UI, map every dealer status MG has approved, then register the webhook. Do not map `Junk Lead` to `Not Qualified`; both live AU008 and MG picklists contain the exact value `Junk Lead`.
 
-For every dealer Zoho org, the field targeted by the mandatory `enquiry_id` mapping must be marked **unique / external ID**. Zoho delivery uses its supported `/Leads/upsert` endpoint with that field, so a timeout followed by retry resolves to the same dealer record. Do not substitute Email or Mobile: the register requires separate enquiries for the same customer when model, variant, or nature differs.
+For every dealer Zoho org, the field targeted by the mandatory `enquiry_id` mapping must be marked **unique / external ID**. Zoho delivery uses its supported [`/Leads/upsert`](https://www.zoho.com/crm/developer/docs/api/v8/upsert-records.html) endpoint with that field, so a timeout followed by retry resolves to the same dealer record. Do not substitute Email or Mobile: the register requires separate enquiries for the same customer when model, variant, or nature differs.
+
+After deploying this build, open AU008's Connection tab and click **Renew Dealer Webhook** once. The renewal uses Zoho's 48-character derived callback token (the API maximum is 50), subscribes to `Leads.edit`, and enables affected-field details. Existing stored webhook credentials do not need to be exposed or replaced. Confirm the returned channel expiry and keep the 12–20 hour renewal schedule enabled.
 
 For the AU008 demo, open Status Mapping, click **Load verified AU008 map**, review, and save. The canonical pairs are:
 
@@ -59,6 +61,7 @@ Saving also creates the reverse rows, so `Received / Acknowledged` writes MG `No
 Confirm these datastore capabilities before deploy:
 
 - `webhook_events.dedupe_key` has a unique constraint.
+- `lead_integrations` has no duplicate `(integration_id, zoho_lead_id)` or `(integration_id, external_crm_lead_id)` pairs.
 - `lead_integrations` supports `PENDING`, `FAILED`, `FAILED_CRITICAL`, `SYNCED`, `HELD`, `CONSENT_HOLD`, and `SLA_BREACH`, plus the retry/fingerprint columns used in code.
 - `integration_logs` and `leads` include `happy_unhappy_path_name`, `happy_unhappy_path_message`, and preferably `happy_unhappy_path_priority`.
 - `integration_logs.field_changes` can hold the JSON audit detail.
@@ -105,6 +108,19 @@ BUILD_PATH=/private/tmp/mg-motor-web-build node node_modules/react-scripts/bin/r
 ```
 
 For production, do not use shortened demo timers. Reset the Unhappy 3 and SLA windows to 1440 minutes before deployment.
+
+## Demo go/no-go gate
+
+Do not start the customer demo until all of these are green:
+
+1. Deploy the function and web build from the same revision.
+2. Set the production-safe environment variables above; confirm both 24-hour timers are `1440`.
+3. Use **AU008**, not AU001; test the connection successfully.
+4. Verify every mandatory dealer field API name, and make the mapped Inquiry ID field unique/external in AU008.
+5. Click **Load verified AU008 map**, save, reload the page, and confirm the 12 canonical pairs remain exactly as listed.
+6. Renew the AU008 webhook and confirm its channel registration succeeds.
+7. Run one smoke sequence: valid new lead (Happy 1), dealer status `Contacted` (Happy 2), and dealer status `Junk Lead` (Unhappy 9). Confirm MG, AU008, Catalyst, and the activity log agree after each step.
+8. Keep the four retry/replay/SLA/reconciliation schedulers enabled; confirm the daily-report recipient and timezone.
 
 ## Items that still require MG / environment confirmation
 

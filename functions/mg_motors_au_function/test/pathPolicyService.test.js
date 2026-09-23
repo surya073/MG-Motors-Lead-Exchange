@@ -130,6 +130,10 @@ test('CRM Created_Time supplies duplicate timing without inventing Assigned_Date
     { ...mapped, assigned_date: '' },
     mapped
   ), false);
+  assert.equal(leadSyncService._test.needsAssignedDateBackfill(
+    { ...mapped, assigned_date: '' },
+    mapped
+  ), true);
 });
 
 test('a matching original that failed delivery is never suppressed', () => {

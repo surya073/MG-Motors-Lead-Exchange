@@ -45,10 +45,28 @@ async function runOutboundRetrySweep(catalystApp) {
   const now = new Date();
 
   const dueRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL') LIMIT 0, ${MAX_CANDIDATES_TO_SCAN}`
+    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL') ORDER BY next_retry_at ASC LIMIT 0, ${MAX_CANDIDATES_TO_SCAN}`
   );
 
-  const results = { totalCandidates: dueRows.length, attempted: 0, succeeded: 0, stillFailing: 0, skippedNotDue: 0, skippedNoIntegrationOrLead: 0, errored: 0 };
+  // `recovered` counts ONLY leads that actually reached the dealer CRM.
+  // syncLeadToExternalCrm RETURNS {skipped:true, reason} for a validation
+  // failure, a consent hold or a suppressed echo rather than throwing, so
+  // counting every non-throwing call as a success reported held leads as
+  // recovered — e.g. a sweep reporting "succeeded: 4" while those same 4
+  // leads were logging Unhappy 2. The register requires MG to see leads
+  // delivered on recovery and leads still failing as distinct numbers
+  // (Happy 4), so they are counted separately here.
+  const results = {
+    totalCandidates: dueRows.length,
+    attempted: 0,
+    recovered: 0,
+    heldByPolicy: 0,
+    stillFailing: 0,
+    skippedNotDue: 0,
+    skippedNoIntegrationOrLead: 0,
+    errored: 0,
+    heldReasons: {},
+  };
 
   const dueNow = dueRows
     .map((row) => row[LEAD_INTEGRATIONS_TABLE])
@@ -89,8 +107,19 @@ async function runOutboundRetrySweep(catalystApp) {
       results.attempted += 1;
 
       try {
-        await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
-        results.succeeded += 1;
+        const outcome = await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+        if (outcome && outcome.ok) {
+          // Genuinely delivered to the dealer CRM — this is the Happy 4
+          // recovery the register asks MG to be able to count.
+          results.recovered += 1;
+        } else {
+          // Returned without delivering: validation hold, consent hold,
+          // suppressed echo, outbound disabled. Not a failure, but
+          // emphatically not a recovery either.
+          const reason = (outcome && outcome.reason) || 'UNKNOWN';
+          results.heldByPolicy += 1;
+          results.heldReasons[reason] = (results.heldReasons[reason] || 0) + 1;
+        }
       } catch (syncErr) {
         // syncLeadToExternalCrm already logged this (Unhappy 1/3
         // classification, retry bookkeeping) internally — nothing more
