@@ -7,7 +7,7 @@
  * mechanical — no AI involved, since this data's structure is already
  * known.
  */
-export function mapAppDataToDashboard(summary) {
+function mapAppDataToDashboard(summary) {
   if (!summary) return null;
 
   const { totalDealers, totalLeads, leadStatusSummary, dealerStatusSummary, topDealers, activityTimeline, recentSyncLogs } = summary;
@@ -62,3 +62,5 @@ export function mapAppDataToDashboard(summary) {
 
   return { kpis, charts, activity, table };
 }
+
+module.exports = { mapAppDataToDashboard };

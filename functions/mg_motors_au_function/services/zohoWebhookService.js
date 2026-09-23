@@ -5,6 +5,7 @@ const { getZohoConfig } = require('../config/env');
 const { getAccessToken } = require('./zohoAuthService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
+const integrationAuthService = require('./integrations/integrationAuthService');
 
 const ZOHO_REQUEST_TIMEOUT_MS = 10000;
 
@@ -20,7 +21,11 @@ function toZohoDateTime(date) {
 }
 
 function buildNotifyUrl() {
-  return 'https://mg-motors-au-60069659585.development.catalystserverless.in/server/mg_motors_au_function/webhooks/crm-notify';
+  const baseUrl = String(
+    process.env.PUBLIC_FUNCTION_BASE_URL ||
+    'https://mg-motors-au-60069659585.development.catalystserverless.in/server/mg_motors_au_function'
+  ).replace(/\/$/, '');
+  return `${baseUrl}/webhooks/crm-notify`;
 }
 
 async function registerWatchChannels(catalystApp) {
@@ -74,7 +79,6 @@ async function registerWatchChannels(catalystApp) {
   await table.insertRow({
     channel_id: channelId,
     module_name: 'Dealer_Master,Leads',
-    token: webhookToken,
     registered_at: toCatalystDateTime(new Date()),
     expires_at: toCatalystDateTime(expiryDate),
   });
@@ -86,7 +90,11 @@ async function registerWatchChannels(catalystApp) {
 const { getAccessTokenForDealerZoho } = require('./integrations/adapters/zohoCrmOAuthHelper');
 
 function buildDealerNotifyUrl(dealerCode) {
-  return `https://mg-motors-au-60069659585.development.catalystserverless.in/server/mg_motors_au_function/webhooks/dealers/${dealerCode}`;
+  const baseUrl = String(
+    process.env.PUBLIC_FUNCTION_BASE_URL ||
+    'https://mg-motors-au-60069659585.development.catalystserverless.in/server/mg_motors_au_function'
+  ).replace(/\/$/, '');
+  return `${baseUrl}/webhooks/dealers/${encodeURIComponent(dealerCode)}`;
 }
 
 /**
@@ -109,7 +117,7 @@ async function deregisterExistingChannel(catalystApp, integration, accessToken, 
 
   const oldChannelId = existing[0].webhook_channels.channel_id;
   try {
-    await axios.delete(`${apiDomain}/crm/v2/actions/watch`, {
+    await axios.delete(`${apiDomain}/crm/v8/actions/watch`, {
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
       },
@@ -139,6 +147,17 @@ async function registerDealerWatchChannel(catalystApp, integration) {
   const accessToken = await getAccessTokenForDealerZoho(catalystApp, integration);
   logger.info('zohoWebhookService', `Got access token for ${integration.dealer_code}`);
 
+  const webhookSecret = await integrationAuthService.getDecryptedCredential(
+    catalystApp,
+    integration.ROWID,
+    'WEBHOOK_SECRET'
+  );
+  if (!webhookSecret) {
+    const err = new Error('Generate a webhook secret before registering the dealer watch channel');
+    err.code = 'WEBHOOK_AUTH_NOT_CONFIGURED';
+    throw err;
+  }
+
   // Dealer's Zoho org's own API domain — same field the outbound adapter
   // relies on for their token endpoint; assumed to also be their correct
   // API domain for the watch registration call itself.
@@ -166,11 +185,7 @@ async function registerDealerWatchChannel(catalystApp, integration) {
         events: ['Leads.all'], // confirm this matches the dealer's own Zoho module name for leads
         notify_url: buildDealerNotifyUrl(integration.dealer_code),
         channel_expiry: channelExpiryStr,
-        // NOTE: dealer-side watch omits `token` (unlike the OEM one) —
-        // deliberately, since Zoho's watch API's own `token` field isn't
-        // used for auth verification on our side; our route instead
-        // relies on webhookVerificationService (currently bypassed via
-        // SKIP_WEBHOOK_AUTH — flip that back on before this goes live).
+        token: webhookSecret,
       },
     ],
   };

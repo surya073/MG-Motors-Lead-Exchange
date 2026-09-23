@@ -4,6 +4,10 @@ const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
 const { registerWatchChannels, registerDealerWatchChannel } = require('../services/zohoWebhookService');
 const outboundRetryScheduler = require('../services/integrations/outboundRetryScheduler'); // NEW
+const inboundReplayScheduler = require('../services/integrations/inboundReplayScheduler');
+const slaMonitorService = require('../services/integrations/slaMonitorService');
+const dealerReconciliationService = require('../services/integrations/dealerReconciliationService');
+const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -84,27 +88,50 @@ router.post('/cron/retry-outbound-syncs', async (req, res) => {
   }
 });
 
-router.get('/debug/check-lead-status', async (req, res) => {
+router.post('/cron/replay-inbound-events', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
   try {
-    const { getZohoConfig } = require('../config/env');
-    const { getAccessToken } = require('../services/zohoAuthService');
-    const axios = require('axios');
-
-    const { apiDomain } = getZohoConfig();
-    const accessToken = await getAccessToken();
-
-    const response = await axios.get(`${apiDomain}/crm/v8/Leads/1378627000000780009`, {
-      headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
-      params: { fields: 'Lead_Status,Enquiry_Status' },
-    });
-
-    res.json(response.data);
+    const catalystApp = catalyst.initialize(req);
+    const results = await inboundReplayScheduler.runInboundReplaySweep(catalystApp);
+    res.status(200).json({ success: true, results });
   } catch (err) {
-    res.status(500).json({ error: err.response?.data || err.message });
+    logger.error('cronRoutes', 'Inbound replay sweep failed', err);
+    res.status(502).json({ success: false, error: err.message });
   }
 });
 
-const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
+router.post('/cron/check-lead-sla', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const results = await slaMonitorService.runSlaSweep(catalystApp);
+    res.status(200).json({ success: true, results });
+  } catch (err) {
+    logger.error('cronRoutes', 'Lead SLA sweep failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/cron/reconcile-dealer-leads', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const results = await dealerReconciliationService.runDealerReconciliation(catalystApp);
+    res.status(200).json({ success: true, results });
+  } catch (err) {
+    logger.error('cronRoutes', 'Dealer reconciliation failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
 
 router.post('/cron/daily-error-report', async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];

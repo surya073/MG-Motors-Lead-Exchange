@@ -15,9 +15,9 @@ const SYNC_LOGS_TABLE = 'sync_logs';
  * -----------------------------------------------------------------------
  * Unlike integration_logs (one row = one lead-level event = exactly one
  * scenario), a sync_logs row is a whole BATCH run that can contain
- * several distinct outcomes at once — e.g. 1 new lead (Happy 1), 2 rows
- * with a missing Dealer_Code (Unhappy 2), and 24 unchanged/already-synced
- * rows (Happy 3), all in a single run. The frontend's resolveRowScenarios()
+ * several distinct outcomes at once — e.g. 1 new lead (Happy 1), 2 invalid
+ * rows (Unhappy 2), and 1 exact 15-minute duplicate (Happy 3), all in a
+ * single run. The frontend's resolveRowScenarios()
  * in SyncLogsPage.jsx already models this as a multi-scenario breakdown
  * per row, so these two columns store an ENCODED SUMMARY of every
  * scenario present in the run — "Happy 1 x1, Unhappy 2 x2, Happy 3 x24" —
@@ -30,10 +30,9 @@ const SYNC_LOGS_TABLE = 'sync_logs';
  * happy_unhappy_path_message. Parse with the same split rather than
  * re-deriving from records_* counts, once callers are ready to trust it.
  *
- * WHAT THIS CAN AND CAN'T CLASSIFY PRECISELY
- * - recordsInserted / recordsUpdated / the "fetched but otherwise
- *   unaccounted for" remainder (duplicates) are exact — these come
- *   straight from the counts the caller already computed.
+ * Callers can pass scenarioCounts for exact business classification.
+ * Unchanged records are deliberately not inferred as Happy 3: a real
+ * Happy 3 requires the register's exact-field match inside 15 minutes.
  * - recordsFailed is only exact for the two literal error messages
  *   leadSyncService.js's loop actually throws today ('CRM record
  *   missing id — skipped' / 'CRM record missing Dealer_Code —
@@ -66,6 +65,14 @@ const SCENARIO_LABELS = {
   'happy-5': 'Data synchronisation (dealer → OEM)',
   'unhappy-1': 'API / integration failure',
   'unhappy-2': 'Invalid / missing data',
+  'unhappy-3': 'Dealer unavailable (after 24 hr retry)',
+  'unhappy-4': 'Status update failure (dealer → OEM)',
+  'unhappy-5': 'Wrong / rejected dealer mapping',
+  'unhappy-6': 'Ownership conflict',
+  'unhappy-7': 'Out-of-order events',
+  'unhappy-8': 'Consent / privacy mismatch',
+  'unhappy-9': 'Dealer rejects enquiry',
+  'unhappy-10': 'SLA breach',
 };
 
 function scenarioDisplayName(code) {
@@ -92,6 +99,7 @@ function buildScenarioBreakdown({
   recordsUpdated,
   recordsFailed,
   errorDetails,
+  scenarioCounts,
 }) {
   const fetched = Number(totalRecordsFetched) || 0;
   const inserted = Number(recordsInserted) || 0;
@@ -104,6 +112,19 @@ function buildScenarioBreakdown({
     if (!code || count <= 0) return;
     counts.set(code, (counts.get(code) || 0) + count);
   };
+
+  // Dealer Master ingestion is operational sync, not a lead-exchange
+  // business scenario. Do not label a newly synced dealer as Happy 1 or
+  // a dealer metadata edit as Happy 5.
+  if (syncType === 'Dealer_Sync' && !scenarioCounts) return counts;
+
+  if (scenarioCounts && typeof scenarioCounts === 'object') {
+    Object.entries(scenarioCounts).forEach(([rawCode, count]) => {
+      const code = String(rawCode).toLowerCase().replace(/\s+/g, '-');
+      add(code, Number(count) || 0);
+    });
+    return counts;
+  }
 
   // Failures first, classified per known error message. Any failed
   // count not explained by an individual error entry (shouldn't
@@ -122,14 +143,6 @@ function buildScenarioBreakdown({
   if (updated > 0) {
     add(syncType === 'Dealer_Sync' ? 'happy-5' : 'happy-2', updated);
   }
-
-  // Fetched but neither inserted, updated, nor failed — left
-  // untouched because it already matched an existing record
-  // unchanged. Per the client's own matrix this is the dedupe path
-  // (Happy 3), not a no-op to leave unclassified.
-  const accounted = inserted + updated + errors.length + Math.max(unexplainedFailed, 0);
-  const skipped = Math.max(fetched - accounted, 0);
-  if (skipped > 0) add('happy-3', skipped);
 
   return counts;
 }
@@ -157,10 +170,11 @@ async function recordSyncRun(catalystApp, {
   recordsFailed,
   status,
   errorDetails,
+  scenarioCounts,
 }) {
   const table = catalystApp.datastore().table(SYNC_LOGS_TABLE);
 
-  const scenarioCounts = buildScenarioBreakdown({
+  const scenarioBreakdown = buildScenarioBreakdown({
     syncType,
     syncTrigger,
     totalRecordsFetched,
@@ -168,8 +182,9 @@ async function recordSyncRun(catalystApp, {
     recordsUpdated,
     recordsFailed,
     errorDetails,
+    scenarioCounts,
   });
-  const { name: happyUnhappyPathName, message: happyUnhappyPathMessage } = encodeScenarioSummary(scenarioCounts);
+  const { name: happyUnhappyPathName, message: happyUnhappyPathMessage } = encodeScenarioSummary(scenarioBreakdown);
 
   try {
     await table.insertRow({
@@ -195,4 +210,4 @@ async function recordSyncRun(catalystApp, {
   }
 }
 
-module.exports = { recordSyncRun };
+module.exports = { recordSyncRun, buildScenarioBreakdown, encodeScenarioSummary };

@@ -8,11 +8,16 @@ const { syncLeads } = require('../services/leadSyncService');
 const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
-const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
 const logger = require('../utils/logger');
-const { toCatalystDateTime } = require('../utils/dateFormat');
 
 const router = express.Router();
+
+function isEnabled(value) {
+  return !(
+    value === false || value === 0 ||
+    String(value).toLowerCase() === 'false' || String(value) === '0'
+  );
+}
 
 router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
   try {
@@ -24,20 +29,22 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
       return res.status(401).json({ error: 'Invalid token' });
     }
 
-    res.status(200).json({ received: true });
-
     const moduleName = req.body?.module;
     const catalystApp = catalyst.initialize(req);
 
     if (moduleName === 'Dealer_Master') {
-      await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
+      const result = await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
+      return res.status(200).json({ received: true, result });
     } else if (moduleName === 'Leads') {
-      await syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
-    } else {
-      logger.info('webhookRoutes', `Notification for unhandled module: ${moduleName}`);
+      const result = await syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
+      return res.status(200).json({ received: true, result });
     }
+
+    logger.info('webhookRoutes', `Notification for unhandled module: ${moduleName}`);
+    return res.status(202).json({ received: true, ignored: true });
   } catch (err) {
     logger.error('webhookRoutes', 'Webhook processing failed', err);
+    if (!res.headersSent) return res.status(502).json({ received: false, error: 'SYNC_FAILED' });
   }
 });
 
@@ -47,24 +54,11 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
   const rawBody = req.body; // Buffer
 
   try {
-    await catalystApp.datastore().table('webhook_events').insertRow({
-      dealer_code: dealerCode,
-      event_id: 'DEBUG_RAW_PAYLOAD',
-      payload_hash: 'debug',
-      processing_status: 'DEBUG',
-      error_message: rawBody.toString('utf8').slice(0, 500),
-      received_at: toCatalystDateTime(new Date()),
-    });
-  } catch (e) {
-    logger.error('webhookRoutes', 'DEBUG insert failed', e.message || e);
-  }
-
-  try {
     const dealer = await crmIntegrationService.findDealerByCode(catalystApp, dealerCode);
     if (!dealer) return res.status(404).json({ error: 'DEALER_NOT_FOUND' });
 
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
-    if (!integration || integration.integration_type !== 'EXTERNAL_CRM') {
+    if (!integration || integration.integration_type !== 'EXTERNAL_CRM' || !isEnabled(integration.inbound_enabled)) {
       return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
     }
 
@@ -82,7 +76,16 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
 
-    const eventId = payload.event_id || payload.id || null;
+    // payload.id / payload.leadId identify the dealer RECORD, not this
+    // webhook delivery. Using either as the dedupe key drops every later
+    // status change for that lead. Prefer a real event id; otherwise the
+    // exact raw-payload hash in checkAndRecordWebhookEvent is the fallback.
+    const eventId =
+      payload.event_id ||
+      payload.eventId ||
+      headers['x-event-id'] ||
+      headers['x-webhook-id'] ||
+      null;
     const { isDuplicate, eventRowId } = await crmIntegrationService.checkAndRecordWebhookEvent(
       catalystApp, integration, rawBody, eventId
     );
@@ -93,42 +96,29 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
 
     try {
       const result = await crmIntegrationService.processInboundWebhook(catalystApp, integration, payload, zohoCrmService);
-      await crmIntegrationService.markWebhookEventStatus(catalystApp, eventRowId, 'SUCCESS');
-      res.status(200).json({ ok: true, result });
+      await crmIntegrationService.markWebhookEventStatus(
+        catalystApp,
+        eventRowId,
+        result?.held ? 'PENDING' : 'SUCCESS',
+        result?.held ? result.reason : undefined
+      );
+      res.status(result?.held ? 202 : 200).json({ ok: true, result });
     } catch (err) {
-      await crmIntegrationService.markWebhookEventStatus(catalystApp, eventRowId, 'FAILED', err.message);
-      const status = ['LEAD_MAPPING_NOT_FOUND', 'FIELD_MAPPING_INVALID', 'STATUS_MAPPING_NOT_FOUND'].includes(err.code) ? 422 : 500;
+      const replayable = err.code === 'LEAD_MAPPING_NOT_FOUND';
+      await crmIntegrationService.markWebhookEventStatus(
+        catalystApp,
+        eventRowId,
+        replayable ? 'PENDING' : 'FAILED',
+        err.message
+      );
+      const status = replayable
+        ? 202
+        : (['FIELD_MAPPING_INVALID', 'STATUS_MAPPING_NOT_FOUND'].includes(err.code) ? 422 : 500);
       res.status(status).json({ error: err.code || 'INTERNAL_ERROR' });
     }
   } catch (err) {
     logger.error('webhookRoutes', `Dealer webhook failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
-  }
-});
-
-/**
- * TEMPORARY ADMIN ROUTE — manually (re-)registers a Zoho CRM watch
- * channel on a dealer's own org so their Lead updates notify
- * /webhooks/dealers/:dealerCode. Watch channels expire ~23h after
- * registration (see zohoWebhookService.js), so this needs to be called
- * again periodically until a scheduled Cron job takes over renewal.
- * Consider removing or protecting this route before production.
- */
-router.post('/admin/dealers/:dealerCode/register-webhook', async (req, res) => {
-  try {
-    const catalystApp = catalyst.initialize(req);
-    const { dealerCode } = req.params;
-
-    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
-    if (!integration) {
-      return res.status(404).json({ error: 'INTEGRATION_NOT_FOUND' });
-    }
-
-    const result = await registerDealerWatchChannel(catalystApp, integration);
-    res.status(200).json({ ok: true, result });
-  } catch (err) {
-    logger.error('webhookRoutes', 'Manual watch registration failed', err);
-    res.status(500).json({ error: err.message });
   }
 });
 

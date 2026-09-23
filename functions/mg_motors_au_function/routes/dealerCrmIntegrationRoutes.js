@@ -7,11 +7,36 @@ const crmIntegrationService = require('../services/integrations/crmIntegrationSe
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const oemPicklistService = require('../services/oemPicklistService');
+const pathPolicy = require('../services/integrations/pathPolicyService');
 
 const crypto = require('crypto');
 
 const router = express.Router();
 const LEADS_TABLE = 'leads';
+
+function safeQuoteForZcql(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function statusDirection(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (['ZOHO_TO_EXTERNAL', 'ZOHO_TO_EXTERNAL_CRM'].includes(normalized)) return 'ZOHO_TO_EXTERNAL';
+  if (['EXTERNAL_TO_ZOHO', 'EXTERNAL_CRM_TO_ZOHO'].includes(normalized)) return 'EXTERNAL_TO_ZOHO';
+  return '';
+}
+
+function isForwardStatusRow(row) {
+  const direction = statusDirection(row?.direction);
+  return !direction || direction === 'ZOHO_TO_EXTERNAL';
+}
+
+function isReverseStatusRow(row) {
+  return statusDirection(row?.direction) === 'EXTERNAL_TO_ZOHO';
+}
+
+function sameStatus(left, right) {
+  return pathPolicy.normalizeStatus(left) === pathPolicy.normalizeStatus(right);
+}
 
 function safeConfig(integration) {
   if (!integration) return null;
@@ -27,7 +52,7 @@ function safeConfig(integration) {
 
 const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
 
-router.post('/admin/dealers/:dealerCode/register-webhook', async (req, res) => {
+router.post('/:dealerCode/register-webhook', requireAdminRole, async (req, res) => {
   try {
     const catalystApp = catalyst.initialize(req);
     const { dealerCode } = req.params;
@@ -169,8 +194,40 @@ router.get('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       crmIntegrationService.getFieldMappings(catalystApp, integration.ROWID),
       crmIntegrationService.getStatusMappings(catalystApp, integration.ROWID),
     ]);
-    const statusMappings = statusMappingsRaw.filter((m) => m.direction === 'ZOHO_TO_EXTERNAL');
-    res.json({ fieldMappings, statusMappings });
+    const reverseRows = statusMappingsRaw.filter(isReverseStatusRow);
+    const usedReverseIds = new Set();
+    const seenPairs = new Set();
+    const statusMappings = [];
+
+    // Return one UI row per logical pair. Older saves could leave duplicate
+    // forward/reverse rows behind; collapsing identical pairs here lets the
+    // next successful Save reconcile them without presenting phantom rows.
+    statusMappingsRaw.filter(isForwardStatusRow).forEach((forwardRow) => {
+      const pairKey = [forwardRow.source_status, forwardRow.target_status]
+        .map(pathPolicy.normalizeStatus)
+        .join('\u0000');
+      if (seenPairs.has(pairKey)) return;
+      seenPairs.add(pairKey);
+
+      const reverseRow = reverseRows.find((candidate) =>
+        !usedReverseIds.has(String(candidate.ROWID)) &&
+        sameStatus(candidate.source_status, forwardRow.target_status) &&
+        sameStatus(candidate.target_status, forwardRow.source_status)
+      );
+      if (reverseRow) usedReverseIds.add(String(reverseRow.ROWID));
+
+      statusMappings.push({
+        ...forwardRow,
+        reverse_ROWID: reverseRow?.ROWID,
+      });
+    });
+
+    res.json({
+      fieldMappings,
+      statusMappings,
+      statusMappingCleanupRequired:
+        statusMappingsRaw.length !== statusMappings.length * 2,
+    });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET mappings failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
@@ -187,6 +244,61 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
     const validFieldMappings = fieldMappings.filter((m) => m.source_field && m.target_field);
     if (validFieldMappings.length === 0) {
       return res.status(400).json({ error: 'FIELD_MAPPING_INVALID' });
+    }
+    const configuredSourceFields = new Set(validFieldMappings.map((mapping) => mapping.source_field));
+    const missingRequiredFields = pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.filter(
+      (field) => !configuredSourceFields.has(field)
+    );
+    if (missingRequiredFields.length > 0) {
+      return res.status(400).json({
+        error: 'FIELD_MAPPING_INVALID',
+        missingFields: missingRequiredFields,
+      });
+    }
+    const validStatusMappings = [];
+    const seenStatusPairs = new Set();
+    const outboundTargetsBySource = new Map();
+    const mgStatusValues = pathPolicy.getMgLeadStatusSet();
+    for (const mapping of statusMappings) {
+      const sourceStatus = String(mapping.source_status || '').trim();
+      const targetStatus = String(mapping.target_status || '').trim();
+      if (!sourceStatus || !targetStatus) continue;
+
+      const normalizedSource = pathPolicy.normalizeStatus(sourceStatus);
+      const normalizedTarget = pathPolicy.normalizeStatus(targetStatus);
+      if (!mgStatusValues.has(normalizedSource)) {
+        return res.status(400).json({
+          error: 'STATUS_MAPPING_INVALID_SOURCE',
+          value: sourceStatus,
+        });
+      }
+      if (pathPolicy.isOemOnlyStatus(sourceStatus)) {
+        return res.status(400).json({
+          error: 'STATUS_MAPPING_OEM_ONLY',
+          value: sourceStatus,
+        });
+      }
+
+      const priorTarget = outboundTargetsBySource.get(normalizedSource);
+      if (priorTarget && priorTarget !== normalizedTarget) {
+        return res.status(400).json({
+          error: 'STATUS_MAPPING_AMBIGUOUS',
+          value: sourceStatus,
+        });
+      }
+      outboundTargetsBySource.set(normalizedSource, normalizedTarget);
+
+      const pairKey = `${normalizedSource}\u0000${normalizedTarget}`;
+      if (seenStatusPairs.has(pairKey)) continue;
+      seenStatusPairs.add(pairKey);
+      validStatusMappings.push({
+        ...mapping,
+        source_status: sourceStatus,
+        target_status: targetStatus,
+      });
+    }
+    if (validStatusMappings.length === 0) {
+      return res.status(400).json({ error: 'STATUS_MAPPING_INVALID' });
     }
     const fieldTable = catalystApp.datastore().table('integration_field_mappings');
     const existingFieldRowsRaw = await catalystApp.zcql().executeZCQLQuery(
@@ -239,59 +351,85 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       `SELECT * FROM integration_status_mappings WHERE integration_id = ${integration.ROWID}`
     );
     const existingStatusRows = existingStatusRowsRaw.map((r) => r.integration_status_mappings);
-    const validStatusMappings = statusMappings.filter((m) => m.source_status && m.target_status);
-    const existingPairsByRowId = new Map(
-      existingStatusRows
-        .filter((r) => r.direction === 'ZOHO_TO_EXTERNAL')
-        .map((r) => [String(r.ROWID), r])
+    const existingStatusById = new Map(existingStatusRows.map((row) => [String(row.ROWID), row]));
+    const claimedExistingIds = new Set();
+    const retainedExistingIds = new Set();
+
+    const findUnclaimedRow = (predicate) => existingStatusRows.find((row) =>
+      !claimedExistingIds.has(String(row.ROWID)) && predicate(row)
     );
-    const incomingPairRowIds = new Set(validStatusMappings.filter((m) => m.ROWID).map((m) => String(m.ROWID)));
-    for (const [rowId, forwardRow] of existingPairsByRowId) {
-      if (!incomingPairRowIds.has(rowId)) {
-        const reverseRow = existingStatusRows.find(
-          (r) => r.direction === 'EXTERNAL_TO_ZOHO' && r.source_status === forwardRow.target_status && r.target_status === forwardRow.source_status
+
+    // Upsert every complete pair before deleting stale rows. If an insert
+    // fails, the old configuration is still present; a later successful
+    // save removes duplicates/orphans. This is safer than delete-all-first
+    // in a datastore API that does not provide a transaction here.
+    for (const mapping of validStatusMappings) {
+      let forwardRow = mapping.ROWID
+        ? existingStatusById.get(String(mapping.ROWID))
+        : null;
+      if (!forwardRow || !isForwardStatusRow(forwardRow) || claimedExistingIds.has(String(forwardRow.ROWID))) {
+        forwardRow = findUnclaimedRow((row) =>
+          isForwardStatusRow(row) &&
+          sameStatus(row.source_status, mapping.source_status) &&
+          sameStatus(row.target_status, mapping.target_status)
         );
-        await statusTable.deleteRow(forwardRow.ROWID);
-        if (reverseRow) await statusTable.deleteRow(reverseRow.ROWID);
       }
-    }
-    const newPairs = validStatusMappings.filter((m) => !m.ROWID);
-    for (const m of newPairs) {
-      try {
-        await statusTable.insertRow({
-          integration_id: integration.ROWID,
-          source_status: m.source_status,
-          target_status: m.target_status,
+
+      if (forwardRow) {
+        await statusTable.updateRow({
+          ROWID: forwardRow.ROWID,
+          source_status: mapping.source_status,
+          target_status: mapping.target_status,
           direction: 'ZOHO_TO_EXTERNAL',
         });
+        claimedExistingIds.add(String(forwardRow.ROWID));
+        retainedExistingIds.add(String(forwardRow.ROWID));
+      } else {
         await statusTable.insertRow({
           integration_id: integration.ROWID,
-          source_status: m.target_status,
-          target_status: m.source_status,
+          source_status: mapping.source_status,
+          target_status: mapping.target_status,
+          direction: 'ZOHO_TO_EXTERNAL',
+        });
+      }
+
+      let reverseRow = mapping.reverse_ROWID
+        ? existingStatusById.get(String(mapping.reverse_ROWID))
+        : null;
+      if (!reverseRow || !isReverseStatusRow(reverseRow) || claimedExistingIds.has(String(reverseRow.ROWID))) {
+        reverseRow = findUnclaimedRow((row) =>
+          isReverseStatusRow(row) &&
+          sameStatus(row.source_status, mapping.target_status) &&
+          sameStatus(row.target_status, mapping.source_status)
+        );
+      }
+
+      if (reverseRow) {
+        await statusTable.updateRow({
+          ROWID: reverseRow.ROWID,
+          source_status: mapping.target_status,
+          target_status: mapping.source_status,
           direction: 'EXTERNAL_TO_ZOHO',
         });
-      } catch (rowErr) {
-        logger.error('dealerCrmIntegrationRoutes', `Status mapping insert failed for ${dealerCode}: ${JSON.stringify(m)}`, rowErr);
-        throw rowErr;
+        claimedExistingIds.add(String(reverseRow.ROWID));
+        retainedExistingIds.add(String(reverseRow.ROWID));
+      } else {
+        await statusTable.insertRow({
+          integration_id: integration.ROWID,
+          source_status: mapping.target_status,
+          target_status: mapping.source_status,
+          direction: 'EXTERNAL_TO_ZOHO',
+        });
       }
     }
-    const editedPairs = validStatusMappings.filter((m) => {
-      if (!m.ROWID) return false;
-      const existing = existingPairsByRowId.get(String(m.ROWID));
-      if (!existing) return false;
-      return existing.source_status !== m.source_status || existing.target_status !== m.target_status;
-    });
-    for (const m of editedPairs) {
-      const forwardRow = existingPairsByRowId.get(String(m.ROWID));
-      const reverseRow = existingStatusRows.find(
-        (r) => r.direction === 'EXTERNAL_TO_ZOHO' && r.source_status === forwardRow.target_status && r.target_status === forwardRow.source_status
-      );
-      await statusTable.updateRow({ ROWID: forwardRow.ROWID, source_status: m.source_status, target_status: m.target_status });
-      if (reverseRow) {
-        await statusTable.updateRow({ ROWID: reverseRow.ROWID, source_status: m.target_status, target_status: m.source_status });
+
+    for (const staleRow of existingStatusRows) {
+      if (!retainedExistingIds.has(String(staleRow.ROWID))) {
+        await statusTable.deleteRow(staleRow.ROWID);
       }
     }
-    res.json({ ok: true });
+
+    res.json({ ok: true, statusMappingPairs: validStatusMappings.length });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `PUT mappings failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
@@ -304,7 +442,7 @@ router.get('/:dealerCode/integration/logs', requireAdminRole, async (req, res) =
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM integration_logs WHERE dealer_code = '${dealerCode}' ORDER BY CREATEDTIME DESC LIMIT 0, ${limit}`
+      `SELECT * FROM integration_logs WHERE dealer_code = '${safeQuoteForZcql(dealerCode)}' ORDER BY CREATEDTIME DESC LIMIT 0, ${limit}`
     );
     res.json({
       logs: rows.map((r) => {
@@ -328,7 +466,7 @@ router.post('/:dealerCode/integration/sync', requireAdminRole, async (req, res) 
     if (integration.status === 'DISABLED') return res.status(400).json({ error: 'INTEGRATION_DISABLED' });
     if (!crmRecordId) return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     const leadRows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${crmRecordId}' AND dealer_code = '${dealerCode}' LIMIT 1`
+      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(crmRecordId)}' AND dealer_code = '${safeQuoteForZcql(dealerCode)}' LIMIT 1`
     );
     if (leadRows.length === 0) {
       return res.status(404).json({ error: 'LEAD_MAPPING_NOT_FOUND' });

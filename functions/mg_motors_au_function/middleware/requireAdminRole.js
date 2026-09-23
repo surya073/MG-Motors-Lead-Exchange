@@ -10,7 +10,6 @@
   function requireAdminRole(req, res, next) {
     const currentUser = res.locals.currentUser;
 
-    console.log('[DEBUG] requireAdminRole reached for:', req.method, req.originalUrl); // ADD THIS LINE
 
     if (!currentUser) {
       return res.status(401).json({ success: false, error: 'Not authenticated' });

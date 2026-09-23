@@ -17,6 +17,9 @@ const DEALER_MASTER_FIELDS = [
   'Phone_Number',
   'Email_Address',
   'Region',
+  'State',
+  'City',
+  'Status',
 ];
 
 const CRM_PAGE_SIZE = 200; // Zoho CRM's max allowed per_page
@@ -31,8 +34,6 @@ const CRM_PAGE_SIZE = 200; // Zoho CRM's max allowed per_page
 async function fetchDealerMaster() {
   const { apiDomain } = getZohoConfig();
   const accessToken = await getAccessToken();
-
-    logger.info('zohoCrmService', `updateOemLead payload for ${crmRecordId}: ${JSON.stringify(fields)}`);
 
 
   const allRecords = [];
@@ -70,6 +71,7 @@ async function fetchDealerMaster() {
 }
 
 const OEM_LEADS_FIELDS = [
+  'Created_Time',
   'Dealer_Code',
   'Last_Name',
   'First_Name',
@@ -78,10 +80,17 @@ const OEM_LEADS_FIELDS = [
   'Enquiry_Model',
   'Enquiry_Source',
   'Enquiry_Status',
-  'Lead_Status',  // ← ADD THIS LINE
-  'Assigned_Date',
-  'Last_Status_Update',
-  'Dealer_Remarks',
+  'Lead_Status',
+  // Lead_Status_Modified_Time is the real api_name — 'Last_Status_Update'
+  // does not exist on this module. Zoho silently DROPS unknown names from
+  // the `fields` param rather than erroring, so the old value came back
+  // absent on every record and last_status_update was permanently blank.
+  'Lead_Status_Modified_Time',
+  // REMOVED, verified absent from the Leads module:
+  //   'Assigned_Date'   — no equivalent field exists.
+  //   'Dealer_Remarks'  — no equivalent field exists. The nearest home is
+  //                       the standard 'Description' textarea, but that is
+  //                       an MG mapping decision, not one to make silently.
   'Nature_of_Enquiry',
   'Purchase_Classification',
   'Enquiry_Outcome',
@@ -138,29 +147,28 @@ async function fetchOemLeads() {
 
     moreRecords = Boolean(response.data?.info?.more_records);
 
-    // TEMP DEBUG — remove once the 100-lead cap is confirmed fixed.
-    console.log(
-      `[DEBUG] fetchOemLeads page ${page}: got ${records.length} records, ` +
-      `info=${JSON.stringify(response.data?.info)}`
-    );
-
     page += 1;
   }
-
-  console.log(`[DEBUG] fetchOemLeads total fetched: ${allRecords.length}`);
 
   return allRecords;
 }
 
 /**
- * Pushes a field update to a single OEM_Leads record in Zoho CRM.
- * Used for write-back when a Dealer updates lead_status/dealer_remarks
- * locally — keeps CRM as the eventual source of truth in both
- * directions, not just CRM -> Catalyst.
+ * Pushes approved fields to a single Leads record in MG Zoho CRM.
+ * Dealer_Remarks is deliberately not supported: live metadata confirms
+ * that field does not exist, so callers must resolve an approved MG field
+ * before attempting to persist dealer remarks.
  */
 async function updateOemLead(crmRecordId, fields) {
   const { apiDomain } = getZohoConfig();
   const accessToken = await getAccessToken();
+
+  // Values may contain customer PII; field names are enough to diagnose
+  // which mapping produced a write-back request.
+  logger.info(
+    'zohoCrmService',
+    `Updating OEM lead ${crmRecordId}; fields=${Object.keys(fields || {}).join(',')}`
+  );
 
   let response;
   try {

@@ -12,18 +12,13 @@ const integrationAuthService = require('./integrationAuthService');
  * Never logs the secret or the raw signature header value on failure —
  * only a boolean result and a safe error code.
  *
- * TEMP TEST MODE — see SKIP_WEBHOOK_AUTH below. This flag disables all
- * authentication and MUST be removed before connecting any real dealer.
- * Left in place only to unblock local/manual testing of the inbound
- * webhook flow without needing to configure a header on the CRM side
- * during initial setup.
+ * Local-only bypass is opt-in through ALLOW_INSECURE_WEBHOOKS=true. It is
+ * deliberately rejected in production so a forgotten test flag cannot
+ * expose customer webhooks.
  */
 
-// TEMPORARY: set to true to skip webhook authentication entirely for
-// testing. MUST be set back to false (or this whole block removed)
-// before any real dealer integration goes live — otherwise the webhook
-// endpoint accepts unauthenticated requests from anyone who finds the URL.
-const SKIP_WEBHOOK_AUTH = true;
+const ALLOW_INSECURE_WEBHOOKS =
+  process.env.ALLOW_INSECURE_WEBHOOKS === 'true' && process.env.NODE_ENV !== 'production';
 
 function timingSafeEqual(a, b) {
   const bufA = Buffer.from(a || '', 'utf8');
@@ -43,14 +38,19 @@ function computeHmac(secret, rawBody) {
  * @param {object} headers - lowercased request headers
  */
 async function verifyWebhook(catalystApp, integration, rawBody, headers) {
-  if (!integration.webhook_enabled) {
+  const webhookEnabled = !(
+    integration.webhook_enabled === false || integration.webhook_enabled === 0 ||
+    String(integration.webhook_enabled).toLowerCase() === 'false' ||
+    String(integration.webhook_enabled) === '0'
+  );
+  if (!webhookEnabled) {
     return { ok: false, reason: 'WEBHOOK_DISABLED' };
   }
 
-  if (SKIP_WEBHOOK_AUTH) {
+  if (ALLOW_INSECURE_WEBHOOKS) {
     logger.error(
       'webhookVerificationService',
-      `SKIP_WEBHOOK_AUTH is enabled — accepting unauthenticated webhook for integration ${integration.ROWID}. This must be disabled before production use.`
+      `ALLOW_INSECURE_WEBHOOKS is enabled for integration ${integration.ROWID}; use only in a local test environment.`
     );
     return { ok: true };
   }
@@ -81,6 +81,18 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
     const token = authHeader.replace(/^Bearer\s+/i, '');
     const valid = timingSafeEqual(token, webhookSecret);
     return valid ? { ok: true } : { ok: false, reason: 'INVALID_TOKEN' };
+  }
+
+  // Zoho CRM Notification API echoes the configured watch token in the
+  // JSON notification body rather than an HTTP auth header.
+  try {
+    const parsed = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody));
+    if (parsed?.token) {
+      const valid = timingSafeEqual(String(parsed.token), webhookSecret);
+      return valid ? { ok: true } : { ok: false, reason: 'INVALID_TOKEN' };
+    }
+  } catch {
+    // Invalid JSON is reported by the route after authentication checks.
   }
 
   return { ok: false, reason: 'MISSING_AUTH' };

@@ -6,6 +6,7 @@ const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const { notifyAdmins, notifyUser } = require('./notificationService');
 const crmIntegrationService = require('./integrations/crmIntegrationService'); // NEW
+const pathPolicy = require('./integrations/pathPolicyService');
 
 const LEADS_TABLE = 'leads';
 const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
@@ -66,9 +67,12 @@ function mapCrmRecordToLeadRow(crmRecord) {
     vehicle_model: crmRecord.Enquiry_Model || '',
     lead_source: crmRecord.Enquiry_Source || '',
     lead_status: crmRecord.Lead_Status || '',
-    assigned_date: toCatalystDateTimeFromCrm(crmRecord.Assigned_Date),
-    last_status_update: toCatalystDateTimeFromCrm(crmRecord.Last_Status_Update),
-    dealer_remarks: crmRecord.Dealer_Remarks || '',
+    // Zoho's real api_name is Lead_Status_Modified_Time. The old
+    // crmRecord.Last_Status_Update / .Assigned_Date / .Dealer_Remarks
+    // reads were against fields that do not exist on the Leads module,
+    // so all three were silently undefined on every record — verified
+    // against live field metadata.
+    last_status_update: toCatalystDateTimeFromCrm(crmRecord.Lead_Status_Modified_Time),
     crm_record_id: crmRecord.id || '',
 
     // New fields
@@ -91,7 +95,10 @@ function mapCrmRecordToLeadRow(crmRecord) {
   };
 }
 
-const DATETIME_FIELDS = ['assigned_date', 'last_status_update'];
+// assigned_date is intentionally absent: MG's Leads module has no such
+// field, so nothing populates it. Leaving it here would strip a key that
+// is never set anyway, which only hides the gap.
+const DATETIME_FIELDS = ['last_status_update'];
 
 /**
  * Removes any datetime field left as '' by toCatalystDateTimeFromCrm
@@ -147,6 +154,39 @@ function hasChanges(existingRow, mappedRow) {
   });
 }
 
+const NON_DELIVERED_SYNC_STATUSES = new Set([
+  'Removed',
+  'VALIDATION_HOLD',
+  'CONSENT_HOLD',
+  'ROUTING_HOLD',
+  'DELIVERY_FAILED',
+  'FAILED_CRITICAL',
+  'DUPLICATE_LINKED',
+]);
+
+function findDeliveredBusinessDuplicate(incomingLead, existingLeadsByCrmId) {
+  for (const candidate of existingLeadsByCrmId.values()) {
+    if (NON_DELIVERED_SYNC_STATUSES.has(candidate.sync_status)) continue;
+    if (pathPolicy.isBusinessDuplicate(incomingLead, candidate)) return candidate;
+  }
+  return null;
+}
+
+function incrementScenario(scenarioCounts, scenarioCode) {
+  if (!scenarioCode) return;
+  scenarioCounts[scenarioCode] = (scenarioCounts[scenarioCode] || 0) + 1;
+}
+
+async function markLeadState(catalystApp, leadRow, syncStatus) {
+  if (!leadRow?.ROWID) return;
+  await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+    ROWID: leadRow.ROWID,
+    sync_status: syncStatus,
+    last_synced_at: toCatalystDateTime(),
+  });
+  leadRow.sync_status = syncStatus;
+}
+
 async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, vehicleModel, leadRowId }) {
   try {
     // Lazy require — see note at top of file re: circular dependency.
@@ -190,24 +230,61 @@ async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, ve
  */
 async function dispatchNewLeadToDealer(catalystApp, leadRow) {
   try {
+    const dealer = leadRow.dealer_code
+      ? await crmIntegrationService.findDealerByCode(catalystApp, leadRow.dealer_code)
+      : null;
+    const dealerIsUsable = dealer && dealer.sync_status !== 'Removed';
+    if (!dealerIsUsable) {
+      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 5',
+        dealerCode: leadRow.dealer_code,
+        leadRow,
+        errorCode: 'DEALER_ROUTING_INVALID',
+        reason: 'Assigned Dealer Master record is missing, inactive, or removed.',
+        notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 5', reason: 'DEALER_ROUTING_INVALID' };
+    }
+
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
 
     if (integration && integration.integration_type === 'EXTERNAL_CRM') {
-      await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
-      return;
+      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
     }
 
-    // No integration row, or integration_type === 'PORTAL' — existing behaviour.
+    if (!integration || integration.integration_type !== 'PORTAL') {
+      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 5',
+        dealerCode: leadRow.dealer_code,
+        leadRow,
+        errorCode: 'INTEGRATION_NOT_CONFIGURED',
+        reason: 'The assigned dealer has no approved Lead Exchange integration mode.',
+        notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 5', reason: 'INTEGRATION_NOT_CONFIGURED' };
+    }
+
+    // Explicit PORTAL mode — existing Catalyst dealer workflow.
     await notifyDealerOfNewLead(catalystApp, {
       dealerCode: leadRow.dealer_code,
       customerName: leadRow.customer_name,
       vehicleModel: leadRow.vehicle_model,
       leadRowId: leadRow.ROWID,
     });
+    await markLeadState(catalystApp, leadRow, 'SYNCED');
+    await crmIntegrationService.recordScenario(catalystApp, {
+      scenarioCode: 'Happy 1',
+      dealerCode: leadRow.dealer_code,
+      leadRow,
+    });
+    return { ok: true, scenarioCode: 'Happy 1' };
   } catch (err) {
     // Never let a dealer-CRM push failure break the sync loop — same
     // fire-and-forget contract notifyDealerOfNewLead already had.
     logger.error('leadSyncService', `dispatchNewLeadToDealer failed for dealer_code=${leadRow.dealer_code}`, err);
+    return { ok: false, scenarioCode: err.scenarioCode || 'Unhappy 1', error: err.message };
   }
 }
 
@@ -221,12 +298,50 @@ async function dispatchNewLeadToDealer(catalystApp, leadRow) {
  */
 async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
   try {
+    const validation = pathPolicy.validateLeadForDelivery(leadRow);
+    if (validation.routingIssue) {
+      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 5', leadRow, errorCode: 'DEALER_ROUTING_INVALID',
+        reason: validation.routingIssue.rule, notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 5' };
+    }
+    if (validation.privacyIssue) {
+      await markLeadState(catalystApp, leadRow, 'CONSENT_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 8', leadRow, errorCode: 'CONSENT_MISMATCH',
+        reason: validation.privacyIssue.rule, notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 8' };
+    }
+    if (validation.issues.length > 0) {
+      await markLeadState(catalystApp, leadRow, 'VALIDATION_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 2', leadRow, errorCode: 'LEAD_VALIDATION_FAILED',
+        reason: validation.issues.map((issue) => `${issue.field}: ${issue.rule}`).join('; '),
+        notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 2' };
+    }
+
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
     if (integration && integration.integration_type === 'EXTERNAL_CRM') {
-      await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
     }
+    if (!integration || integration.integration_type !== 'PORTAL') {
+      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
+      await crmIntegrationService.recordScenario(catalystApp, {
+        scenarioCode: 'Unhappy 5', leadRow, errorCode: 'INTEGRATION_NOT_CONFIGURED',
+        reason: 'The assigned dealer has no approved Lead Exchange integration mode.', notify: true,
+      });
+      return { held: true, scenarioCode: 'Unhappy 5' };
+    }
+    await markLeadState(catalystApp, leadRow, 'SYNCED');
+    return { skipped: true, reason: 'PORTAL_LIVE_READ' };
   } catch (err) {
     logger.error('leadSyncService', `dispatchLeadUpdateToDealer failed for dealer_code=${leadRow.dealer_code}`, err);
+    return { ok: false, scenarioCode: err.scenarioCode || 'Unhappy 1', error: err.message };
   }
 }
 
@@ -258,40 +373,116 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
   let updated = 0;
   let failed = 0;
   let removed = 0;
+  let unchanged = 0;
   const errors = [];
   const seenCrmIds = new Set();
+  const scenarioCounts = {};
 
   for (const crmRecord of crmRecords) {
     try {
       if (!crmRecord.id) throw new Error('CRM record missing id — skipped');
-      if (!crmRecord.Dealer_Code) throw new Error('CRM record missing Dealer_Code — skipped');
 
       seenCrmIds.add(crmRecord.id);
 
       const mappedRow = stripEmptyDateFields(mapCrmRecordToLeadRow(crmRecord));
+      const validation = pathPolicy.validateLeadForDelivery(mappedRow);
       const now = toCatalystDateTime();
       const existingRow = existingLeadsByCrmId.get(crmRecord.id);
 
       if (!existingRow) {
-        const insertedRow = await table.insertRow({ ...mappedRow, last_synced_at: now, sync_status: 'Synced' });
+        const duplicate = validation.valid
+          ? findDeliveredBusinessDuplicate(
+              { ...mappedRow, CREATEDTIME: crmRecord.Created_Time },
+              existingLeadsByCrmId
+            )
+          : null;
+        let initialSyncStatus = 'PENDING';
+        if (validation.routingIssue) initialSyncStatus = 'ROUTING_HOLD';
+        else if (validation.privacyIssue) initialSyncStatus = 'CONSENT_HOLD';
+        else if (validation.issues.length > 0) initialSyncStatus = 'VALIDATION_HOLD';
+        else if (duplicate) initialSyncStatus = 'DUPLICATE_LINKED';
+
+        const insertedRow = await table.insertRow({
+          ...mappedRow,
+          last_synced_at: now,
+          sync_status: initialSyncStatus,
+        });
         inserted += 1;
 
-        logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
-
-        // INTEGRATION POINT: branch on dealer's integration_type instead
-        // of always notifying via the Catalyst portal. AWAITED — both
-        // branches already catch their own errors internally (matching
-        // the previous fire-and-forget contract for error handling),
-        // but this must be awaited so the outbound push has a chance to
-        // finish before this function invocation returns. See file-level
-        // note at the top of this file.
-        await dispatchNewLeadToDealer(catalystApp, {
+        const fullLeadRow = {
           ...mappedRow,
           crm_record_id: crmRecord.id,
           ROWID: insertedRow.ROWID,
-        });
+          CREATEDTIME: insertedRow.CREATEDTIME || crmRecord.Created_Time,
+          sync_status: initialSyncStatus,
+        };
+        existingLeadsByCrmId.set(crmRecord.id, fullLeadRow);
+
+        logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
+
+        if (validation.routingIssue) {
+          await crmIntegrationService.recordScenario(catalystApp, {
+            scenarioCode: 'Unhappy 5',
+            leadRow: fullLeadRow,
+            errorCode: 'DEALER_ROUTING_INVALID',
+            reason: validation.routingIssue.rule,
+            notify: true,
+          });
+          incrementScenario(scenarioCounts, 'Unhappy 5');
+        } else if (validation.privacyIssue) {
+          await crmIntegrationService.recordScenario(catalystApp, {
+            scenarioCode: 'Unhappy 8',
+            dealerCode: fullLeadRow.dealer_code,
+            leadRow: fullLeadRow,
+            errorCode: 'CONSENT_MISMATCH',
+            reason: validation.privacyIssue.rule,
+            notify: true,
+          });
+          incrementScenario(scenarioCounts, 'Unhappy 8');
+        } else if (validation.issues.length > 0) {
+          await crmIntegrationService.recordScenario(catalystApp, {
+            scenarioCode: 'Unhappy 2',
+            dealerCode: fullLeadRow.dealer_code,
+            leadRow: fullLeadRow,
+            errorCode: 'LEAD_VALIDATION_FAILED',
+            reason: validation.issues.map((issue) => `${issue.field}: ${issue.rule}`).join('; '),
+            notify: true,
+          });
+          incrementScenario(scenarioCounts, 'Unhappy 2');
+        } else if (duplicate) {
+          const originalSubmittedAt = pathPolicy.parseTimestamp(
+            duplicate.assigned_date || duplicate.CREATEDTIME
+          );
+          const duplicateSubmittedAt = pathPolicy.parseTimestamp(
+            fullLeadRow.assigned_date || fullLeadRow.CREATEDTIME
+          );
+          const gapMinutes = originalSubmittedAt && duplicateSubmittedAt
+            ? Math.max(0, (duplicateSubmittedAt.getTime() - originalSubmittedAt.getTime()) / 60000)
+            : null;
+          await crmIntegrationService.recordScenario(catalystApp, {
+            scenarioCode: 'Happy 3',
+            dealerCode: fullLeadRow.dealer_code,
+            leadRow: fullLeadRow,
+            reason: `Exact mandatory-field match within ${pathPolicy.DUPLICATE_WINDOW_MINUTES} minutes; linked to ${duplicate.crm_record_id}.`,
+            fieldChanges: [{
+              field: 'duplicate_link',
+              from: duplicate.crm_record_id,
+              to: fullLeadRow.crm_record_id,
+              original_submitted_at: originalSubmittedAt?.toISOString() || null,
+              duplicate_submitted_at: duplicateSubmittedAt?.toISOString() || null,
+              gap_minutes: gapMinutes,
+              matched_fields: pathPolicy.DUPLICATE_FIELDS,
+            }],
+          });
+          incrementScenario(scenarioCounts, 'Happy 3');
+        } else {
+          // AWAITED so Catalyst cannot freeze this serverless invocation
+          // before dealer delivery and its audit row finish.
+          const dispatchResult = await dispatchNewLeadToDealer(catalystApp, fullLeadRow);
+          incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
+        }
       } else if (existingRow.sync_status === 'Removed' || hasChanges(existingRow, mappedRow)) {
-        await table.updateRow({ ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: 'Synced' });
+        await table.updateRow({ ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: 'PENDING' });
         updated += 1;
 
         // INTEGRATION POINT: EXTERNAL_CRM dealers also need updates
@@ -301,17 +492,33 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
         // table. Only EXTERNAL_CRM dealers need an active push on
         // update. AWAITED for the same reason as dispatchNewLeadToDealer
         // above.
-        await dispatchLeadUpdateToDealer(catalystApp, {
+        const dispatchResult = await dispatchLeadUpdateToDealer(catalystApp, {
           ...mappedRow,
           crm_record_id: crmRecord.id,
           ROWID: existingRow.ROWID,
         });
+        incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
+        const scenarioHoldStatus = {
+          'Unhappy 2': 'VALIDATION_HOLD',
+          'Unhappy 5': 'ROUTING_HOLD',
+          'Unhappy 8': 'CONSENT_HOLD',
+        }[dispatchResult?.scenarioCode];
+        existingLeadsByCrmId.set(crmRecord.id, {
+          ...existingRow,
+          ...mappedRow,
+          sync_status: dispatchResult?.held
+            ? (scenarioHoldStatus || existingRow.sync_status)
+            : 'SYNCED',
+        });
+      } else {
+        unchanged += 1;
       }
 
 
     } catch (err) {
       failed += 1;
       errors.push({ crm_record_id: crmRecord.id || 'UNKNOWN', error: err.message });
+      incrementScenario(scenarioCounts, 'Unhappy 1');
       logger.error('leadSyncService', `Failed syncing crm_record_id=${crmRecord.id}`, err);
     }
   }
@@ -333,24 +540,47 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
   }
 
   const endTime = toCatalystDateTime();
-  const status = failed === 0 ? 'Success' : (inserted + updated > 0 ? 'Partial' : 'Failed');
+  const unhappyCount = Object.entries(scenarioCounts)
+    .filter(([code]) => code.startsWith('Unhappy '))
+    .reduce((sum, [, count]) => sum + count, 0);
+  const status = failed === 0 && unhappyCount === 0
+    ? 'Success'
+    : (inserted + updated > 0 ? 'Partial' : 'Failed');
 
   if (inserted > 0 || updated > 0) {
     logger.info('leadSyncService', `Calling notifyAdmins — inserted=${inserted}, updated=${updated}`);
-    notifyAdmins(catalystApp, {
+    await notifyAdmins(catalystApp, {
       type: 'SYNC_SUMMARY',
       title: 'Lead sync complete',
       message: `${inserted} new, ${updated} updated${removed ? `, ${removed} removed` : ''}.`,
-    }); // fire-and-forget
+    });
   }
 
   await recordSyncRun(catalystApp, {
     syncType: 'Lead_Sync', syncTrigger: trigger, triggeredBy, startTime, endTime,
     totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated,
     recordsFailed: failed, status, errorDetails: errors.length > 0 ? errors : null,
+    scenarioCounts,
   });
 
-  return { status, totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated, recordsFailed: failed, recordsRemoved: removed, errors };
+  return {
+    status,
+    totalRecordsFetched: crmRecords.length,
+    recordsInserted: inserted,
+    recordsUpdated: updated,
+    recordsUnchanged: unchanged,
+    recordsFailed: failed,
+    recordsRemoved: removed,
+    scenarioCounts,
+    errors,
+  };
 }
 
-module.exports = { syncLeads };
+module.exports = {
+  syncLeads,
+  _test: {
+    mapCrmRecordToLeadRow,
+    hasChanges,
+    findDeliveredBusinessDuplicate,
+  },
+};

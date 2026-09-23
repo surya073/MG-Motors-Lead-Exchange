@@ -157,7 +157,7 @@ async function requestWithRetry(config, attempt = 1) {
   }
 }
 
-async function createLead(catalystApp, integration, payload) {
+async function createLead(catalystApp, integration, payload, { idempotencyKey } = {}) {
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
@@ -167,7 +167,11 @@ async function createLead(catalystApp, integration, payload) {
   const response = await requestWithRetry({
     method: integration.http_method || 'POST',
     url: url.toString(),
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers,
+      ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
+    },
     data: requestBody,
     timeout: 10000,
   });

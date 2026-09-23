@@ -2,6 +2,7 @@
 
 const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
+const pathPolicy = require('./pathPolicyService');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const LEADS_TABLE = 'leads';
@@ -12,6 +13,7 @@ const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 // failing at once. Leads beyond this limit just get picked up on the
 // next sweep.
 const MAX_LEADS_PER_SWEEP = 50;
+const MAX_CANDIDATES_TO_SCAN = 200;
 
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
@@ -43,24 +45,27 @@ async function runOutboundRetrySweep(catalystApp) {
   const now = new Date();
 
   const dueRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL') LIMIT 0, ${MAX_LEADS_PER_SWEEP}`
+    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL') LIMIT 0, ${MAX_CANDIDATES_TO_SCAN}`
   );
 
   const results = { totalCandidates: dueRows.length, attempted: 0, succeeded: 0, stillFailing: 0, skippedNotDue: 0, skippedNoIntegrationOrLead: 0, errored: 0 };
 
-  for (const r of dueRows) {
-    const mapping = r[LEAD_INTEGRATIONS_TABLE];
+  const dueNow = dueRows
+    .map((row) => row[LEAD_INTEGRATIONS_TABLE])
+    .filter((mapping) => {
+      const dueAt = pathPolicy.parseTimestamp(mapping.next_retry_at);
+      const isDue = !dueAt || dueAt.getTime() <= now.getTime();
+      if (!isDue) results.skippedNotDue += 1;
+      return isDue;
+    })
+    .sort((left, right) => {
+      const leftAt = pathPolicy.parseTimestamp(left.next_retry_at)?.getTime() || 0;
+      const rightAt = pathPolicy.parseTimestamp(right.next_retry_at)?.getTime() || 0;
+      return leftAt - rightAt;
+    })
+    .slice(0, MAX_LEADS_PER_SWEEP);
 
-    // next_retry_at is a plain text column (not datetime), so parse and
-    // compare defensively; treat missing/unparsable as "due now" rather
-    // than skipping it forever.
-    if (mapping.next_retry_at) {
-      const dueAt = new Date(mapping.next_retry_at);
-      if (!isNaN(dueAt.getTime()) && dueAt.getTime() > now.getTime()) {
-        results.skippedNotDue += 1;
-        continue;
-      }
-    }
+  for (const mapping of dueNow) {
 
     try {
       const integrationRows = await catalystApp.zcql().executeZCQLQuery(

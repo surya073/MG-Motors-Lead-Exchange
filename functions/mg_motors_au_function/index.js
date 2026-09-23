@@ -36,13 +36,9 @@ const ALLOWED_STATUSES = ['active', 'inactive', 'pending'];
 
 
 app.use(async (req, res, next) => {
-  try {
-    const catalystApp = catalyst.initialize(req);
-        console.log('[DEBUG] raw cookie header length:', req.headers.cookie?.length, req.headers.cookie);
-
-    const currentUser = await catalystApp.userManagement().getCurrentUser();
-
-    console.log('[DEBUG] middleware currentUser:', JSON.stringify(currentUser));
+    try {
+      const catalystApp = catalyst.initialize(req);
+      const currentUser = await catalystApp.userManagement().getCurrentUser();
 
     if (!currentUser) {
       return res.status(401).json({ error: 'Not authenticated' });

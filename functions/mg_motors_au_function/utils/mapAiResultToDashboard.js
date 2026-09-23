@@ -5,7 +5,7 @@
  * into the { kpis, charts, activity, table } shape DashboardView
  * renders. Multiple results (multiple uploaded files) are merged.
  */
-export function mapAiResultToDashboard(results) {
+function mapAiResultToDashboard(results) {
   const list = Array.isArray(results) ? results : [results];
 
   const kpis = list.flatMap((r, fi) =>
@@ -45,3 +45,5 @@ export function mapAiResultToDashboard(results) {
     summaries: list.map((r) => r.summary).filter(Boolean),
   };
 }
+
+module.exports = { mapAiResultToDashboard };
