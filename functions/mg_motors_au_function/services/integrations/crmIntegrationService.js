@@ -17,15 +17,16 @@ const WEBHOOK_EVENTS_TABLE = 'webhook_events';
 const LEADS_TABLE = 'leads';
 
 const REJECTION_STATUS_VALUES = new Set([
-  'rejected',
-  'not qualified',
-  'lost',
-  'lost lead',
+  
   'junk lead',
   'junk',
   'spam',
   'Junk Lead / Spam',
 ]);
+
+const CONSENT_HOLD_LEAD_STATUS = 'Consent Hold';
+const CONSENT_MISMATCH_ERROR_CODE = 'CONSENT_MISMATCH';
+
 
 // Unhappy 3 — Dealer Unavailable escalation window. A ZOHO_TO_EXTERNAL_CRM
 // failure (Unhappy 1) that stays unresolved this long gets reclassified as
@@ -96,6 +97,15 @@ function safeQuoteForZcql(value) {
   // this guards against a stray apostrophe breaking the query or,
   // worse, enabling injection).
   return String(value).replace(/'/g, "''");
+}
+
+function resolveConsentValue(rawValue) {
+  if (rawValue === true || rawValue === false) return rawValue;
+  if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') return null;
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (['true', 'yes', 'y', '1'].includes(normalized)) return true;
+  if (['false', 'no', 'n', '0'].includes(normalized)) return false;
+  return undefined;
 }
 
 function extractAffectedFieldNames(externalPayload, externalLeadId) {
@@ -236,6 +246,72 @@ async function recordOutboundFailureAndCheckEscalation(catalystApp, integration,
   return { escalate: crossesEscalationWindow };
 }
 
+async function handleConsentMismatch(catalystApp, integration, leadRow, zohoLeadId, requestReference, side, consentValue) {
+  const reasonDetail =
+    consentValue === null
+      ? 'accept_privacy_policy is missing'
+      : consentValue === false
+      ? 'accept_privacy_policy is false — sharing not permitted'
+      : `accept_privacy_policy value "${leadRow?.accept_privacy_policy}" could not be safely translated to a boolean`;
+
+  logger.error(
+    'crmIntegrationService',
+    `Consent/privacy mismatch for lead ${zohoLeadId} (dealer ${integration.dealer_code}, ${side}) — ${reasonDetail}. Enquiry held.`
+  );
+
+  if (leadRow?.ROWID) {
+    try {
+      await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+        ROWID: leadRow.ROWID,
+        lead_status: CONSENT_HOLD_LEAD_STATUS,
+      });
+    } catch (err) {
+      logger.error('crmIntegrationService', `Failed to set "${CONSENT_HOLD_LEAD_STATUS}" status for lead ${zohoLeadId}`, err);
+    }
+  }
+
+  try {
+    const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
+    const existingMappingRows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE zoho_lead_id = '${safeQuoteForZcql(zohoLeadId)}' LIMIT 1`
+    );
+    const existingMapping = existingMappingRows.length > 0 ? existingMappingRows[0][LEAD_INTEGRATIONS_TABLE] : null;
+
+    if (existingMapping) {
+      await mappingTable.updateRow({
+        ROWID: existingMapping.ROWID,
+        sync_status: 'CONSENT_HOLD',
+        last_attempted_at: toCatalystDateTime(),
+        last_error: CONSENT_MISMATCH_ERROR_CODE,
+      });
+    } else {
+      await mappingTable.insertRow({
+        dealer_code: integration.dealer_code,
+        zoho_lead_id: zohoLeadId,
+        integration_id: integration.ROWID,
+        sync_status: 'CONSENT_HOLD',
+        last_attempted_at: toCatalystDateTime(),
+        last_error: CONSENT_MISMATCH_ERROR_CODE,
+      });
+    }
+  } catch (err) {
+    logger.error('crmIntegrationService', `Failed to record CONSENT_HOLD mapping for lead ${zohoLeadId}`, err);
+  }
+
+  await writeLog(catalystApp, {
+    integration_id: integration.ROWID,
+    dealer_code: integration.dealer_code,
+    direction: side === 'OUTBOUND' ? 'ZOHO_TO_EXTERNAL_CRM' : 'EXTERNAL_CRM_TO_ZOHO',
+    operation: side === 'OUTBOUND' ? 'CREATE_LEAD' : 'UPDATE_LEAD',
+    zoho_lead_id: zohoLeadId,
+    status: 'FAILED',
+    error_message: CONSENT_MISMATCH_ERROR_CODE,
+    request_reference: requestReference,
+  });
+
+  return { skipped: true, reason: 'CONSENT_HOLD', held: true };
+}
+
 /**
  * ============================================================
  * OUTBOUND: our `leads` row -> External CRM
@@ -256,6 +332,11 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
 
   const requestReference = crypto.randomUUID();
   const zohoLeadId = leadRow.crm_record_id;
+
+    const consentValue = resolveConsentValue(leadRow.accept_privacy_policy);
+  if (consentValue !== true) {
+    return handleConsentMismatch(catalystApp, integration, leadRow, zohoLeadId, requestReference, 'OUTBOUND', consentValue);
+  }
 
   try {
     const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
@@ -499,6 +580,11 @@ function classifyLogScenario({ direction, operation, status, error_message }, { 
   // status === 'FAILED' from here down.
   const code = (error_message || '').trim();
 
+
+  if (code === CONSENT_MISMATCH_ERROR_CODE) {
+    return { name: 'Unhappy 8', message: 'Consent / privacy mismatch', priority: 'P1' };
+  }
+
   if (code === 'LEAD_MAPPING_NOT_FOUND') {
     return { name: 'Unhappy 7', message: 'Out-of-order events' };
   }
@@ -738,6 +824,18 @@ async function processResolvedInboundLead(
     `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
   );
   const existingLeadRow = existingLeadRowsBefore.length > 0 ? existingLeadRowsBefore[0][LEADS_TABLE] : null;
+
+    const consentFieldMapping = fieldMappings.find((m) => m.source_field === 'accept_privacy_policy');
+  if (consentFieldMapping) {
+    const rawIncomingConsent = externalRecord[consentFieldMapping.target_field];
+    const incomingConsentValue = resolveConsentValue(rawIncomingConsent);
+    if (incomingConsentValue !== true) {
+      return handleConsentMismatch(
+        catalystApp, integration, existingLeadRow, mapping.zoho_lead_id,
+        requestReference, 'INBOUND', incomingConsentValue
+      );
+    }
+  }
 
   const internalUpdate = leadMappingService.mapExternalLeadToZoho(externalRecord, fieldMappings);
 

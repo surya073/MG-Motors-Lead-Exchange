@@ -104,4 +104,20 @@ router.get('/debug/check-lead-status', async (req, res) => {
   }
 });
 
+const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
+
+router.post('/cron/daily-error-report', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const report = await dailyErrorReportService.sendDailyErrorReport(catalystApp);
+    res.status(200).json({ success: true, report });
+  } catch (err) {
+    logger.error('cronRoutes', 'Daily error report cron failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
 module.exports = router;

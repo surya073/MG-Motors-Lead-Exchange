@@ -36,12 +36,13 @@ const STATUS_TONES = {
   Dropped: "danger",
   "Not Qualified": "danger",
   Rejected: "danger",
-  "Junk Lead": "danger",   
-  Junk: "danger",           
-  Spam: "danger",           
+  "Junk Lead": "danger",
+  Junk: "danger",
+  Spam: "danger",
   "Dealer Unavailable": "danger",
   "Unattended Alert": "danger",
   Removed: "danger",
+  "Consent Hold": "danger",
 };
 
 /* ----------------------------------------------------------------
@@ -391,6 +392,45 @@ function classifyPath(lead) {
   };
 }
 
+/**
+ * Resolves which Integration Path scenario to display for this lead.
+ *
+ * FIX: previously this trusted lead.happy_unhappy_path_name unconditionally
+ * whenever it was non-empty — but that field is written by a SEPARATE
+ * backend call (writeLog's mirror block) from the one that sets
+ * lead_status (handleConsentMismatch / recordOutboundFailureAndCheckEscalation
+ * etc write lead_status directly). If the mirror write ever lags, fails
+ * silently, or simply hasn't run yet for the lead's CURRENT status, the
+ * stored name goes stale — e.g. lead_status correctly says "Consent Hold"
+ * but happy_unhappy_path_name still holds an old "Unhappy 1" from a
+ * previous failed attempt. Since a stale string is still truthy, the old
+ * code would display the wrong badge even though the pill (driven by
+ * lead_status directly) was correct.
+ *
+ * Now: a LIVE match against the lead's current lead_status/sync_status
+ * takes priority — this is always at least as fresh as the pill itself,
+ * since both are read from the same lead row. The stored
+ * happy_unhappy_path_name is only used as a fallback when the current
+ * status doesn't match any known scenario (e.g. legacy/log-only states),
+ * and classifyPath's own heuristics are the last resort.
+ */
+function resolveDisplayPath(lead) {
+  const liveMatch = matchPathScenario(lead);
+  if (liveMatch) return liveMatch;
+
+  if (lead.happy_unhappy_path_name) {
+    return {
+      id: lead.happy_unhappy_path_name,
+      type: /^happy/i.test(lead.happy_unhappy_path_name) ? "happy" : "unhappy",
+      title: lead.happy_unhappy_path_message || lead.happy_unhappy_path_name,
+      trigger: "—",
+      description: lead.happy_unhappy_path_message || "",
+    };
+  }
+
+  return classifyPath(lead);
+}
+
 function initials(name) {
   return (name || "?")
     .trim()
@@ -688,15 +728,10 @@ export default function LeadDetailView({ lead, onBack }) {
   const mobile = val("mobile_number");
   const email = val("email_address");
 
-  const path = lead.happy_unhappy_path_name
-    ? {
-        id: lead.happy_unhappy_path_name,
-        type: /^happy/i.test(lead.happy_unhappy_path_name) ? "happy" : "unhappy",
-        title: lead.happy_unhappy_path_message || lead.happy_unhappy_path_name,
-        trigger: "—",
-        description: lead.happy_unhappy_path_message || "",
-      }
-    : classifyPath(lead);
+  // FIX: was `lead.happy_unhappy_path_name ? {...} : classifyPath(lead)`,
+  // which trusted a possibly-stale stored name over the lead's live
+  // status. See resolveDisplayPath's comment above for why.
+  const path = resolveDisplayPath(lead);
 
   const journeyPaths = getDistinctPaths(timeline);
 
