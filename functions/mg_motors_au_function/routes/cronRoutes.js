@@ -88,6 +88,41 @@ router.post('/cron/retry-outbound-syncs', async (req, res) => {
   }
 });
 
+/**
+ * Happy 4 fast recovery.
+ *
+ * Runs the same outbound sweep as /cron/retry-outbound-syncs but ignores
+ * each lead's next_retry_at, so leads that failed during a dealer outage go
+ * out as soon as the connection is back rather than waiting out their
+ * individual back-off. Intended to be scheduled every couple of minutes,
+ * alongside — not instead of — the ordinary paced sweep, which is left
+ * exactly as it was.
+ *
+ * Safe to run often: a lead that is still broken simply fails again and is
+ * re-counted, and one that is held by policy (validation, consent, echo) is
+ * reported under heldByPolicy rather than being pushed.
+ */
+router.post('/cron/fast-recover', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
+      ignoreSchedule: true,
+    });
+    if (results.recovered > 0) {
+      logger.info('cronRoutes', `Fast recovery delivered ${results.recovered} lead(s)`);
+    }
+    res.status(200).json({ success: true, mode: 'fast-recovery', results });
+  } catch (err) {
+    logger.error('cronRoutes', 'Fast recovery sweep failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/cron/replay-inbound-events', async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {

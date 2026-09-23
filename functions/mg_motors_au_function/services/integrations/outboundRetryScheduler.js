@@ -41,7 +41,19 @@ function safeQuoteForZcql(value) {
  * Intended to run on a schedule (Catalyst Job Scheduler / Cron Job) —
  * see the /system/retry-outbound-syncs route this is wired to.
  */
-async function runOutboundRetrySweep(catalystApp) {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.ignoreSchedule=false] Attempt every failing lead
+ *   now, rather than only those whose next_retry_at has elapsed.
+ *
+ *   next_retry_at paces the ordinary sweep so a permanently broken dealer is
+ *   not hammered. A fast recovery pass wants the opposite: the moment a
+ *   dealer's connection is restored, the leads that failed during the outage
+ *   should go out, not sit until their individual back-off expires. Default
+ *   is false, so existing callers behave exactly as before.
+ */
+async function runOutboundRetrySweep(catalystApp, options) {
+  const ignoreSchedule = Boolean(options && options.ignoreSchedule);
   const now = new Date();
 
   const dueRows = await catalystApp.zcql().executeZCQLQuery(
@@ -71,6 +83,7 @@ async function runOutboundRetrySweep(catalystApp) {
   const dueNow = dueRows
     .map((row) => row[LEAD_INTEGRATIONS_TABLE])
     .filter((mapping) => {
+      if (ignoreSchedule) return true;
       const dueAt = pathPolicy.parseTimestamp(mapping.next_retry_at);
       const isDue = !dueAt || dueAt.getTime() <= now.getTime();
       if (!isDue) results.skippedNotDue += 1;
