@@ -1162,6 +1162,7 @@ async function recordScenario(catalystApp, {
   notify = false,
   externalLeadId,
   fieldChanges,
+  integrationId,
 }) {
   const scenario = pathPolicy.scenario(scenarioCode);
 
@@ -1174,6 +1175,7 @@ async function recordScenario(catalystApp, {
   const detailedError = errorCode && reason ? `${errorCode}: ${reason}` : (errorCode || undefined);
 
   return writeLog(catalystApp, {
+    integration_id: integrationId,
     dealer_code: dealerCode || leadRow?.dealer_code,
     direction,
     operation,
@@ -1321,7 +1323,9 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
   return { ok: true, held: results.some((r) => r.held), results };
 }
 
-async function replayInboundLead(catalystApp, integration, externalLeadId, zohoCrmService = oemCrmService) {
+async function replayInboundLead(
+  catalystApp, integration, externalLeadId, zohoCrmService = oemCrmService, { replay = false } = {}
+) {
   const [fieldMappings, statusMappings] = await Promise.all([
     getFieldMappings(catalystApp, integration.ROWID),
     getStatusMappings(catalystApp, integration.ROWID),
@@ -1365,7 +1369,9 @@ async function replayInboundLead(catalystApp, integration, externalLeadId, zohoC
     fieldMappings,
     statusMappings,
     crypto.randomUUID(),
-    zohoCrmService
+    zohoCrmService,
+    null,
+    { replay }
   );
 }
 
@@ -1380,8 +1386,13 @@ async function replayInboundLead(catalystApp, integration, externalLeadId, zohoC
 async function processResolvedInboundLead(
   catalystApp, integration, externalLeadId, externalRecord,
   fieldMappings, statusMappings, requestReference, zohoCrmService,
-  affectedFields = null
+  affectedFields = null,
+  { replay = false } = {}
 ) {
+  // replay: this is the Unhappy 4 replay sweep re-checking an update that
+  // is already held with an open FAILED log. A still-failing replay must
+  // not add a second timeline entry or a second alert — the original
+  // Unhappy 4 stays the single open record until it is resolved.
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integration.ROWID} AND dealer_code = '${safeQuoteForZcql(integration.dealer_code)}' AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
   );
@@ -1421,7 +1432,7 @@ async function processResolvedInboundLead(
   const existingLeadRow = existingLeadRowsBefore.length > 0 ? existingLeadRowsBefore[0][LEADS_TABLE] : null;
 
   if (!existingLeadRow) {
-    await writeLog(catalystApp, {
+    if (!replay) await writeLog(catalystApp, {
       integration_id: integration.ROWID,
       dealer_code: integration.dealer_code,
       direction: 'EXTERNAL_CRM_TO_ZOHO',
@@ -1507,23 +1518,28 @@ async function processResolvedInboundLead(
         `Unmapped dealer status "${incomingStatusValue}" for dealer ${integration.dealer_code} — held pending an MG mapping decision`,
         err
       );
-      await writeLog(catalystApp, {
-        integration_id: integration.ROWID,
-        dealer_code: integration.dealer_code,
-        direction: 'EXTERNAL_CRM_TO_ZOHO',
-        operation: 'UPDATE_LEAD',
-        zoho_lead_id: mapping.zoho_lead_id,
-        external_lead_id: externalLeadId,
-        status: 'FAILED',
-        error_message: `STATUS_MAPPING_NOT_FOUND: dealer sent "${incomingStatusValue}"`,
-        request_reference: requestReference,
-      }, {
-        scenarioCode: heldScenarioCode,
-        unmappedStatusValue: incomingStatusValue,
-        notify: mapping.last_error !== `UNMAPPED_STATUS:${incomingStatusValue}`,
-        leadRow: existingLeadRow,
-        reason: `Unmapped dealer status "${incomingStatusValue}" was held and not written to MG.`,
-      });
+      if (!replay) {
+        await writeLog(catalystApp, {
+          integration_id: integration.ROWID,
+          dealer_code: integration.dealer_code,
+          direction: 'EXTERNAL_CRM_TO_ZOHO',
+          operation: 'UPDATE_LEAD',
+          zoho_lead_id: mapping.zoho_lead_id,
+          external_lead_id: externalLeadId,
+          status: 'FAILED',
+          error_message: `STATUS_MAPPING_NOT_FOUND: dealer sent "${incomingStatusValue}"`,
+          request_reference: requestReference,
+        }, {
+          scenarioCode: heldScenarioCode,
+          unmappedStatusValue: incomingStatusValue,
+          ...(heldScenarioCode === 'Unhappy 4' ? {
+            scenarioMessage: `Mapping failure — dealer status "${incomingStatusValue}" is not in the approved map; held for an MG mapping decision`,
+          } : {}),
+          notify: mapping.last_error !== `UNMAPPED_STATUS:${incomingStatusValue}`,
+          leadRow: existingLeadRow,
+          reason: `Mapping failure: unmapped dealer status "${incomingStatusValue}" was held and not written to MG.`,
+        });
+      }
 
       await markMappingHeld(catalystApp, mapping.ROWID, `UNMAPPED_STATUS:${incomingStatusValue}`);
       return {
@@ -1727,24 +1743,48 @@ async function processResolvedInboundLead(
       conflicts,
     };
   } catch (err) {
-    await writeLog(catalystApp, {
-      integration_id: integration.ROWID,
-      dealer_code: integration.dealer_code,
-      direction: 'EXTERNAL_CRM_TO_ZOHO',
-      operation: 'UPDATE_LEAD',
-      zoho_lead_id: mapping.zoho_lead_id,
-      external_lead_id: externalLeadId,
-      status: 'FAILED',
-      error_message: (err.message || 'ZOHO_UPDATE_FAILED').slice(0, 500),
-      request_reference: requestReference,
-    }, {
-      scenarioCode: 'Unhappy 4',
-      notify: true,
-      leadRow: existingLeadRow,
-      reason: err.message || 'MG CRM write-back failed.',
-    });
+    // Transport (MG unreachable, token, rate limit, 5xx) is retried by
+    // the replay sweep; validation (MG refused the values) is held for
+    // correction. The register requires the reason to say which.
+    const category = err.writeBackCategory === 'VALIDATION' ? 'VALIDATION' : 'TRANSPORT';
+    const failureKey = `MG_WRITE_BACK_FAILED:${category}`;
+    if (!replay) {
+      const dealerValues = Object.entries(internalUpdate)
+        .map(([key, value]) => `${key}="${pathPolicy.maskSensitiveValue(key, value)}"`)
+        .join(', ');
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'EXTERNAL_CRM_TO_ZOHO',
+        operation: 'UPDATE_LEAD',
+        zoho_lead_id: mapping.zoho_lead_id,
+        external_lead_id: externalLeadId,
+        status: 'FAILED',
+        error_message: `${failureKey}: ${err.message || 'ZOHO_UPDATE_FAILED'}`.slice(0, 500),
+        request_reference: requestReference,
+        field_changes: fieldChanges.length > 0 ? JSON.stringify(fieldChanges) : null,
+      }, {
+        scenarioCode: 'Unhappy 4',
+        scenarioMessage: category === 'VALIDATION'
+          ? 'Validation failure at MG — dealer update refused by MG CRM; held for correction'
+          : 'Transport failure — MG CRM could not be updated; retrying automatically',
+        notify: mapping.last_error !== failureKey,
+        leadRow: existingLeadRow,
+        reason: `${category === 'VALIDATION' ? 'Validation' : 'Transport'} failure writing dealer update to MG (${dealerValues}): ${err.message || 'MG CRM write-back failed.'}`,
+      });
+      try {
+        await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+          ROWID: mapping.ROWID,
+          last_error: failureKey,
+          last_attempted_at: toCatalystDateTime(),
+        });
+      } catch (markErr) {
+        logger.error('crmIntegrationService', `Failed to record write-back failure on mapping ${mapping.ROWID}`, markErr);
+      }
+    }
     const wrapped = new Error(err.message);
     wrapped.code = 'ZOHO_UPDATE_FAILED';
+    wrapped.writeBackCategory = category;
     throw wrapped;
   }
 }

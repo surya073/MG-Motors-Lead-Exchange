@@ -189,15 +189,26 @@ async function updateOemLead(crmRecordId, fields) {
     );
   } catch (err) {
     logger.error('zohoCrmService', `OEM_Leads write-back failed for ${crmRecordId}`, err);
-    throw new Error(
-      `Zoho CRM update failed: ${err.response?.data?.message || err.message}`
-    );
+    // Unhappy 4 must say which of three categories a failed write-back
+    // is. A 400 is Zoho refusing the values (validation at MG); anything
+    // else — no response, 401/403 token, 429 limit, 5xx — is transport.
+    const httpStatus = err.response?.status;
+    const recordError = err.response?.data?.data?.[0];
+    const detail = recordError?.message || err.response?.data?.message || err.message;
+    const wrapped = new Error(`Zoho CRM update failed: ${detail}`);
+    wrapped.writeBackCategory = httpStatus === 400 ? 'VALIDATION' : 'TRANSPORT';
+    wrapped.httpStatus = httpStatus;
+    wrapped.zohoCode = recordError?.code || err.response?.data?.code;
+    throw wrapped;
   }
 
   const result = response.data?.data?.[0];
   if (result?.status !== 'success') {
     const detail = result?.message || 'Unknown CRM error';
-    throw new Error(`Zoho CRM rejected the update: ${detail}`);
+    const rejected = new Error(`Zoho CRM rejected the update: ${detail}`);
+    rejected.writeBackCategory = 'VALIDATION';
+    rejected.zohoCode = result?.code;
+    throw rejected;
   }
 
   return result;
