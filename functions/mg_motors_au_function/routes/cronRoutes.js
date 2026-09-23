@@ -112,6 +112,7 @@ router.post('/cron/fast-recover', async (req, res) => {
     const catalystApp = catalyst.initialize(req);
     const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
       ignoreSchedule: true,
+      includeRoutingHolds: true,
     });
     if (results.recovered > 0) {
       logger.info('cronRoutes', `Fast recovery delivered ${results.recovered} lead(s)`);

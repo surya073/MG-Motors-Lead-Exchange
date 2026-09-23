@@ -145,8 +145,68 @@ async function runOutboundRetrySweep(catalystApp, options) {
     }
   }
 
+  if (options && options.includeRoutingHolds) {
+    results.routingHolds = await reprocessRoutingHolds(catalystApp);
+  }
+
   logger.info('outboundRetryScheduler', `Sweep complete: ${JSON.stringify(results)}`);
   return results;
+}
+
+const MAX_ROUTING_HOLDS_PER_SWEEP = 20;
+const UNROUTABLE_INTEGRATION_STATUSES = ['NOT_CONFIGURED', 'CONFIGURING', 'DISABLED'];
+
+/**
+ * Unhappy 5 is "held as a routing exception until the mapping is corrected,
+ * then reprocessed" — but a ROUTING_HOLD lead has no FAILED mapping row, so
+ * the retry sweep above never sees it and it stayed held forever.
+ *
+ * A held lead is re-sent only when its dealer integration is routable again
+ * AND was modified after the lead was held (i.e. someone changed the dealer
+ * setup since). Catalyst system timestamps ("YYYY-MM-DD HH:MM:SS:mmm", both
+ * in the project timezone) compare correctly as strings. The re-send goes
+ * through syncLeadToExternalCrm, so every check runs again: a lead whose
+ * problem is not actually fixed is simply re-held, which bumps its
+ * MODIFIEDTIME so it is not retried again until the dealer changes again.
+ * A fixed lead is delivered as Happy 1 — never Happy 4, since nothing
+ * failed.
+ */
+async function reprocessRoutingHolds(catalystApp) {
+  const summary = { candidates: 0, attempted: 0, delivered: 0, stillHeld: 0, errored: 0 };
+  const heldRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEADS_TABLE} WHERE sync_status = 'ROUTING_HOLD' ORDER BY MODIFIEDTIME ASC LIMIT 0, ${MAX_ROUTING_HOLDS_PER_SWEEP}`
+  );
+  summary.candidates = heldRows.length;
+  const integrationsByDealer = new Map();
+
+  for (const row of heldRows) {
+    const leadRow = row[LEADS_TABLE];
+    if (!leadRow.dealer_code || !leadRow.crm_record_id) continue;
+    try {
+      if (!integrationsByDealer.has(leadRow.dealer_code)) {
+        integrationsByDealer.set(
+          leadRow.dealer_code,
+          await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code)
+        );
+      }
+      const integration = integrationsByDealer.get(leadRow.dealer_code);
+      const isRoutable = integration
+        && integration.integration_type === 'EXTERNAL_CRM'
+        && !UNROUTABLE_INTEGRATION_STATUSES.includes(integration.status);
+      const changedSinceHeld = integration
+        && String(integration.MODIFIEDTIME || '') > String(leadRow.MODIFIEDTIME || '');
+      if (!isRoutable || !changedSinceHeld) continue;
+
+      summary.attempted += 1;
+      const outcome = await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+      if (outcome && outcome.ok) summary.delivered += 1;
+      else summary.stillHeld += 1;
+    } catch (err) {
+      // syncLeadToExternalCrm already logged the Unhappy classification.
+      summary.errored += 1;
+    }
+  }
+  return summary;
 }
 
 module.exports = { runOutboundRetrySweep };
