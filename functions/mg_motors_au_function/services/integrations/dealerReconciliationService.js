@@ -7,7 +7,17 @@ const crmIntegrationService = require('./crmIntegrationService');
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 const LEADS_TABLE = 'leads';
-const MAX_RECORDS_PER_SWEEP = 200;
+// Each mapping costs one dealer-CRM round trip, so the sweep is I/O bound:
+// 51 mappings measured at ~20s against AU008. At 200 this exceeds Catalyst's
+// applogic execution limit and the whole run is lost, taking the Unhappy 11
+// detection with it. Mappings are ordered by last_attempted_at ASC and each
+// one is touched as it is processed, so successive sweeps rotate through the
+// full set rather than re-checking the same head every time. Overridable for
+// environments with a larger budget.
+const MAX_RECORDS_PER_SWEEP = (() => {
+  const configured = Number(process.env.RECONCILE_MAX_PER_SWEEP);
+  return Number.isFinite(configured) && configured > 0 ? configured : 40;
+})();
 
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
