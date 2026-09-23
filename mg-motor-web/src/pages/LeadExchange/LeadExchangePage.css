@@ -1024,3 +1024,170 @@
   border-color: rgba(179, 38, 30, 0.28);
   color: #b3261e;
 }
+
+/* ---------------------------------------------------------------------
+ * Unhappy 7 — dealer updates awaiting an MG enquiry (OutOfOrderEventsPanel)
+ * ------------------------------------------------------------------- */
+.ooo-panel {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.ooo-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ooo-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ooo-panel__title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.ooo-panel__path-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  background: rgba(179, 38, 30, 0.10);
+  border: 1px solid rgba(179, 38, 30, 0.28);
+  color: #b3261e;
+}
+
+.ooo-panel__subtitle {
+  margin: var(--space-1) 0 0;
+  max-width: 760px;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.ooo-panel__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-white);
+  color: var(--color-text-primary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast) var(--ease-premium);
+}
+
+.ooo-panel__refresh:hover {
+  background: var(--color-surface-alt);
+}
+
+.ooo-panel__summary {
+  margin-top: var(--space-3);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.ooo-panel__error {
+  margin-top: var(--space-3);
+  font-size: var(--fs-xs);
+  color: #b3261e;
+}
+
+.ooo-panel__table-wrap {
+  margin-top: var(--space-2);
+  overflow-x: auto;
+}
+
+.ooo-panel__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+}
+
+.ooo-panel__table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.ooo-panel__table td {
+  padding: var(--space-2) var(--space-3);
+  vertical-align: top;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ooo-panel__table tr:last-child td {
+  border-bottom: none;
+}
+
+.ooo-panel__name {
+  font-weight: var(--fw-medium);
+}
+
+.ooo-panel__mono {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ooo-panel__reason {
+  min-width: 260px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.ooo-panel__state {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.ooo-panel__state--held {
+  background: rgba(176, 108, 0, 0.10);
+  border-color: rgba(176, 108, 0, 0.30);
+  color: #8a5400;
+}
+
+.ooo-panel__state--expired {
+  background: rgba(179, 38, 30, 0.10);
+  border-color: rgba(179, 38, 30, 0.28);
+  color: #b3261e;
+}
+
+.ooo-panel__state--released {
+  background: rgba(30, 122, 60, 0.10);
+  border-color: rgba(30, 122, 60, 0.28);
+  color: #1e7a3c;
+}
+
+.ooo-panel__state-note {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}

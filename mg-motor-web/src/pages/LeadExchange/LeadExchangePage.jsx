@@ -863,8 +863,133 @@ export default function LeadExchangePage() {
               </button>
             </div>
           </div>
+
+          <OutOfOrderEventsPanel />
         </div>
       )}
     </div>
+  );
+}
+
+// Unhappy 7 — out-of-order dealer events. A dealer update that arrives
+// before its MG enquiry is linked has no MG lead, so it can never be a card
+// in the lead list above. This panel shows those dealer records on their
+// own, so the hold, the release and the expiry are all visible. It is
+// self-contained: it neither reads nor changes the lead list's state.
+const OUT_OF_ORDER_REFRESH_MS = 30000;
+
+const OUT_OF_ORDER_STATES = {
+  HELD: { label: "Held", tone: "held", note: "Waiting for its MG enquiry" },
+  EXPIRED: { label: "Expired", tone: "expired", note: "Retention passed — not applied to MG" },
+  RELEASED: { label: "Released", tone: "released", note: "Applied to MG once the enquiry was linked" },
+};
+
+function formatSystemTimestamp(value) {
+  if (!value) return "—";
+  // Catalyst system timestamp "YYYY-MM-DD HH:MM:SS:mmm" — drop milliseconds.
+  return String(value).replace(/:\d{1,3}$/, "");
+}
+
+function OutOfOrderEventsPanel() {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = async () => {
+    try {
+      const result = await adminDashboardService.listOutOfOrderEvents();
+      setEvents(result);
+      setError(null);
+    } catch (err) {
+      setError(err?.response?.data?.error || "Couldn't load dealer events.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, OUT_OF_ORDER_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (loading) return null;
+  if (!error && events.length === 0) return null;
+
+  const heldCount = events.filter((e) => e.state === "HELD").length;
+
+  return (
+    <section className="ooo-panel" aria-labelledby="ooo-panel-title">
+      <div className="ooo-panel__header">
+        <div>
+          <div className="ooo-panel__title-row">
+            <h3 id="ooo-panel-title" className="ooo-panel__title">
+              Dealer updates awaiting an MG enquiry
+            </h3>
+            <span className="ooo-panel__path-pill">Unhappy 7</span>
+          </div>
+          <p className="ooo-panel__subtitle">
+            Out-of-order events: the dealer CRM sent an update for a record with no linked MG
+            enquiry. It is held — never applied to the wrong enquiry — and released once the
+            enquiry exists, or expired with an alert after the retention period.
+          </p>
+        </div>
+        <button type="button" className="ooo-panel__refresh" onClick={load} aria-label="Refresh dealer events">
+          <RefreshCw size={14} strokeWidth={2} />
+          Refresh
+        </button>
+      </div>
+
+      {error && <div className="ooo-panel__error">{error}</div>}
+
+      {events.length > 0 && (
+        <>
+          <div className="ooo-panel__summary">
+            {heldCount} held · {events.length} total
+          </div>
+          <div className="ooo-panel__table-wrap">
+            <table className="ooo-panel__table">
+              <thead>
+                <tr>
+                  <th>Customer (dealer CRM)</th>
+                  <th>Dealer</th>
+                  <th>Dealer record ID</th>
+                  <th>Dealer status</th>
+                  <th>Held since</th>
+                  <th>State</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((event) => {
+                  const meta = OUT_OF_ORDER_STATES[event.state] || OUT_OF_ORDER_STATES.HELD;
+                  return (
+                    <tr key={`${event.dealerCode}:${event.externalLeadId}`}>
+                      <td className="ooo-panel__name">
+                        {event.customerName || (event.dealerRecordMissing ? "Not found at dealer" : "—")}
+                      </td>
+                      <td>{event.dealerCode || "—"}</td>
+                      <td className="ooo-panel__mono">{event.externalLeadId}</td>
+                      <td>{event.dealerStatus || "—"}</td>
+                      <td className="ooo-panel__mono">{formatSystemTimestamp(event.heldSince)}</td>
+                      <td>
+                        <span className={`ooo-panel__state ooo-panel__state--${meta.tone}`}>{meta.label}</span>
+                        <div className="ooo-panel__state-note">{meta.note}</div>
+                      </td>
+                      <td className="ooo-panel__reason">
+                        {event.reason}
+                        {event.expiredAt && (
+                          <div className="ooo-panel__state-note">Expired {formatSystemTimestamp(event.expiredAt)}</div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   );
 }

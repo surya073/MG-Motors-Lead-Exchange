@@ -25,6 +25,13 @@ export const adminDashboardService = {
     return data.leads;
   },
 
+  // Unhappy 7: dealer records whose update arrived before an MG enquiry
+  // was linked. They have no MG lead, so they are listed separately.
+  async listOutOfOrderEvents() {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/out-of-order-events");
+    return data.events || [];
+  },
+
   async leadsSummary() {
     const { data } = await axiosInstance.get("/mg_motors_au_function/admin/leads/summary");
     return data.summary;

@@ -14,6 +14,7 @@ const {
 const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService'); // NEW
+const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -42,6 +43,100 @@ router.get('/admin/leads', requireAdminRole, async (req, res) => {
     res.status(200).json({ success: true, count: leads.length, leads });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'GET /admin/leads failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /admin/out-of-order-events
+ * -----------------------------------------------------------------------
+ * Unhappy 7 visibility. A dealer update that arrives before its MG
+ * enquiry is linked has no MG lead, so it can never appear in
+ * /admin/leads. This lists those held dealer records (one row per dealer
+ * record) with their state — Held, Expired or Released — so the Lead
+ * Exchange screen can show them. Read-only; the dealer-side name and
+ * status are fetched live for display and never stored.
+ */
+const OUT_OF_ORDER_DETAIL_LIMIT = 25;
+
+router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
+  const catalystApp = res.locals.catalystApp;
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      "SELECT * FROM integration_logs WHERE happy_unhappy_path_name = 'Unhappy 7' ORDER BY CREATEDTIME DESC LIMIT 0, 200"
+    );
+
+    const groups = new Map();
+    rows.forEach((wrapped) => {
+      const log = wrapped.integration_logs;
+      if (!log.external_lead_id) return;
+      const key = `${log.integration_id || log.dealer_code}:${log.external_lead_id}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          dealerCode: log.dealer_code,
+          integrationId: log.integration_id,
+          externalLeadId: log.external_lead_id,
+          zohoLeadId: log.zoho_lead_id || null,
+          logs: [],
+        });
+      }
+      groups.get(key).logs.push(log);
+    });
+
+    const events = [...groups.values()].map((group) => {
+      const statuses = group.logs.map((log) => log.status);
+      const held = group.logs.filter((log) => log.error_message === 'LEAD_MAPPING_NOT_FOUND');
+      const expiry = group.logs.find((log) => String(log.error_message || '').startsWith('OUT_OF_ORDER_EXPIRED'));
+      let state = 'HELD';
+      if (statuses.includes('RECOVERED')) state = 'RELEASED';
+      else if (expiry || statuses.includes('EXPIRED')) state = 'EXPIRED';
+      const heldSince = held.map((log) => log.CREATEDTIME).sort()[0] || group.logs[group.logs.length - 1].CREATEDTIME;
+      return {
+        dealerCode: group.dealerCode,
+        externalLeadId: group.externalLeadId,
+        zohoLeadId: group.zohoLeadId,
+        state,
+        heldSince,
+        expiredAt: expiry ? expiry.CREATEDTIME : null,
+        heldEvents: held.length,
+        reason: expiry
+          ? String(expiry.error_message).replace(/^OUT_OF_ORDER_EXPIRED:\s*/, '')
+          : 'Dealer update arrived before its MG enquiry was linked; held for replay.',
+        integrationId: group.integrationId,
+      };
+    });
+
+    // Live dealer-side context (name, status) for the most recent records.
+    const integrations = new Map();
+    await Promise.all(events.slice(0, OUT_OF_ORDER_DETAIL_LIMIT).map(async (event) => {
+      try {
+        if (!integrations.has(event.dealerCode)) {
+          integrations.set(
+            event.dealerCode,
+            crmIntegrationService.getIntegrationByDealerCode(catalystApp, event.dealerCode)
+          );
+        }
+        const integration = await integrations.get(event.dealerCode);
+        if (!integration) return;
+        const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
+        const fetched = await adapter.getLead(catalystApp, integration, event.externalLeadId);
+        const raw = fetched && fetched.raw;
+        const record = Array.isArray(raw && raw.data) ? raw.data[0] : raw;
+        if (!record || typeof record !== 'object') return;
+        event.customerName = record.Full_Name
+          || [record.First_Name, record.Last_Name].filter(Boolean).join(' ')
+          || record.name
+          || null;
+        event.dealerStatus = record.Lead_Status || record.status || null;
+      } catch (detailErr) {
+        event.dealerRecordMissing = true;
+      }
+    }));
+
+    events.forEach((event) => { delete event.integrationId; });
+    res.status(200).json({ success: true, count: events.length, events });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', 'GET /admin/out-of-order-events failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
 });
