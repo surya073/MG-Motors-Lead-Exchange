@@ -437,6 +437,17 @@ async function holdOutboundLead(catalystApp, integration, leadRow, {
 }) {
   const requestReference = crypto.randomUUID();
   await setLeadSyncState(catalystApp, leadRow, syncStatus);
+
+  // The caller already worked out WHICH field failed and WHY; logging only
+  // the bare code threw that away, leaving the operator with
+  // "LEAD_VALIDATION_FAILED" and no way to tell whether the problem was the
+  // mobile, the postcode or something else. The register is explicit that
+  // the error must name the field and that the operator must be able to see
+  // the exact field, correct it and reprocess. error_message is what the
+  // lead record's error panel and the Activity Log display, so the detail
+  // belongs there and not only in the alert body.
+  const detailedError = reason ? `${errorCode}: ${reason}` : errorCode;
+
   await writeLog(catalystApp, {
     integration_id: integration?.ROWID,
     dealer_code: leadRow.dealer_code || integration?.dealer_code,
@@ -444,7 +455,7 @@ async function holdOutboundLead(catalystApp, integration, leadRow, {
     operation: 'CREATE_LEAD',
     zoho_lead_id: leadRow.crm_record_id,
     status: 'FAILED',
-    error_message: errorCode,
+    error_message: detailedError.slice(0, 500),
     request_reference: requestReference,
   }, { scenarioCode, notify, leadRow, reason });
   return { skipped: true, held: true, reason: errorCode, scenarioCode };
@@ -494,10 +505,21 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   }
 
   if (deliveryValidation.issues.length > 0) {
+    // Include the rejected value, masked, so the operator can see what the
+    // record actually holds without the error panel leaking full customer
+    // data (register, Unhappy 2 edge case f).
+    const reason = deliveryValidation.issues
+      .map((issue) => {
+        const shown = pathPolicy.maskSensitiveValue(issue.field, issue.value);
+        const seen = shown === '' || shown === undefined || shown === null ? 'empty' : `"${shown}"`;
+        return `${issue.field} is ${seen} — ${issue.rule}`;
+      })
+      .join('; ');
+
     return holdOutboundLead(catalystApp, integration, leadRow, {
       scenarioCode: 'Unhappy 2',
       errorCode: 'LEAD_VALIDATION_FAILED',
-      reason: deliveryValidation.issues.map((issue) => `${issue.field}: ${issue.rule}`).join('; '),
+      reason,
       syncStatus: 'VALIDATION_HOLD',
     });
   }
