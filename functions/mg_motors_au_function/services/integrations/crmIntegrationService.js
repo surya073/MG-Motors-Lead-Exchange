@@ -684,6 +684,28 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       }]),
     }, { scenarioCode });
 
+    // A recovery that CREATED the dealer record is also the enquiry's
+    // first successful routing, so MG asked for it to read
+    // Unhappy 1 → Happy 4 → Happy 1 on the timeline: Happy 4 records the
+    // recovery, Happy 1 records that the enquiry now exists at the dealer
+    // and was acknowledged. Written after Happy 4, so the lead's current
+    // path becomes Happy 1 while the failure and recovery stay in its
+    // history. Recoveries of an UPDATE (record already at the dealer)
+    // stay Happy 4 only.
+    if (wasRecovery && operation === 'CREATE_LEAD') {
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'ZOHO_TO_EXTERNAL_CRM',
+        operation,
+        zoho_lead_id: zohoLeadId,
+        external_lead_id: externalLeadId,
+        status: 'SUCCESS',
+        http_status: result.httpStatus,
+        request_reference: requestReference,
+      }, { scenarioCode: 'Happy 1' });
+    }
+
     if (wasRecovery) {
       const durationMinutes = failureStartedAt
         ? Math.max(0, Math.round((Date.now() - failureStartedAt.getTime()) / 60000))
