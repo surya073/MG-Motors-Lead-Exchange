@@ -386,6 +386,19 @@ function matchPathScenario(lead) {
   );
 }
 
+/**
+ * The scenario implied by the lead's SYNC state alone.
+ *
+ * lead_status is the business status (Not Contacted, Contacted, Lost...),
+ * sync_status is the integration state (VALIDATION_HOLD, CONSENT_HOLD...).
+ * A lead can legitimately hold both at once: the dealer has not actioned it
+ * yet AND delivery is blocked on a bad mobile number. Only the sync state
+ * describes the integration path, so a held lead must be resolved from it.
+ */
+function matchSyncScenario(lead) {
+  return findScenarioForStatus(lead.sync_status, [...UNHAPPY_PATHS, ...HAPPY_PATHS]);
+}
+
 function classifyPath(lead) {
   const match = matchPathScenario(lead);
 
@@ -435,8 +448,28 @@ function resolveDisplayPath(lead) {
     "delivery failed",
     "failed critical",
     "sla breach",
+    "reconcile mismatch",
+    "held",
   ]);
-  if (liveMatch && urgentSyncStates.has(normalize(lead.sync_status))) return liveMatch;
+
+  // BUG THIS FIXES: this branch used to return `liveMatch`, but
+  // matchPathScenario resolves lead_status FIRST — and "Not Contacted" is
+  // Happy 1's own MG status. So a lead held on VALIDATION_HOLD with
+  // lead_status "Not Contacted" was displayed as Happy 1: the guard meant to
+  // surface an active fault was announcing a successful delivery instead,
+  // overriding the correct Unhappy 2 the backend had already recorded.
+  // A held lead must be described by its SYNC state, never its business
+  // status, so resolve from sync_status and fall back to the stored
+  // scenario rather than to lead_status.
+  if (urgentSyncStates.has(normalize(lead.sync_status))) {
+    const heldMatch = matchSyncScenario(lead);
+    if (heldMatch) return heldMatch;
+
+    const storedHeld = [...HAPPY_PATHS, ...UNHAPPY_PATHS].find(
+      (scenario) => scenario.id === lead.happy_unhappy_path_name
+    );
+    if (storedHeld) return storedHeld;
+  }
 
   if (lead.happy_unhappy_path_name) {
     const configured = [...HAPPY_PATHS, ...UNHAPPY_PATHS].find(
