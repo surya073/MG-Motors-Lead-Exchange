@@ -39,12 +39,15 @@ function getSmtpTransport() {
   return cachedTransport;
 }
 
-async function sendViaSmtp({ from, to, subject, content }) {
+async function sendViaSmtp({ from, to, subject, content, html }) {
   const info = await getSmtpTransport().sendMail({
     from: `"MG Lead Exchange" <${from}>`,
     to: to.join(', '),
     subject,
+    // Both parts are sent: the HTML renders in a mail client, the plain
+    // text is what a phone notification preview or a text-only client shows.
     text: content,
+    ...(html ? { html } : {}),
   });
   return { sent: true, channel: 'SMTP', messageId: info.messageId, accepted: info.accepted };
 }
@@ -56,7 +59,7 @@ function configuredRecipients(envName = 'INTEGRATION_ALERT_TO_EMAILS') {
     .filter(Boolean);
 }
 
-async function sendConfiguredEmail(catalystApp, { subject, content, recipientEnv }) {
+async function sendConfiguredEmail(catalystApp, { subject, content, html, recipientEnv }) {
   const fromEmail = process.env.INTEGRATION_ALERT_FROM_EMAIL || process.env.SMTP_USER;
   const recipients = configuredRecipients(recipientEnv);
   if (!fromEmail || recipients.length === 0) {
@@ -69,7 +72,7 @@ async function sendConfiguredEmail(catalystApp, { subject, content, recipientEnv
 
   if (smtpConfigured()) {
     try {
-      return await sendViaSmtp({ from: fromEmail, to: recipients, subject, content });
+      return await sendViaSmtp({ from: fromEmail, to: recipients, subject, content, html });
     } catch (err) {
       // Fall through to Catalyst Email rather than losing the alert.
       logger.error('integrationAlertService', `SMTP delivery failed for "${subject}"`, err);
@@ -81,8 +84,8 @@ async function sendConfiguredEmail(catalystApp, { subject, content, recipientEnv
       from_email: fromEmail,
       to_email: recipients,
       subject,
-      content,
-      html_mode: false,
+      content: html || content,
+      html_mode: Boolean(html),
       display_name: 'MG Lead Exchange',
     });
     return { sent: true, channel: 'CATALYST', result };
@@ -139,10 +142,11 @@ async function notifyRecovery(catalystApp, { dealerCode, leadId, customerName, d
   });
 }
 
-async function sendDailyReportEmail(catalystApp, content) {
+async function sendDailyReportEmail(catalystApp, content, html) {
   return sendConfiguredEmail(catalystApp, {
     subject: `[MG Lead Exchange] Daily error report ${new Date().toISOString().slice(0, 10)}`,
     content,
+    html,
     recipientEnv: 'DAILY_ERROR_REPORT_TO_EMAILS',
   });
 }
