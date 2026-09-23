@@ -9,6 +9,37 @@ const slaMonitorService = require('../services/integrations/slaMonitorService');
 const dealerReconciliationService = require('../services/integrations/dealerReconciliationService');
 const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
 const logger = require('../utils/logger');
+const integrationAlertService = require('../services/integrations/integrationAlertService');
+
+// Unhappy 11 edge case (c): "the reconciliation job itself fails → alert;
+// a silent reconciliation failure hides every other gap."
+async function alertReconciliationFailure(catalystApp, err) {
+  try {
+    await integrationAlertService.notifyScenario(catalystApp, {
+      scenarioCode: 'Unhappy 11',
+      scenarioMessage: 'Reconciliation job failed',
+      priority: 'P2',
+      reason: `The dealer reconciliation run did not complete: ${err.message}. Mismatches cannot be detected until it runs.`,
+    });
+  } catch (alertErr) {
+    logger.error('cronRoutes', 'Could not send reconciliation-failure alert', alertErr);
+  }
+}
+
+// Reconciliation is I/O heavy (one dealer round trip per record), so inside
+// the 2-minute fast-recovery pass it runs once per RECONCILE_EVERY_MINUTES
+// window rather than on every call. Default: once a day, the register's
+// minimum. The cron fires every 2 minutes, so a window of <2 minutes past
+// each interval boundary matches exactly one run.
+const RECONCILE_EVERY_MINUTES = (() => {
+  const configured = Number(process.env.RECONCILE_EVERY_MINUTES);
+  return Number.isFinite(configured) && configured >= 2 ? configured : 24 * 60;
+})();
+
+function isReconciliationDue(now = new Date()) {
+  const minutes = Math.floor(now.getTime() / 60000);
+  return minutes % RECONCILE_EVERY_MINUTES < 2;
+}
 
 const router = express.Router();
 
@@ -117,6 +148,35 @@ router.post('/cron/fast-recover', async (req, res) => {
     if (results.recovered > 0) {
       logger.info('cronRoutes', `Fast recovery delivered ${results.recovered} lead(s)`);
     }
+    // Same pass, other direction: held dealer -> MG updates (Unhappy 4/7/9)
+    // are released as soon as they can be applied. Its own failure must not
+    // hide the outbound results above.
+    try {
+      results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp);
+    } catch (replayErr) {
+      logger.error('cronRoutes', 'Inbound replay within fast recovery failed', replayErr);
+      results.inboundReplay = { error: replayErr.message };
+    }
+    // Unhappy 10 SLA check in the same pass (window and dealer scope come
+    // from DEALER_ACTION_SLA_MINUTES / DEALER_ACTION_SLA_DEALERS).
+    try {
+      results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp);
+    } catch (slaErr) {
+      logger.error('cronRoutes', 'SLA check within fast recovery failed', slaErr);
+      results.slaCheck = { error: slaErr.message };
+    }
+    // Unhappy 11 reconciliation, throttled (see RECONCILE_EVERY_MINUTES).
+    if (isReconciliationDue()) {
+      try {
+        results.reconciliation = await dealerReconciliationService.runDealerReconciliation(catalystApp, {
+          heldExistenceOnly: true,
+        });
+      } catch (reconcileErr) {
+        logger.error('cronRoutes', 'Reconciliation within fast recovery failed', reconcileErr);
+        results.reconciliation = { error: reconcileErr.message };
+        await alertReconciliationFailure(catalystApp, reconcileErr);
+      }
+    }
     res.status(200).json({ success: true, mode: 'fast-recovery', results });
   } catch (err) {
     logger.error('cronRoutes', 'Fast recovery sweep failed', err);
@@ -165,6 +225,7 @@ router.post('/cron/reconcile-dealer-leads', async (req, res) => {
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Dealer reconciliation failed', err);
+    await alertReconciliationFailure(catalyst.initialize(req), err);
     res.status(502).json({ success: false, error: err.message });
   }
 });

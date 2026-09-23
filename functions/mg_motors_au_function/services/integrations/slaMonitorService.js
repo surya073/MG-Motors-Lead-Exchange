@@ -17,6 +17,14 @@ const SLA_MINUTES = Number.isFinite(configuredSlaMinutes) && configuredSlaMinute
   : DEFAULT_SLA_MINUTES;
 const SLA_MS = SLA_MINUTES * 60 * 1000;
 
+// Optional dealer scope (comma-separated dealer codes). Unset = every
+// dealer, which is the production behaviour. Used so a shortened test SLA
+// only touches the dealer under test.
+const SLA_DEALER_CODES = String(process.env.DEALER_ACTION_SLA_DEALERS || '')
+  .split(',')
+  .map((code) => code.trim())
+  .filter(Boolean);
+
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
@@ -28,7 +36,11 @@ function isIntegrationHealthy(integration) {
 
 async function runSlaSweep(catalystApp, now = new Date()) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status = 'SYNCED' ORDER BY last_synced_at ASC LIMIT 0, ${MAX_CANDIDATES}`
+    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status = 'SYNCED'${
+      SLA_DEALER_CODES.length
+        ? ` AND dealer_code IN (${SLA_DEALER_CODES.map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`
+        : ''
+    } ORDER BY last_synced_at ASC LIMIT 0, ${MAX_CANDIDATES}`
   );
   const results = {
     candidates: rows.length,
@@ -103,7 +115,14 @@ async function runSlaSweep(catalystApp, now = new Date()) {
         leadRow,
         operation: 'SLA_CHECK',
         errorCode: 'DEALER_ACTION_SLA_BREACH',
-        reason: `No dealer action was received within ${SLA_MINUTES} minutes while the integration remained healthy.`,
+        // The register's evidence list for Unhappy 10: acknowledged time,
+        // SLA age, integration-health result and the status left unactioned.
+        reason:
+          `No dealer action within the ${SLA_MINUTES}-minute SLA. ` +
+          `Acknowledged by dealer ${acknowledgedAt.toISOString()}; ` +
+          `SLA age ${Math.round((now.getTime() - acknowledgedAt.getTime()) / 60000)} min; ` +
+          `integration health: ${integration.status || 'ACTIVE'} (no delivery error); ` +
+          `MG status was "${leadRow.lead_status}", now "Unattended Alert".`,
         notify: true,
       });
       results.breached += 1;
