@@ -1432,3 +1432,43 @@
 .lead-detail__path-card-reason strong {
   font-weight: 600;
 }
+
+/* Retry delivery — re-attempts this one lead immediately instead of waiting
+   for the scheduled sweep. Shown only while the lead is on an unhappy path. */
+.lead-detail__retry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.lead-detail__retry-btn {
+  appearance: none;
+  border: 1px solid rgba(179, 38, 30, 0.45);
+  background: #fff;
+  color: #b3261e;
+  font: 600 13px/1 system-ui, sans-serif;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lead-detail__retry-btn:hover:not(:disabled) {
+  background: rgba(179, 38, 30, 0.07);
+  border-color: rgba(179, 38, 30, 0.7);
+}
+
+.lead-detail__retry-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lead-detail__retry-msg {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.lead-detail__retry-msg--ok { color: #1e7a3c; }
+.lead-detail__retry-msg--err { color: #b3261e; }

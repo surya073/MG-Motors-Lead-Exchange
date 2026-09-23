@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
+import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
 import {
   ChevronLeftIcon,
   PhoneIcon,
@@ -620,7 +621,7 @@ function PathChips({ paths, currentId }) {
 /* ----------------------------------------------------------------
    Integration Path Card
 ------------------------------------------------------------------ */
-function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
+function IntegrationPathCard({ path, journeyPaths, failureDetail, onRetry, retrying, retryResult, canRetry }) {
   return (
     <section className={`lead-detail__group lead-detail__path-card lead-detail__path-card--${path.type}`}>
       <h3>
@@ -673,6 +674,31 @@ function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
             <p className="lead-detail__path-card-reason">
               <strong>What needs fixing:</strong> {failureDetail}
             </p>
+          )}
+
+          {/* Re-attempts delivery immediately rather than waiting for the
+              15-minute sweep. Offered only on an unhappy path — retrying a
+              lead that already delivered would just be a no-op. */}
+          {canRetry && (
+            <div className="lead-detail__retry">
+              <button
+                type="button"
+                className="lead-detail__retry-btn"
+                onClick={onRetry}
+                disabled={retrying}
+              >
+                {retrying ? "Retrying…" : "Retry delivery"}
+              </button>
+              {retryResult && (
+                <span
+                  className={`lead-detail__retry-msg lead-detail__retry-msg--${
+                    retryResult.ok ? "ok" : "err"
+                  }`}
+                >
+                  {retryResult.message}
+                </span>
+              )}
+            </div>
           )}
 
         </div>
@@ -763,6 +789,8 @@ export default function LeadDetailView({ lead, onBack }) {
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [timelineOffcanvasOpen, setTimelineOffcanvasOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState(null);
 
   useEffect(() => {
     if (!lead.crm_record_id) {
@@ -788,6 +816,39 @@ export default function LeadDetailView({ lead, onBack }) {
       document.body.style.overflow = "";
     };
   }, [timelineOffcanvasOpen]);
+
+  /**
+   * Re-attempts delivery of this one lead to its dealer CRM.
+   *
+   * Calls the same entry point the scheduled sweep uses, so the attempt goes
+   * through the identical validation, consent, duplicate and echo checks and
+   * is classified the same way — a recovery becomes Happy 4, a still-broken
+   * lead stays on its unhappy path. It is NOT gated by next_retry_at, which
+   * is what makes it useful: the background sweep runs on a 15-minute
+   * interval, far too slow to show a recovery to someone watching.
+   */
+  const handleRetry = async () => {
+    if (!lead.crm_record_id || !lead.dealer_code || retrying) return;
+    setRetrying(true);
+    setRetryResult(null);
+    try {
+      await dealerCrmIntegrationService.retrySync(lead.dealer_code, lead.crm_record_id);
+      setRetryResult({ ok: true, message: "Retry sent — refreshing activity…" });
+      const rows = await adminDashboardService.getLeadTimeline(lead.crm_record_id);
+      setTimeline(rows || []);
+      setRetryResult({ ok: true, message: "Retry complete. See the activity timeline below." });
+    } catch (err) {
+      setRetryResult({
+        ok: false,
+        message:
+          err?.response?.data?.error ||
+          err?.message ||
+          "Retry failed — check the dealer integration configuration.",
+      });
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const val = (key) => {
     const value = lead[key];
@@ -943,6 +1004,12 @@ export default function LeadDetailView({ lead, onBack }) {
         path={path}
         journeyPaths={journeyPaths}
         failureDetail={latestFailureDetail}
+        onRetry={handleRetry}
+        retrying={retrying}
+        retryResult={retryResult}
+        canRetry={
+          path?.type === "unhappy" && !isRemoved && Boolean(lead.crm_record_id && lead.dealer_code)
+        }
       />
 
       <MoreDetailsCard val={val} lead={lead} />
