@@ -1079,6 +1079,15 @@ async function recordScenario(catalystApp, {
   fieldChanges,
 }) {
   const scenario = pathPolicy.scenario(scenarioCode);
+
+  // Same rule as holdOutboundLead: the caller has already worked out WHICH
+  // field failed and why, so that detail belongs in error_message. This is
+  // the field the lead's error panel and the Activity Log render, and
+  // logging the bare code left the operator with "LEAD_VALIDATION_FAILED"
+  // and no way to tell whether the problem was the mobile, the postcode or
+  // something else. The register requires the error to name the field.
+  const detailedError = errorCode && reason ? `${errorCode}: ${reason}` : (errorCode || undefined);
+
   return writeLog(catalystApp, {
     dealer_code: dealerCode || leadRow?.dealer_code,
     direction,
@@ -1086,7 +1095,7 @@ async function recordScenario(catalystApp, {
     zoho_lead_id: leadRow?.crm_record_id,
     external_lead_id: externalLeadId,
     status: status || (scenario.type === 'happy' ? 'SUCCESS' : 'FAILED'),
-    error_message: errorCode,
+    error_message: detailedError ? String(detailedError).slice(0, 500) : undefined,
     request_reference: crypto.randomUUID(),
     field_changes: fieldChanges ? JSON.stringify(fieldChanges) : undefined,
   }, { scenarioCode, notify, leadRow, reason });

@@ -9,6 +9,22 @@ const crmIntegrationService = require('./integrations/crmIntegrationService'); /
 const pathPolicy = require('./integrations/pathPolicyService');
 
 const LEADS_TABLE = 'leads';
+
+/**
+ * Renders validation failures so the operator can act on them directly:
+ * which field, what it currently holds, and the rule it broke. The value is
+ * masked because the error panel is visible in the application and must not
+ * expose full customer data (register, Unhappy 2 edge case f).
+ */
+function describeValidationIssues(issues) {
+  return (issues || [])
+    .map((issue) => {
+      const shown = pathPolicy.maskSensitiveValue(issue.field, issue.value);
+      const seen = shown === '' || shown === undefined || shown === null ? 'empty' : `"${shown}"`;
+      return `${issue.field} is ${seen} — ${issue.rule}`;
+    })
+    .join('; ');
+}
 const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
 
 /**
@@ -327,7 +343,7 @@ async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
       await markLeadState(catalystApp, leadRow, 'VALIDATION_HOLD');
       await crmIntegrationService.recordScenario(catalystApp, {
         scenarioCode: 'Unhappy 2', leadRow, errorCode: 'LEAD_VALIDATION_FAILED',
-        reason: validation.issues.map((issue) => `${issue.field}: ${issue.rule}`).join('; '),
+        reason: describeValidationIssues(validation.issues),
         notify: true,
       });
       return { held: true, scenarioCode: 'Unhappy 2' };
@@ -453,7 +469,7 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
             dealerCode: fullLeadRow.dealer_code,
             leadRow: fullLeadRow,
             errorCode: 'LEAD_VALIDATION_FAILED',
-            reason: validation.issues.map((issue) => `${issue.field}: ${issue.rule}`).join('; '),
+            reason: describeValidationIssues(validation.issues),
             notify: true,
           });
           incrementScenario(scenarioCounts, 'Unhappy 2');

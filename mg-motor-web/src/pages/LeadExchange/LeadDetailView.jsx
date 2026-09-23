@@ -259,9 +259,32 @@ function parseFieldChanges(entry) {
   }
 }
 
+/**
+ * The human-readable half of an error_message.
+ *
+ * The backend records "CODE: detail" — e.g.
+ *   LEAD_VALIDATION_FAILED: postcode is empty — Must be a valid four-digit
+ *   Australian postcode
+ * The code is for logs; the operator needs the part after it, which names
+ * the field, what it holds and the rule it broke. A bare code with no
+ * detail is not worth surfacing, so it is dropped.
+ */
+function errorDetailText(entry) {
+  const raw = (entry.error_message || "").trim();
+  if (!raw) return null;
+  const separator = raw.indexOf(": ");
+  if (separator === -1) return null;
+  const detail = raw.slice(separator + 2).trim();
+  return detail || null;
+}
+
 function timelineDetailText(entry) {
   const changes = parseFieldChanges(entry);
-  if (changes.length === 0) return null;
+  // A failure usually carries no field changes - nothing was written. The
+  // reason it failed is the only useful detail, and without this the
+  // timeline showed the generic scenario title and nothing else, leaving
+  // "Invalid / missing data" with no indication of WHICH field.
+  if (changes.length === 0) return errorDetailText(entry);
 
   const deliveryTiming = changes.find((c) => c.field === "delivery_timing");
   if (deliveryTiming) {
@@ -597,7 +620,7 @@ function PathChips({ paths, currentId }) {
 /* ----------------------------------------------------------------
    Integration Path Card
 ------------------------------------------------------------------ */
-function IntegrationPathCard({ path, journeyPaths }) {
+function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
   return (
     <section className={`lead-detail__group lead-detail__path-card lead-detail__path-card--${path.type}`}>
       <h3>
@@ -640,6 +663,15 @@ function IntegrationPathCard({ path, journeyPaths }) {
           {path.outcome && (
             <p className="lead-detail__path-card-outcome">
               <strong>Expected outcome:</strong> {path.outcome}
+            </p>
+          )}
+
+          {/* The scenario description explains the PATH; this explains why
+              THIS lead is on it. Without it an operator sees "Invalid /
+              missing data" and still has to guess which field is at fault. */}
+          {failureDetail && (
+            <p className="lead-detail__path-card-reason">
+              <strong>What needs fixing:</strong> {failureDetail}
             </p>
           )}
 
@@ -774,6 +806,20 @@ export default function LeadDetailView({ lead, onBack }) {
 
   const journeyPaths = getDistinctPaths(timeline);
 
+  // The reason behind the CURRENT path, taken from the most recent failure
+  // on this lead. getLeadActivityTimeline returns oldest-first, so the last
+  // failing entry is the live one. Only shown while the lead is actually on
+  // an unhappy path - a recovered lead should not still display the fault
+  // that has since been fixed.
+  const latestFailureDetail = (() => {
+    if (!path || path.type !== "unhappy") return null;
+    for (let i = timeline.length - 1; i >= 0; i -= 1) {
+      const detail = errorDetailText(timeline[i]);
+      if (detail) return detail;
+    }
+    return null;
+  })();
+
   const handleCopy = (key, value) => {
     if (!value || value === "—") return;
     navigator.clipboard?.writeText(value);
@@ -893,7 +939,11 @@ export default function LeadDetailView({ lead, onBack }) {
       </div>
 
       {/* ========================================================== INTEGRATION PATH ========================================================== */}
-      <IntegrationPathCard path={path} journeyPaths={journeyPaths} />
+      <IntegrationPathCard
+        path={path}
+        journeyPaths={journeyPaths}
+        failureDetail={latestFailureDetail}
+      />
 
       <MoreDetailsCard val={val} lead={lead} />
 
