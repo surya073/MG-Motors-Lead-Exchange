@@ -10,6 +10,7 @@
 		"axios": "^1.7.9",
 		"express": "^5.2.1",
 		"multer": "^2.3.0",
+		"nodemailer": "^9.1.1",
 		"pdf-parse": "^2.4.5",
 		"xlsx": "^0.18.5",
 		"zcatalyst-sdk-node": "^3.4.0"

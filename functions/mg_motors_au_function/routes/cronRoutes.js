@@ -147,4 +147,46 @@ router.post('/cron/daily-error-report', async (req, res) => {
     res.status(502).json({ success: false, error: err.message });
   }
 });
+/**
+ * Sends a single test alert through the configured channel so email
+ * delivery can be proven without waiting for a real Unhappy path to
+ * occur. Protected by CRON_SECRET like the other operational routes.
+ * The response reports which channel was used and whether the provider
+ * accepted the message, so a silent misconfiguration is visible.
+ */
+router.post('/cron/test-alert', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const integrationAlertService = require('../services/integrations/integrationAlertService');
+
+    const result = await integrationAlertService.sendConfiguredEmail(catalystApp, {
+      subject: '[MG Lead Exchange] Test alert',
+      content: [
+        'This is a test of the Lead Exchange alert channel.',
+        '',
+        'If you are reading this, immediate Unhappy-path notifications (GR-04)',
+        'will reach this inbox without anyone logging into the application.',
+        `Sent (UTC): ${new Date().toISOString()}`,
+      ].join('\n'),
+      recipientEnv: 'INTEGRATION_ALERT_TO_EMAILS',
+    });
+
+    res.status(200).json({
+      success: true,
+      smtpConfigured: integrationAlertService.smtpConfigured(),
+      recipientsConfigured: Boolean(process.env.INTEGRATION_ALERT_TO_EMAILS),
+      senderConfigured: Boolean(process.env.INTEGRATION_ALERT_FROM_EMAIL || process.env.SMTP_USER),
+      result,
+    });
+  } catch (err) {
+    logger.error('cronRoutes', 'Test alert failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

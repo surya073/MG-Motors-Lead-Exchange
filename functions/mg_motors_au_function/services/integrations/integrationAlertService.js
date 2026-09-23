@@ -1,7 +1,53 @@
 'use strict';
 
+const nodemailer = require('nodemailer');
 const logger = require('../../utils/logger');
 const { notifyAdmins } = require('../notificationService');
+
+/**
+ * Two delivery channels, tried in order:
+ *
+ *   1. SMTP (SMTP_HOST + SMTP_USER + SMTP_PASS) — used when configured.
+ *      Catalyst's own mail service requires the sender address to be
+ *      registered AND verified by clicking a code, which is a manual step
+ *      that cannot be automated; SMTP needs only credentials, so it is the
+ *      practical channel for getting GR-04 alerts flowing.
+ *   2. Catalyst Email — used when SMTP is not configured and a verified
+ *      sender exists.
+ *
+ * Both are optional. With neither configured the alert still reaches the
+ * in-app notifications table and the log, so a missing mail setup can never
+ * break a sync.
+ */
+let cachedTransport;
+
+function smtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+function getSmtpTransport() {
+  if (cachedTransport) return cachedTransport;
+  const port = Number(process.env.SMTP_PORT) || 587;
+  cachedTransport = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    // Implicit TLS on 465; STARTTLS on 587/25. Overridable for providers
+    // that do not follow the convention.
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+  return cachedTransport;
+}
+
+async function sendViaSmtp({ from, to, subject, content }) {
+  const info = await getSmtpTransport().sendMail({
+    from: `"MG Lead Exchange" <${from}>`,
+    to: to.join(', '),
+    subject,
+    text: content,
+  });
+  return { sent: true, channel: 'SMTP', messageId: info.messageId, accepted: info.accepted };
+}
 
 function configuredRecipients(envName = 'INTEGRATION_ALERT_TO_EMAILS') {
   return String(process.env[envName] || '')
@@ -11,14 +57,23 @@ function configuredRecipients(envName = 'INTEGRATION_ALERT_TO_EMAILS') {
 }
 
 async function sendConfiguredEmail(catalystApp, { subject, content, recipientEnv }) {
-  const fromEmail = process.env.INTEGRATION_ALERT_FROM_EMAIL;
+  const fromEmail = process.env.INTEGRATION_ALERT_FROM_EMAIL || process.env.SMTP_USER;
   const recipients = configuredRecipients(recipientEnv);
   if (!fromEmail || recipients.length === 0) {
     logger.info(
       'integrationAlertService',
-      `Email not sent for "${subject}"; configure INTEGRATION_ALERT_FROM_EMAIL and ${recipientEnv}.`
+      `Email not sent for "${subject}"; configure a sender and ${recipientEnv}.`
     );
     return { sent: false, reason: 'EMAIL_NOT_CONFIGURED' };
+  }
+
+  if (smtpConfigured()) {
+    try {
+      return await sendViaSmtp({ from: fromEmail, to: recipients, subject, content });
+    } catch (err) {
+      // Fall through to Catalyst Email rather than losing the alert.
+      logger.error('integrationAlertService', `SMTP delivery failed for "${subject}"`, err);
+    }
   }
 
   try {
@@ -30,7 +85,7 @@ async function sendConfiguredEmail(catalystApp, { subject, content, recipientEnv
       html_mode: false,
       display_name: 'MG Lead Exchange',
     });
-    return { sent: true, result };
+    return { sent: true, channel: 'CATALYST', result };
   } catch (err) {
     // Alert delivery must never replace the original integration result.
     logger.error('integrationAlertService', `Email delivery failed for "${subject}"`, err);
@@ -92,4 +147,4 @@ async function sendDailyReportEmail(catalystApp, content) {
   });
 }
 
-module.exports = { notifyScenario, notifyRecovery, sendDailyReportEmail };
+module.exports = { notifyScenario, notifyRecovery, sendDailyReportEmail, sendConfiguredEmail, smtpConfigured };
