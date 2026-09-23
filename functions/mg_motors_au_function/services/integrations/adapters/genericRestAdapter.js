@@ -157,20 +157,40 @@ async function requestWithRetry(config, attempt = 1) {
   }
 }
 
-async function createLead(catalystApp, integration, payload, { idempotencyKey } = {}) {
-  const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
+async function createLead(
+  catalystApp,
+  integration,
+  payload,
+  { idempotencyKey, idempotencyField } = {}
+) {
+  let url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
   const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
-  const requestBody = isZohoCrm ? { data: [payload] } : payload;
+  const useZohoUpsert = isZohoCrm && Boolean(idempotencyField);
+  if (useZohoUpsert) {
+    // Zoho does not promise to honor arbitrary Idempotency-Key headers.
+    // Its supported exactly-once mechanism is /upsert with a unique or
+    // external field. `enquiry_id` is mandatory in our mapping and the
+    // dealer target must be configured as unique during onboarding.
+    const upsertUrl = new URL(url.toString());
+    upsertUrl.pathname = `${upsertUrl.pathname.replace(/\/$/, '')}/upsert`;
+    url = upsertUrl;
+  }
+  const requestBody = isZohoCrm
+    ? {
+        data: [payload],
+        ...(useZohoUpsert ? { duplicate_check_fields: [idempotencyField] } : {}),
+      }
+    : payload;
 
   const response = await requestWithRetry({
-    method: integration.http_method || 'POST',
+    method: useZohoUpsert ? 'POST' : (integration.http_method || 'POST'),
     url: url.toString(),
     headers: {
       'Content-Type': 'application/json',
       ...headers,
-      ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
+      ...(!isZohoCrm && idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
     },
     data: requestBody,
     timeout: 10000,
@@ -180,11 +200,32 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
     const recordResult = response.data?.data?.[0];
     if (!recordResult || recordResult.status === 'error') {
       const err = new Error(recordResult?.message || 'Zoho CRM rejected the create');
-      err.code = 'EXTERNAL_CRM_ERROR';
+      const zohoCode = recordResult?.code;
+      const invalidApiName = recordResult?.details?.api_name || recordResult?.details?.field;
+      const idempotencyFieldRejected = useZohoUpsert &&
+        ['INVALID_DATA', 'INVALID_FIELD'].includes(zohoCode) &&
+        (
+          invalidApiName === idempotencyField ||
+          /duplicate.check|unique|external/i.test(recordResult?.message || '')
+        );
+      if (idempotencyFieldRejected) {
+        err.code = 'INVALID_CRM_CONFIGURATION';
+        err.message = `Zoho idempotency field "${idempotencyField}" must exist and be configured as a unique/external field`;
+      } else if (['MANDATORY_NOT_FOUND', 'INVALID_DATA'].includes(zohoCode)) {
+        err.code = 'FIELD_MAPPING_INVALID';
+      } else {
+        err.code = 'EXTERNAL_CRM_ERROR';
+      }
+      err.zohoCode = zohoCode;
       err.response = { status: response.status, data: response.data };
       throw err;
     }
-    return { externalLeadId: recordResult.details?.id, httpStatus: response.status, raw: response.data };
+    return {
+      externalLeadId: recordResult.details?.id,
+      httpStatus: response.status,
+      raw: response.data,
+      upsertAction: recordResult.action,
+    };
   }
   const externalLeadId = response.data?.id || response.data?.leadId;
   return { externalLeadId, httpStatus: response.status, raw: response.data };

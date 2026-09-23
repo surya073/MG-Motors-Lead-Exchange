@@ -25,6 +25,11 @@ Zoho **silently drops** unknown names from the `fields` query param (no error), 
 came back absent on every record and the columns were permanently blank. On **write**,
 Zoho rejects unknown fields — so a dealer remarks update was a hard failure.
 
+The local `leads.assigned_date` column is now populated from Zoho's real,
+read-only `Created_Time` solely as the stable submission timestamp for the
+15-minute duplicate rule; the code does not query or write an `Assigned_Date`
+CRM field.
+
 `Last_Name` is `system_mandatory = true`. A single-token name must go to `Last_Name`.
 MG `Postcode` is **text, max length 4** (Australian format).
 

@@ -67,10 +67,13 @@ function mapCrmRecordToLeadRow(crmRecord) {
     vehicle_model: crmRecord.Enquiry_Model || '',
     lead_source: crmRecord.Enquiry_Source || '',
     lead_status: crmRecord.Lead_Status || '',
+    // `Assigned_Date` does not exist in MG CRM. The local column is used as
+    // the immutable enquiry-submission timestamp for the 15-minute duplicate
+    // rule, so populate it from Zoho's real system Created_Time instead.
+    assigned_date: toCatalystDateTimeFromCrm(crmRecord.Created_Time),
     // Zoho's real api_name is Lead_Status_Modified_Time. The old
-    // crmRecord.Last_Status_Update / .Assigned_Date / .Dealer_Remarks
-    // reads were against fields that do not exist on the Leads module,
-    // so all three were silently undefined on every record — verified
+    // Last_Status_Update and Dealer_Remarks reads referenced fields that do
+    // not exist on the Leads module and were silently undefined — verified
     // against live field metadata.
     last_status_update: toCatalystDateTimeFromCrm(crmRecord.Lead_Status_Modified_Time),
     crm_record_id: crmRecord.id || '',
@@ -95,10 +98,7 @@ function mapCrmRecordToLeadRow(crmRecord) {
   };
 }
 
-// assigned_date is intentionally absent: MG's Leads module has no such
-// field, so nothing populates it. Leaving it here would strip a key that
-// is never set anyway, which only hides the gap.
-const DATETIME_FIELDS = ['last_status_update'];
+const DATETIME_FIELDS = ['assigned_date', 'last_status_update'];
 
 /**
  * Removes any datetime field left as '' by toCatalystDateTimeFromCrm
@@ -106,8 +106,8 @@ const DATETIME_FIELDS = ['last_status_update'];
  * rejects '' for a datetime-typed column ("Invalid input value for
  * assigned_date. datetime value expected"), which previously failed
  * the whole record — including every other valid field on it — just
- * because CRM's Assigned_Date or Last_Status_Update was blank on that
- * one record. Omitting the key entirely leaves the column untouched on
+ * because CRM's Created_Time or Lead_Status_Modified_Time was blank on
+ * that record. Omitting the key entirely leaves the column untouched on
  * update, or unset on insert, instead of failing the sync.
  */
 function stripEmptyDateFields(row) {
@@ -148,6 +148,10 @@ async function loadExistingLeadsByCrmId(catalystApp) {
 
 function hasChanges(existingRow, mappedRow) {
   return Object.keys(mappedRow).some((key) => {
+    // Immutable source timestamp used for duplicate timing. Older rows may
+    // not have it yet; a backfill alone is not a business change and must not
+    // trigger a dealer API update.
+    if (key === 'assigned_date') return false;
     const existingValue = existingRow[key] ?? '';
     const newValue = mappedRow[key] ?? '';
     return String(existingValue) !== String(newValue);

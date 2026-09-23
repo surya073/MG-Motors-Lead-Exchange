@@ -6,6 +6,7 @@ const { getAccessToken } = require('./zohoAuthService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const integrationAuthService = require('./integrations/integrationAuthService');
+const { deriveZohoWatchToken } = require('./integrations/webhookVerificationService');
 
 const ZOHO_REQUEST_TIMEOUT_MS = 10000;
 
@@ -47,7 +48,7 @@ async function registerWatchChannels(catalystApp) {
         // Dealer_Master (a real module name) synced live via webhook.
         events: ['Dealer_Master.all', 'Leads.all'],
         notify_url: buildNotifyUrl(),
-        token: webhookToken,
+        token: deriveZohoWatchToken(webhookToken),
         channel_expiry: channelExpiryStr,
       },
     ],
@@ -158,14 +159,17 @@ async function registerDealerWatchChannel(catalystApp, integration) {
     throw err;
   }
 
-  // Dealer's Zoho org's own API domain — same field the outbound adapter
-  // relies on for their token endpoint; assumed to also be their correct
-  // API domain for the watch registration call itself.
-  const apiDomain = integration.oauth_accounts_domain.replace('accounts.zoho', 'www.zohoapis');
-  // NOTE: confirm this domain-derivation assumption is right for your
-  // dealers' regions (e.g. accounts.zoho.in -> www.zohoapis.in) — if
-  // their API domain doesn't follow this pattern, this needs a stored
-  // field instead of a derived one.
+  // Use the same explicitly configured API origin as outbound lead calls.
+  // Deriving it from the OAuth accounts hostname is unsafe across Zoho data
+  // centres and can silently register the watch in the wrong regional API.
+  let apiDomain;
+  try {
+    apiDomain = new URL(integration.base_url).origin;
+  } catch {
+    const err = new Error('Dealer Zoho API base URL is invalid');
+    err.code = 'INVALID_CRM_CONFIGURATION';
+    throw err;
+  }
 
   // FIX: deregister the previous channel for this dealer before creating
   // a new one — Zoho's watch API always ADDS a channel on POST rather
@@ -182,10 +186,14 @@ async function registerDealerWatchChannel(catalystApp, integration) {
     watch: [
       {
         channel_id: channelId,
-        events: ['Leads.all'], // confirm this matches the dealer's own Zoho module name for leads
+        // Only edits can update an already-linked dealer lead. Listening to
+        // create/delete generated false Unhappy 7/4 events because those
+        // records cannot be resolved through lead_integrations.
+        events: ['Leads.edit'],
         notify_url: buildDealerNotifyUrl(integration.dealer_code),
         channel_expiry: channelExpiryStr,
-        token: webhookSecret,
+        token: deriveZohoWatchToken(webhookSecret),
+        return_affected_field_values: true,
       },
     ],
   };

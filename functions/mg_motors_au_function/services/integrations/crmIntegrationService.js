@@ -100,7 +100,11 @@ function resolveConsentValue(rawValue) {
 
 function extractAffectedFieldNames(externalPayload, externalLeadId) {
   const raw = externalPayload.affected_fields;
-  if (!Array.isArray(raw)) return null;
+  // Zoho legitimately sends [] for inserts and can omit change detail on
+  // channels registered without return_affected_field_values. Treat an empty
+  // list as "unknown/full record", not "zero fields changed"; the latter made
+  // a fetched record produce FIELD_MAPPING_INVALID and dropped real updates.
+  if (!Array.isArray(raw) || raw.length === 0) return null;
   const flattened = [];
   raw.forEach((entry) => {
     if (typeof entry === 'string') {
@@ -113,7 +117,7 @@ function extractAffectedFieldNames(externalPayload, externalLeadId) {
       });
     }
   });
-  return flattened;
+  return flattened.length > 0 ? flattened : null;
 }
 
 async function findDealerByCode(catalystApp, dealerCode) {
@@ -539,6 +543,9 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     }
     const payload = buildOutboundPayload(leadRow, fieldMappings, statusMappings);
     const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
+    const enquiryIdFieldMapping = fieldMappings.find(
+      (mapping) => mapping.source_field === 'enquiry_id' && mapping.target_field
+    );
 
     const outboundFingerprint = leadFingerprintService.computeFingerprint(leadRow, fieldMappings);
     if (
@@ -568,7 +575,10 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
         catalystApp,
         integration,
         payload,
-        { idempotencyKey: zohoLeadId }
+        {
+          idempotencyKey: zohoLeadId,
+          idempotencyField: enquiryIdFieldMapping?.target_field,
+        }
       );
       if (!result.externalLeadId) {
         const acknowledgementError = new Error('Dealer accepted the request but returned no record ID');
@@ -1331,7 +1341,7 @@ async function processResolvedInboundLead(
   const statusTargetField = statusFieldMapping ? statusFieldMapping.target_field : 'status';
   const incomingStatusValue = externalRecord[statusTargetField];
 
-  const isStatusSync = affectedFields
+  let isStatusSync = affectedFields
     ? affectedFields.includes(statusTargetField)
     : Object.prototype.hasOwnProperty.call(externalRecord, statusTargetField);
 
@@ -1387,6 +1397,23 @@ async function processResolvedInboundLead(
         heldValue: incomingStatusValue,
         scenarioCode: heldScenarioCode,
       };
+    }
+  }
+
+  // Once Unhappy 10 has raised Unattended Alert, a repeated dealer
+  // acknowledgement / Not Contacted snapshot is still "no action". Daily
+  // reconciliation must not roll MG backwards to Not Contacted and erase the
+  // breach. A genuinely progressed status (Follow-up, Contacted, outcome,
+  // etc.) is allowed through and clears the held mapping on success.
+  if (
+    mapping.sync_status === 'SLA_BREACH' &&
+    mappedUpdate.lead_status !== undefined &&
+    pathPolicy.isWaitingForDealerActionStatus(mappedUpdate.lead_status)
+  ) {
+    delete mappedUpdate.lead_status;
+    isStatusSync = false;
+    if (Object.keys(mappedUpdate).length === 0) {
+      return { skipped: true, reason: 'SLA_BREACH_STILL_UNACTIONED' };
     }
   }
 
@@ -1684,5 +1711,6 @@ module.exports = {
     classifyLogScenario,
     toZohoApiFields,
     validateIntegrationConfiguration,
+    extractAffectedFieldNames,
   },
 };

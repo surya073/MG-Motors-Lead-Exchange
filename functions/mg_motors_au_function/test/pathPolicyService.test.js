@@ -65,6 +65,15 @@ test('every live AU008 dealer lifecycle value is classified', () => {
   assert.equal(policy.classifyDealerStatus('Junk Lead')?.code, 'Unhappy 9');
 });
 
+test('SLA waiting-state detection handles compound acknowledgement values', () => {
+  ['Update Pending', 'Not Contacted', 'Received / Acknowledged'].forEach((status) => {
+    assert.equal(policy.isWaitingForDealerActionStatus(status), true, status);
+  });
+  ['Follow-up 1 / In progress', 'Contacted', 'Lost (final)'].forEach((status) => {
+    assert.equal(policy.isWaitingForDealerActionStatus(status), false, status);
+  });
+});
+
 test('mandatory validation separates privacy and routing from invalid data', () => {
   assert.deepEqual(policy.validateLeadForDelivery(validLead()), {
     valid: true,
@@ -103,6 +112,23 @@ test('Happy 3 requires every duplicate key to match within 15 minutes', () => {
   assert.equal(policy.isBusinessDuplicate(
     { ...duplicate, assigned_date: '2026-09-23 10:15:01' },
     original
+  ), false);
+});
+
+test('CRM Created_Time supplies duplicate timing without inventing Assigned_Date', () => {
+  const mapped = leadSyncService._test.mapCrmRecordToLeadRow({
+    id: 'MG-10',
+    First_Name: 'Alex',
+    Last_Name: 'Morgan',
+    Created_Time: '2026-09-23T10:00:00+00:00',
+    Lead_Status_Modified_Time: '2026-09-23T10:05:00+00:00',
+  });
+  assert.equal(mapped.assigned_date, '2026-09-23 10:00:00');
+  assert.equal(mapped.last_status_update, '2026-09-23 10:05:00');
+  assert.equal(Object.prototype.hasOwnProperty.call(mapped, 'dealer_remarks'), false);
+  assert.equal(leadSyncService._test.hasChanges(
+    { ...mapped, assigned_date: '' },
+    mapped
   ), false);
 });
 

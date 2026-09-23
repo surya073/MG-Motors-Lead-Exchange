@@ -241,9 +241,31 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
   try {
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
     if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
-    const validFieldMappings = fieldMappings.filter((m) => m.source_field && m.target_field);
+    const validFieldMappings = fieldMappings
+      .filter((m) => m.source_field && m.target_field)
+      .map((mapping) => ({
+        ...mapping,
+        source_field: String(mapping.source_field).trim(),
+        target_field: String(mapping.target_field).trim(),
+      }));
     if (validFieldMappings.length === 0) {
       return res.status(400).json({ error: 'FIELD_MAPPING_INVALID' });
+    }
+    const seenFieldSources = new Set();
+    const seenFieldTargets = new Set();
+    for (const mapping of validFieldMappings) {
+      const source = String(mapping.source_field).trim();
+      const target = String(mapping.target_field).trim();
+      const normalizedTarget = target.toLowerCase();
+      if (seenFieldSources.has(source) || seenFieldTargets.has(normalizedTarget)) {
+        return res.status(400).json({
+          error: 'FIELD_MAPPING_AMBIGUOUS',
+          sourceField: source,
+          targetField: target,
+        });
+      }
+      seenFieldSources.add(source);
+      seenFieldTargets.add(normalizedTarget);
     }
     const configuredSourceFields = new Set(validFieldMappings.map((mapping) => mapping.source_field));
     const missingRequiredFields = pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.filter(
@@ -258,6 +280,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
     const validStatusMappings = [];
     const seenStatusPairs = new Set();
     const outboundTargetsBySource = new Map();
+    const inboundTargetsBySource = new Map();
     const mgStatusValues = pathPolicy.getMgLeadStatusSet();
     for (const mapping of statusMappings) {
       const sourceStatus = String(mapping.source_status || '').trim();
@@ -288,6 +311,15 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       }
       outboundTargetsBySource.set(normalizedSource, normalizedTarget);
 
+      const priorInboundTarget = inboundTargetsBySource.get(normalizedTarget);
+      if (priorInboundTarget && priorInboundTarget !== normalizedSource) {
+        return res.status(400).json({
+          error: 'STATUS_MAPPING_AMBIGUOUS',
+          value: targetStatus,
+        });
+      }
+      inboundTargetsBySource.set(normalizedTarget, normalizedSource);
+
       const pairKey = `${normalizedSource}\u0000${normalizedTarget}`;
       if (seenStatusPairs.has(pairKey)) continue;
       seenStatusPairs.add(pairKey);
@@ -309,6 +341,12 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
     const rowsToDelete = existingFieldRows.filter((r) => !incomingRowIds.has(String(r.ROWID)));
     const rowsToInsert = validFieldMappings.filter((m) => !m.ROWID);
     const existingById = new Map(existingFieldRows.map((r) => [String(r.ROWID), r]));
+    const foreignRowId = validFieldMappings.find(
+      (mapping) => mapping.ROWID && !existingById.has(String(mapping.ROWID))
+    );
+    if (foreignRowId) {
+      return res.status(400).json({ error: 'FIELD_MAPPING_INVALID' });
+    }
     const rowsToUpdate = validFieldMappings.filter((m) => {
       if (!m.ROWID) return false;
       const existing = existingById.get(String(m.ROWID));
@@ -320,9 +358,9 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         Boolean(existing.required) !== Boolean(m.required)
       );
     });
-    for (const r of rowsToDelete) {
-      await fieldTable.deleteRow(r.ROWID);
-    }
+    // Write the complete desired set before deleting stale rows. Catalyst's
+    // datastore API offers no transaction here; delete-first could leave a
+    // working dealer with no mappings if a later insert failed mid-save.
     for (const m of rowsToInsert) {
       try {
         await fieldTable.insertRow({
@@ -345,6 +383,9 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         data_type: m.data_type || 'string',
         required: Boolean(m.required),
       });
+    }
+    for (const r of rowsToDelete) {
+      await fieldTable.deleteRow(r.ROWID);
     }
     const statusTable = catalystApp.datastore().table('integration_status_mappings');
     const existingStatusRowsRaw = await catalystApp.zcql().executeZCQLQuery(

@@ -2,8 +2,11 @@
 
 const logger = require('../../utils/logger');
 const integrationAlertService = require('./integrationAlertService');
+const pathPolicy = require('./pathPolicyService');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
+const PAGE_SIZE = 200;
+const MAX_ROWS = 2000;
 
 /**
  * Pulls integration activity from the last 24h and keeps every Unhappy
@@ -14,12 +17,29 @@ const INTEGRATION_LOGS_TABLE = 'integration_logs';
  * name list, so future P1 scenarios are picked up automatically.
  */
 async function buildDailyErrorReport(catalystApp) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${INTEGRATION_LOGS_TABLE} WHERE CREATEDTIME > CURRENT_TIMESTAMP - 1 ORDER BY CREATEDTIME DESC LIMIT 0, 200`
-  );
-  const logs = rows
-    .map((r) => r[INTEGRATION_LOGS_TABLE])
-    .filter((log) => /^Unhappy\s+/i.test(log.happy_unhappy_path_name || ''));
+  // Catalyst ZCQL does not consistently support SQL date arithmetic such
+  // as `CURRENT_TIMESTAMP - 1`. Page newest-first and apply the exact
+  // rolling 24-hour cutoff in JavaScript instead.
+  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+  const logs = [];
+  for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ORDER BY CREATEDTIME DESC LIMIT ${offset}, ${PAGE_SIZE}`
+    );
+    const batch = rows.map((r) => r[INTEGRATION_LOGS_TABLE]);
+    batch.forEach((log) => {
+      const createdAt = pathPolicy.parseTimestamp(log.CREATEDTIME);
+      if (
+        createdAt && createdAt.getTime() >= cutoffMs &&
+        /^Unhappy\s+/i.test(log.happy_unhappy_path_name || '')
+      ) {
+        logs.push(log);
+      }
+    });
+
+    const oldest = pathPolicy.parseTimestamp(batch[batch.length - 1]?.CREATEDTIME);
+    if (batch.length < PAGE_SIZE || (oldest && oldest.getTime() < cutoffMs)) break;
+  }
 
   const p1 = logs.filter((l) => l.happy_unhappy_path_priority === 'P1');
   const other = logs.filter((l) => l.happy_unhappy_path_priority !== 'P1');

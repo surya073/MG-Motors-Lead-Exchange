@@ -16,7 +16,6 @@ const SLA_MINUTES = Number.isFinite(configuredSlaMinutes) && configuredSlaMinute
   ? configuredSlaMinutes
   : DEFAULT_SLA_MINUTES;
 const SLA_MS = SLA_MINUTES * 60 * 1000;
-const WAITING_STATUSES = new Set(['update pending', 'not contacted', 'received', 'acknowledged']);
 
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
@@ -64,7 +63,7 @@ async function runSlaSweep(catalystApp, now = new Date()) {
         results.skippedUnhealthy += 1;
         continue;
       }
-      if (!leadRow || !WAITING_STATUSES.has(pathPolicy.normalizeStatus(leadRow.lead_status))) {
+      if (!leadRow || !pathPolicy.isWaitingForDealerActionStatus(leadRow.lead_status)) {
         results.skippedActioned += 1;
         continue;
       }

@@ -6,6 +6,7 @@ const leadMapping = require('../services/integrations/leadMappingService');
 const fingerprint = require('../services/integrations/leadFingerprintService');
 const crmIntegration = require('../services/integrations/crmIntegrationService');
 const syncLog = require('../services/syncLogService');
+const webhookVerification = require('../services/integrations/webhookVerificationService');
 
 const fieldMappings = [
   { source_field: 'customer_name', target_field: 'CustomerName', required: true },
@@ -155,4 +156,23 @@ test('webhook dedupe never mistakes a record id or identical Zoho envelope for a
   const eventRetry = await crmIntegration.checkAndRecordWebhookEvent(catalystApp, integration, body, 'evt-1');
   assert.equal(eventFirst.isDuplicate, false);
   assert.equal(eventRetry.isDuplicate, true);
+});
+
+test('Zoho callback tokens fit the 50-character contract and preserve legacy verification', () => {
+  const storedSecret = 'a'.repeat(64);
+  const callbackToken = webhookVerification.deriveZohoWatchToken(storedSecret);
+  assert.equal(callbackToken.length, 48);
+  assert.equal(webhookVerification.verifyZohoWatchToken(callbackToken, storedSecret), true);
+  assert.equal(webhookVerification.verifyZohoWatchToken(storedSecret, storedSecret), true);
+  assert.equal(webhookVerification.verifyZohoWatchToken('wrong', storedSecret), false);
+});
+
+test('empty Zoho affected_fields safely falls back to the fetched full record', () => {
+  assert.equal(crmIntegration._test.extractAffectedFieldNames({ affected_fields: [] }, '1'), null);
+  assert.deepEqual(
+    crmIntegration._test.extractAffectedFieldNames({
+      affected_fields: [{ '1': ['Lead_Status', 'Enquiry_Outcome'] }],
+    }, '1'),
+    ['Lead_Status', 'Enquiry_Outcome']
+  );
 });

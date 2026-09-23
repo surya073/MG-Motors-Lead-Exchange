@@ -35,6 +35,8 @@ Configure these Catalyst environment variables before deployment:
 
 For each external dealer, complete and test the connection, generate a webhook secret, map every mandatory field shown in the UI, map every dealer status MG has approved, then register the webhook. Do not map `Junk Lead` to `Not Qualified`; both live AU008 and MG picklists contain the exact value `Junk Lead`.
 
+For every dealer Zoho org, the field targeted by the mandatory `enquiry_id` mapping must be marked **unique / external ID**. Zoho delivery uses its supported `/Leads/upsert` endpoint with that field, so a timeout followed by retry resolves to the same dealer record. Do not substitute Email or Mobile: the register requires separate enquiries for the same customer when model, variant, or nature differs.
+
 For the AU008 demo, open Status Mapping, click **Load verified AU008 map**, review, and save. The canonical pairs are:
 
 | MG | AU008 dealer |

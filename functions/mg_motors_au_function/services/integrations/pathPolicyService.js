@@ -139,6 +139,14 @@ const OEM_ONLY_STATUSES = new Set([
   'unattended alert',
 ]);
 
+const WAITING_DEALER_ACTION_STATUSES = new Set([
+  'update pending',
+  'not contacted',
+  'received',
+  'acknowledged',
+  'received / acknowledged',
+]);
+
 const DEFAULT_DEALER_WRITABLE_FIELDS = Object.freeze([
   'lead_status',
   'enquiry_outcome',
@@ -245,6 +253,13 @@ function classifyDealerStatus(value) {
     if (PROGRESS_STATUSES.has(part)) return scenario('Happy 2');
   }
   return null;
+}
+
+function isWaitingForDealerActionStatus(value) {
+  for (const component of statusComponents(value)) {
+    if (WAITING_DEALER_ACTION_STATUSES.has(component)) return true;
+  }
+  return false;
 }
 
 function isValidEmail(value) {
@@ -431,6 +446,7 @@ module.exports = {
   getMgLeadStatusSet,
   statusComponents,
   classifyDealerStatus,
+  isWaitingForDealerActionStatus,
   validateLeadForDelivery,
   duplicateFingerprint,
   isBusinessDuplicate,

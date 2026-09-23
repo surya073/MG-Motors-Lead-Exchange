@@ -24,7 +24,7 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
     const { webhookToken } = getZohoConfig();
     const incomingToken = req.body?.token;
 
-    if (!incomingToken || incomingToken !== webhookToken) {
+    if (!webhookVerificationService.verifyZohoWatchToken(incomingToken, webhookToken)) {
       logger.error('webhookRoutes', 'Rejected webhook call with invalid/missing token');
       return res.status(401).json({ error: 'Invalid token' });
     }
@@ -76,10 +76,15 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
 
+    if (integration.crm_type === 'ZOHO_CRM' && payload.module !== 'Leads') {
+      return res.status(422).json({ error: 'UNSUPPORTED_WEBHOOK_MODULE' });
+    }
+
     // payload.id / payload.leadId identify the dealer RECORD, not this
     // webhook delivery. Using either as the dedupe key drops every later
-    // status change for that lead. Prefer a real event id; otherwise the
-    // exact raw-payload hash in checkAndRecordWebhookEvent is the fallback.
+    // status change for that lead. Prefer a real event id; when none exists,
+    // process the delivery and let canonical state/no-change checks provide
+    // idempotence (Zoho envelopes for two real changes can be byte-identical).
     const eventId =
       payload.event_id ||
       payload.eventId ||
@@ -113,7 +118,12 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       );
       const status = replayable
         ? 202
-        : (['FIELD_MAPPING_INVALID', 'STATUS_MAPPING_NOT_FOUND'].includes(err.code) ? 422 : 500);
+        : ([
+            'FIELD_MAPPING_INVALID',
+            'STATUS_MAPPING_NOT_FOUND',
+            'STATUS_MAPPING_INVALID_TARGET',
+            'STATUS_MAPPING_AMBIGUOUS',
+          ].includes(err.code) ? 422 : 500);
       res.status(status).json({ error: err.code || 'INTERNAL_ERROR' });
     }
   } catch (err) {
