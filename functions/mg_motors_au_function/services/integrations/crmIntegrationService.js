@@ -1211,14 +1211,34 @@ async function replayInboundLead(catalystApp, integration, externalLeadId, zohoC
     getStatusMappings(catalystApp, integration.ROWID),
   ]);
   const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
-  const fetched = await adapter.getLead(catalystApp, integration, externalLeadId);
+
+  // A dealer record we hold a reference for but which the dealer CRM can no
+  // longer produce is Unhappy 11 (partial transaction), NOT a mapping fault:
+  // MG believes the lead was delivered and the dealer has nothing. The
+  // register calls this the most damaging failure precisely because neither
+  // side sees it, so it gets its own code rather than being folded into
+  // FIELD_MAPPING_INVALID.
+  let fetched;
+  try {
+    fetched = await adapter.getLead(catalystApp, integration, externalLeadId);
+  } catch (err) {
+    if (err.response?.status === 404 || err.response?.status === 204) {
+      const missing = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);
+      missing.code = 'DEALER_RECORD_NOT_FOUND';
+      missing.externalLeadId = externalLeadId;
+      throw missing;
+    }
+    throw err;
+  }
+
   const raw = fetched.raw;
   const externalRecord = Array.isArray(raw?.data)
     ? raw.data[0]
     : (raw?.data && typeof raw.data === 'object' ? raw.data : raw);
   if (!externalRecord || typeof externalRecord !== 'object') {
-    const err = new Error(`Dealer record ${externalLeadId} could not be fetched for replay`);
-    err.code = 'FIELD_MAPPING_INVALID';
+    const err = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);
+    err.code = 'DEALER_RECORD_NOT_FOUND';
+    err.externalLeadId = externalLeadId;
     throw err;
   }
   return processResolvedInboundLead(

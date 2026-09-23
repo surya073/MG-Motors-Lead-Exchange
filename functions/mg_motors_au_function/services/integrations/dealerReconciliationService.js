@@ -6,7 +6,12 @@ const crmIntegrationService = require('./crmIntegrationService');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
+const LEADS_TABLE = 'leads';
 const MAX_RECORDS_PER_SWEEP = 200;
+
+function safeQuoteForZcql(value) {
+  return String(value).replace(/'/g, "''");
+}
 
 function isEnabled(value) {
   return !(
@@ -34,6 +39,11 @@ async function runDealerReconciliation(catalystApp) {
     held: 0,
     skipped: 0,
     failed: 0,
+    // Unhappy 11. The register requires reconciliation to be "visible to MG
+    // as a count, so a silent gap cannot persist for weeks", and to
+    // distinguish 'never created' from 'created then deleted'.
+    missingAtDealer: 0,
+    neverCreated: 0,
   };
 
   for (const wrapped of mappingRows) {
@@ -43,8 +53,9 @@ async function runDealerReconciliation(catalystApp) {
       continue;
     }
 
+    let integration = null;
     try {
-      let integration = integrations.get(String(mapping.integration_id));
+      integration = integrations.get(String(mapping.integration_id));
       if (integration === undefined) {
         const rows = await catalystApp.zcql().executeZCQLQuery(
           `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${mapping.integration_id} LIMIT 1`
@@ -71,6 +82,15 @@ async function runDealerReconciliation(catalystApp) {
       else if (outcome?.ok) results.changed += 1;
       else results.unchanged += 1;
     } catch (err) {
+      if (err.code === 'DEALER_RECORD_NOT_FOUND') {
+        // MG holds a dealer reference the dealer CRM cannot produce.
+        // Neither side would otherwise notice, so this is raised as its
+        // own P2 and counted, rather than logged and forgotten.
+        results.missingAtDealer += 1;
+        await reportMissingDealerRecord(catalystApp, integration, mapping);
+        continue;
+      }
+
       results.failed += 1;
       try {
         await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
@@ -94,6 +114,54 @@ async function runDealerReconciliation(catalystApp) {
 
   logger.info('dealerReconciliationService', `Sweep complete: ${JSON.stringify(results)}`);
   return results;
+}
+
+/**
+ * Raises Unhappy 11 for a lead MG believes was delivered but which the
+ * dealer CRM no longer has. Marks the mapping so the gap is visible in the
+ * application rather than only in a sweep counter, and alerts, because the
+ * register is explicit that this failure is invisible to both sides.
+ */
+async function reportMissingDealerRecord(catalystApp, integration, mapping) {
+  let leadRow = null;
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
+    );
+    leadRow = rows[0]?.[LEADS_TABLE] || null;
+  } catch (err) {
+    logger.error('dealerReconciliationService', `Lead lookup failed for ${mapping.zoho_lead_id}`, err);
+  }
+
+  try {
+    await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+      ROWID: mapping.ROWID,
+      sync_status: 'RECONCILE_MISMATCH',
+      last_attempted_at: toCatalystDateTime(),
+      last_error: `DEALER_RECORD_NOT_FOUND:${mapping.external_crm_lead_id}`,
+    });
+  } catch (err) {
+    logger.error('dealerReconciliationService', `Could not flag mapping ROWID=${mapping.ROWID}`, err);
+  }
+
+  try {
+    await crmIntegrationService.recordScenario(catalystApp, {
+      scenarioCode: 'Unhappy 11',
+      dealerCode: integration.dealer_code,
+      leadRow: leadRow || { crm_record_id: mapping.zoho_lead_id, dealer_code: integration.dealer_code },
+      direction: 'ZOHO_TO_EXTERNAL_CRM',
+      operation: 'RECONCILE',
+      status: 'FAILED',
+      errorCode: 'DEALER_RECORD_NOT_FOUND',
+      externalLeadId: mapping.external_crm_lead_id,
+      notify: true,
+      reason:
+        `MG holds dealer record ${mapping.external_crm_lead_id} but the dealer CRM no longer has it ` +
+        '(created then deleted). Verify at the dealer before re-sending so reconciliation does not duplicate.',
+    });
+  } catch (err) {
+    logger.error('dealerReconciliationService', `Could not record Unhappy 11 for ${mapping.zoho_lead_id}`, err);
+  }
 }
 
 module.exports = { runDealerReconciliation };
