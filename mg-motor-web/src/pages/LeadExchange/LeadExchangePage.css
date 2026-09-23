@@ -995,3 +995,32 @@
   cursor: pointer;
   padding: 0 var(--space-1);
 }
+/* Integration-path pill on each lead card.
+   A lead can be classified Unhappy from sync_status alone, before the
+   scenario name is mirrored onto the row, so the label is resolved with a
+   fallback (see classifyLeadWithDuplicate). Without this the Unhappy filter
+   listed leads with nothing on the card saying which path they were on. */
+.lead-card__path-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.lead-card__path-pill--happy {
+  background: rgba(30, 122, 60, 0.10);
+  border-color: rgba(30, 122, 60, 0.28);
+  color: #1e7a3c;
+}
+
+.lead-card__path-pill--unhappy {
+  background: rgba(179, 38, 30, 0.10);
+  border-color: rgba(179, 38, 30, 0.28);
+  color: #b3261e;
+}

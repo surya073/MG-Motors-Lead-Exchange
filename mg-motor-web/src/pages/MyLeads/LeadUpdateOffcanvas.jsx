@@ -27,18 +27,32 @@ import "./LeadUpdateOffcanvas.css";
 
 const STATUS_OPTIONS = [
   { key: "Not Contacted", icon: CircleDot, tone: "neutral" },
+  { key: "Follow-up 1", icon: Car, tone: "warning" },
+  { key: "Follow-up 2", icon: Car, tone: "warning" },
   { key: "Contacted", icon: PhoneCall, tone: "info" },
-  { key: "In Progress", icon: Car, tone: "warning" },      // reuse existing icon imports; swap if you want something more literal
-  { key: "Converted", icon: PackageCheck, tone: "success" },
+  { key: "Contact in Future", icon: FileText, tone: "neutral" },
+  { key: "Not Qualified", icon: XCircle, tone: "danger" },
+  { key: "Dropped", icon: XCircle, tone: "danger" },
   { key: "Lost", icon: XCircle, tone: "danger" },
+  { key: "Attempted to Contact", icon: PhoneCall, tone: "warning" },
+  { key: "Junk Lead", icon: XCircle, tone: "danger" },
+  { key: "Lost Lead", icon: XCircle, tone: "danger" },
+  { key: "Pre-Qualified", icon: PackageCheck, tone: "success" },
 ];
 
 const STATUS_TONES = {
   "Not Contacted": "neutral",
+  "Follow-up 1": "warning",
+  "Follow-up 2": "warning",
   Contacted: "info",
-  "In Progress": "warning",
-  Converted: "success",
+  "Contact in Future": "neutral",
+  "Not Qualified": "danger",
+  Dropped: "danger",
   Lost: "danger",
+  "Attempted to Contact": "warning",
+  "Junk Lead": "danger",
+  "Lost Lead": "danger",
+  "Pre-Qualified": "success",
 };
 
 const SOURCE_ICONS = {
@@ -61,20 +75,14 @@ function SourceIcon({ source }) {
  * clicking the row's Update button opens "edit" directly. From view
  * mode, the footer's Edit button switches to edit mode in place
  * without closing/reopening the panel.
- * 
- * 
- * Explore the Dealer CRM workflow and configuration to understand the overall process and data flow.
-Review the dealer-related CRM integration, status handling, and configuration requirements.
-Start working on the Google Drive ↔ Zoho WorkDrive middleware application.
-Explore and define the middleware architecture, sync flow, and initial integration setup
  */
 
 export default function LeadUpdateOffcanvas({ lead, initialMode = "edit", onClose, onSaved }) {
   const { showAlert } = useAlerts();
 
   const [mode, setMode] = useState(initialMode); // "view" | "edit"
-  const [leadStatus, setLeadStatus] = useState(lead.lead_status || "New");
-  const [remarks, setRemarks] = useState(lead.dealer_remarks || "");
+  const [leadStatus, setLeadStatus] = useState(lead.lead_status || "Not Contacted");
+  const [remarks] = useState(lead.dealer_remarks || "");
   const [followupDate, setFollowupDate] = useState(lead.next_followup_date || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -106,12 +114,11 @@ export default function LeadUpdateOffcanvas({ lead, initialMode = "edit", onClos
     try {
       const updated = await dealerPortalService.updateLead(lead.ROWID, {
         lead_status: leadStatus,
-        dealer_remarks: remarks,
         next_followup_date: followupDate || undefined,
       });
       onSaved(updated);
     } catch (err) {
-      const message = err?.response?.data?.error || "Couldn't save changes. Try again.";
+      const message = err?.response?.data?.message || err?.response?.data?.error || "Couldn't save changes. Try again.";
       setError(message);
       showAlert("error", message, { title: "Update failed" });
     } finally {
@@ -225,9 +232,13 @@ export default function LeadUpdateOffcanvas({ lead, initialMode = "edit", onClos
                 id="lead-remarks"
                 rows={4}
                 value={remarks}
-                onChange={(event) => setRemarks(event.target.value)}
-                placeholder="Add notes about this lead…"
+                readOnly
+                disabled
+                title="Pending MG approval of a CRM destination field"
               />
+            )}
+            {!readOnly && (
+              <small>Read-only until MG approves a CRM field for dealer remarks.</small>
             )}
           </div>
 

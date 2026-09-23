@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import Badge from "../../ui/Badge/Badge";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import {
   ChevronLeftIcon,
@@ -64,7 +63,19 @@ const HAPPY_PATHS = [
     type: "happy",
     title: "Dealer progresses enquiry (status sync)",
     trigger: "Dealer CRM",
-    match: ["Follow-up 1", "Follow-up 2", "Contacted", "Contact in Future"],
+    match: [
+      "Follow-up 1",
+      "Follow-up 2",
+      "Contacted",
+      "Contact in Future",
+      "Not Qualified",
+      "Dropped",
+      "Lost",
+      "Lost Lead",
+      "Converted",
+      "Won",
+      "Delivered",
+    ],
     description:
       "Dealer is actively working the lead in their own CRM; each status change syncs back to the OEM automatically.",
     outcome: "OEM status mirrors the dealer pipeline in real time, plus a daily reconcile.",
@@ -74,9 +85,9 @@ const HAPPY_PATHS = [
     type: "happy",
     title: "Duplicate detected",
     trigger: "Middleware",
-    match: ["Duplicate", "Linked"],
+    match: ["Duplicate", "Linked", "DUPLICATE_LINKED"],
     description:
-      "An inbound enquiry matched an existing record (same ID, or same email/mobile + name) and was safely linked instead of creating a duplicate.",
+      "A new enquiry matched every configured mandatory business field for the same dealer within 15 minutes and was safely linked instead of being sent twice.",
     outcome: "No duplicate dealer record created; existing record linked with an audit note.",
   },
   {
@@ -110,7 +121,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "API / integration failure",
     trigger: "Middleware",
-    match: ["Retry Pending", "Retrying"],
+    match: ["Retry Pending", "Retrying", "DELIVERY_FAILED"],
     description:
       "Push to the dealer failed with a timeout, 5xx, or connection error — a recoverable failure.",
     outcome:
@@ -121,7 +132,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Invalid / missing data",
     trigger: "Middleware",
-    match: ["Quarantined", "Data Error", "Validation Failed"],
+    match: ["Quarantined", "Data Error", "Validation Failed", "VALIDATION_HOLD"],
     description:
       "A mandatory field was missing or failed validation on ingest from the OEM. Not recoverable — no retry.",
     outcome: "Rejected / quarantined and logged for correction; the dealer CRM is never called.",
@@ -150,7 +161,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Wrong / rejected dealer mapping",
     trigger: "Middleware",
-    match: ["Routing Exception"],
+    match: ["Routing Exception", "ROUTING_HOLD"],
     description:
       "Postcode routing resolved to no dealer, an ambiguous dealer, or an invalid mapping.",
     outcome: "Held as a routing exception until the mapping is corrected, then reprocessed.",
@@ -160,7 +171,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Ownership conflict",
     trigger: "Middleware",
-    match: ["Ownership Conflict"],
+    match: ["Ownership Conflict", "OWNERSHIP_CONFLICT"],
     description: "OEM and dealer updated the same field on the same enquiry at the same time.",
     outcome: "Resolved automatically using field-level source-of-truth and timestamp rules.",
   },
@@ -169,7 +180,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Out-of-order events",
     trigger: "Middleware",
-    match: ["Pending Sequence"],
+    match: ["Pending Sequence", "PENDING_SEQUENCE"],
     description: "A status update arrived before its enquiry-created record existed.",
     outcome: "Held in a buffer and released once the prerequisite record exists.",
   },
@@ -178,7 +189,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Consent / privacy mismatch",
     trigger: "Middleware",
-    match: ["Consent Hold"],
+    match: ["Consent Hold", "CONSENT_HOLD"],
     description: "Consent or privacy data was missing or mismatched.",
     outcome:
       "Held/flagged until consent is validated; marketing-dependent data withheld until then.",
@@ -188,9 +199,9 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Dealer rejects enquiry",
     trigger: "Dealer CRM",
-    match: ["Rejected", "Not Qualified", "Lost", "Lost Lead"],
-    description: "The dealer marked the enquiry as spam or invalid.",
-    outcome: "Rejection reason captured and mapped to an OEM status.",
+    match: ["Junk", "Junk Lead", "Spam", "Junk Lead / Spam"],
+    description: "The dealer explicitly marked the enquiry as spam or junk.",
+    outcome: "Raw classification captured; AU008 Junk Lead maps exactly to MG Junk Lead and alerts support.",
   },
   {
     id: "Unhappy 10",
@@ -251,6 +262,18 @@ function parseFieldChanges(entry) {
 function timelineDetailText(entry) {
   const changes = parseFieldChanges(entry);
   if (changes.length === 0) return null;
+
+  const deliveryTiming = changes.find((c) => c.field === "delivery_timing");
+  if (deliveryTiming) {
+    const resultTime = deliveryTiming.acknowledged_at || deliveryTiming.failed_at || "—";
+    return `Sent ${deliveryTiming.sent_at || "—"} · result ${resultTime} · ${deliveryTiming.duration_ms ?? "—"} ms`;
+  }
+
+  const duplicateLink = changes.find((c) => c.field === "duplicate_link");
+  if (duplicateLink) {
+    const gap = duplicateLink.gap_minutes == null ? "unknown" : Number(duplicateLink.gap_minutes).toFixed(1);
+    return `Linked ${duplicateLink.to || "—"} to ${duplicateLink.from || "—"} · ${gap} min gap`;
+  }
 
   const statusChange = changes.find((c) => c.field === "lead_status");
   const otherChanges = changes.filter((c) => c.field !== "lead_status");
@@ -341,7 +364,7 @@ function ActivityTimeline({ timeline, loading }) {
 }
 
 function normalize(value) {
-  return (value ?? "").toString().trim().toLowerCase();
+  return (value ?? "").toString().trim().toLowerCase().replace(/[-_]+/g, " ");
 }
 
 function findScenarioForStatus(status, scenarios) {
@@ -368,15 +391,6 @@ function classifyPath(lead) {
 
   if (match) {
     return match;
-  }
-
-  if (normalize(lead.sync_status) === "removed") {
-    const base = UNHAPPY_PATHS.find((scenario) => scenario.id === "Unhappy 3");
-
-    return {
-      ...base,
-      assumed: true,
-    };
   }
 
   return {
@@ -407,18 +421,28 @@ function classifyPath(lead) {
  * code would display the wrong badge even though the pill (driven by
  * lead_status directly) was correct.
  *
- * Now: a LIVE match against the lead's current lead_status/sync_status
- * takes priority — this is always at least as fresh as the pill itself,
- * since both are read from the same lead row. The stored
- * happy_unhappy_path_name is only used as a fallback when the current
- * status doesn't match any known scenario (e.g. legacy/log-only states),
- * and classifyPath's own heuristics are the last resort.
+ * Explicit hold states take priority so a stale audit mirror cannot hide
+ * an active fault. Otherwise the backend's stored scenario is authoritative;
+ * this preserves outcomes such as Happy 4 recovery even when the business
+ * status itself has already returned to Not Contacted.
  */
 function resolveDisplayPath(lead) {
   const liveMatch = matchPathScenario(lead);
-  if (liveMatch) return liveMatch;
+  const urgentSyncStates = new Set([
+    "validation hold",
+    "consent hold",
+    "routing hold",
+    "delivery failed",
+    "failed critical",
+    "sla breach",
+  ]);
+  if (liveMatch && urgentSyncStates.has(normalize(lead.sync_status))) return liveMatch;
 
   if (lead.happy_unhappy_path_name) {
+    const configured = [...HAPPY_PATHS, ...UNHAPPY_PATHS].find(
+      (scenario) => scenario.id === lead.happy_unhappy_path_name
+    );
+    if (configured) return configured;
     return {
       id: lead.happy_unhappy_path_name,
       type: /^happy/i.test(lead.happy_unhappy_path_name) ? "happy" : "unhappy",
@@ -427,6 +451,8 @@ function resolveDisplayPath(lead) {
       description: lead.happy_unhappy_path_message || "",
     };
   }
+
+  if (liveMatch) return liveMatch;
 
   return classifyPath(lead);
 }
@@ -501,21 +527,6 @@ function StatusPill({ status }) {
     <span className={`lead-detail__status-pill lead-detail__status-pill--${tone}`}>
       <span className="lead-detail__status-dot" />
       {status || "—"}
-    </span>
-  );
-}
-
-/* ----------------------------------------------------------------
-   Path Badge (current path — used in hero and Integration Path card)
------------------------------------------------------------------- */
-function PathBadge({ path }) {
-  const Icon =
-    path.type === "happy" ? CheckCircleIcon : path.type === "unhappy" ? AlertCircleIcon : DotsCircleIcon;
-
-  return (
-    <span className={`lead-detail__path-badge lead-detail__path-badge--${path.type}`} title={path.title}>
-      <Icon />
-      {path.id}
     </span>
   );
 }
@@ -599,11 +610,6 @@ function IntegrationPathCard({ path, journeyPaths }) {
             </p>
           )}
 
-          {path.assumed && (
-            <p className="lead-detail__path-card-note">
-              Inferred from sync_status = "Removed" — confirm this maps to Unhappy 3 for your real data.
-            </p>
-          )}
         </div>
       </div>
     </section>

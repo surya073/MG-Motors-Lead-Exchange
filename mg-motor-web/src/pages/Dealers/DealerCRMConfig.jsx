@@ -102,20 +102,55 @@ const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 const MASKED_CREDENTIAL_PLACEHOLDER = "••••••••••••";
 
 const DEFAULT_FIELD_MAPPINGS = [
+  { source_field: "enquiry_id", target_field: "", data_type: "string", required: true },
   { source_field: "customer_name", target_field: "", data_type: "string", required: true },
-  { source_field: "mobile_number", target_field: "", data_type: "string", required: false },
-  { source_field: "email_address", target_field: "", data_type: "string", required: false },
-  { source_field: "vehicle_model", target_field: "", data_type: "string", required: false },
-  { source_field: "lead_status", target_field: "", data_type: "string", required: false },
+  { source_field: "mobile_number", target_field: "", data_type: "string", required: true },
+  { source_field: "email_address", target_field: "", data_type: "string", required: true },
+  { source_field: "postcode", target_field: "", data_type: "string", required: true },
+  { source_field: "vehicle_model", target_field: "", data_type: "string", required: true },
+  { source_field: "enquiry_variant", target_field: "", data_type: "string", required: false },
+  { source_field: "nature_of_enquiry", target_field: "", data_type: "string", required: true },
+  { source_field: "lead_source", target_field: "", data_type: "string", required: true },
+  { source_field: "dealer_code", target_field: "", data_type: "string", required: true },
+  { source_field: "accept_privacy_policy", target_field: "", data_type: "boolean", required: true },
+  { source_field: "receive_marketing_updates", target_field: "", data_type: "boolean", required: false },
+  { source_field: "lead_status", target_field: "", data_type: "string", required: true },
+  { source_field: "enquiry_outcome", target_field: "", data_type: "string", required: false },
+  { source_field: "purchase_classification", target_field: "", data_type: "string", required: false },
+  { source_field: "last_status_update", target_field: "", data_type: "datetime", required: false },
 ];
 
 const DEFAULT_STATUS_MAPPINGS = [
-  { source_status: "New", target_status: "" },
+  { source_status: "Not Contacted", target_status: "" },
+  { source_status: "Follow-up 1", target_status: "" },
+  { source_status: "Follow-up 2", target_status: "" },
   { source_status: "Contacted", target_status: "" },
-  { source_status: "Test Drive", target_status: "" },
-  { source_status: "Quotation", target_status: "" },
-  { source_status: "Delivered", target_status: "" },
+  { source_status: "Contact in Future", target_status: "" },
+  { source_status: "Not Qualified", target_status: "" },
+  { source_status: "Dropped", target_status: "" },
   { source_status: "Lost", target_status: "" },
+  { source_status: "Attempted to Contact", target_status: "" },
+  { source_status: "Junk Lead", target_status: "" },
+  { source_status: "Lost Lead", target_status: "" },
+  { source_status: "Pre-Qualified", target_status: "" },
+];
+
+// Verified against both live Zoho picklists on 23 Sep 2026 and aligned to
+// the register. Saving these rows also creates the reverse dealer -> MG rows;
+// e.g. Received / Acknowledged maps back to MG Not Contacted.
+const AU008_VERIFIED_STATUS_MAPPINGS = [
+  { source_status: "Not Contacted", target_status: "Received / Acknowledged" },
+  { source_status: "Follow-up 1", target_status: "Follow-up 1 / In progress" },
+  { source_status: "Follow-up 2", target_status: "Follow-up 2" },
+  { source_status: "Contacted", target_status: "Contacted" },
+  { source_status: "Contact in Future", target_status: "Nurture / Future" },
+  { source_status: "Not Qualified", target_status: "Not Qualified" },
+  { source_status: "Dropped", target_status: "Dropped" },
+  { source_status: "Lost", target_status: "Lost (final)" },
+  { source_status: "Attempted to Contact", target_status: "Attempted to Contact" },
+  { source_status: "Junk Lead", target_status: "Junk Lead" },
+  { source_status: "Lost Lead", target_status: "Lost Lead" },
+  { source_status: "Pre-Qualified", target_status: "Pre-Qualified" },
 ];
 
 const EMPTY_CONFIG = {
@@ -146,6 +181,18 @@ const DEALER_LOG_SCENARIOS = {
     label: "Dealer progresses enquiry (status sync)",
     color: { bg: "var(--scenario-happy-2-bg)", text: "var(--scenario-happy-2-text)" },
   },
+  "happy-3": {
+    path: "happy",
+    number: 3,
+    label: "Duplicate detected",
+    color: { bg: "var(--scenario-happy-3-bg)", text: "var(--scenario-happy-3-text)" },
+  },
+  "happy-4": {
+    path: "happy",
+    number: 4,
+    label: "Integration recovery (replay)",
+    color: { bg: "var(--scenario-happy-4-bg)", text: "var(--scenario-happy-4-text)" },
+  },
   "happy-5": {
     path: "happy",
     number: 5,
@@ -164,11 +211,29 @@ const DEALER_LOG_SCENARIOS = {
     label: "Invalid / missing data",
     color: { bg: "var(--scenario-unhappy-2-bg)", text: "var(--scenario-unhappy-2-text)" },
   },
+  "unhappy-3": {
+    path: "unhappy",
+    number: 3,
+    label: "Dealer unavailable (after 24h retry)",
+    color: { bg: "var(--scenario-unhappy-3-bg)", text: "var(--scenario-unhappy-3-text)" },
+  },
   "unhappy-4": {
     path: "unhappy",
     number: 4,
     label: "Status update failure (dealer → OEM)",
     color: { bg: "var(--scenario-unhappy-4-bg)", text: "var(--scenario-unhappy-4-text)" },
+  },
+  "unhappy-5": {
+    path: "unhappy",
+    number: 5,
+    label: "Wrong / rejected dealer mapping",
+    color: { bg: "var(--scenario-unhappy-5-bg)", text: "var(--scenario-unhappy-5-text)" },
+  },
+  "unhappy-6": {
+    path: "unhappy",
+    number: 6,
+    label: "Ownership conflict",
+    color: { bg: "var(--scenario-unhappy-6-bg)", text: "var(--scenario-unhappy-6-text)" },
   },
   "unhappy-7": {
     path: "unhappy",
@@ -176,9 +241,27 @@ const DEALER_LOG_SCENARIOS = {
     label: "Out-of-order events",
     color: { bg: "var(--scenario-unhappy-7-bg)", text: "var(--scenario-unhappy-7-text)" },
   },
+  "unhappy-8": {
+    path: "unhappy",
+    number: 8,
+    label: "Consent / privacy mismatch",
+    color: { bg: "var(--scenario-unhappy-8-bg)", text: "var(--scenario-unhappy-8-text)" },
+  },
+  "unhappy-9": {
+    path: "unhappy",
+    number: 9,
+    label: "Dealer rejects enquiry (spam / junk only)",
+    color: { bg: "var(--scenario-unhappy-9-bg)", text: "var(--scenario-unhappy-9-text)" },
+  },
+  "unhappy-10": {
+    path: "unhappy",
+    number: 10,
+    label: "SLA breach",
+    color: { bg: "var(--scenario-unhappy-10-bg)", text: "var(--scenario-unhappy-10-text)" },
+  },
 };
 
-const INVALID_DATA_ERROR_CODES = new Set(["FIELD_MAPPING_INVALID", "STATUS_MAPPING_NOT_FOUND"]);
+const INVALID_DATA_ERROR_CODES = new Set(["FIELD_MAPPING_INVALID", "LEAD_VALIDATION_FAILED"]);
 
 function scenarioKeyFromStoredName(name) {
   const match = /^(happy|unhappy)\s+(\d+)$/i.exec((name || "").trim());
@@ -395,6 +478,7 @@ export default function DealerCRMConfig() {
   const saveSuccessTimeoutRef = useRef(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [webhookRegistering, setWebhookRegistering] = useState(false);
 
   const [tab, setTab] = useState("connection");
 
@@ -575,7 +659,19 @@ export default function DealerCRMConfig() {
 
   const handleConfigChange = (key, value) => {
     setSaveSuccess(false);
-    setConfig((prev) => ({ ...prev, [key]: value }));
+    setConfig((prev) => {
+      if (key === "crm_type" && value === "ZOHO_CRM") {
+        return {
+          ...prev,
+          crm_type: value,
+          create_lead_endpoint: "/crm/v8/Leads",
+          update_lead_endpoint: "/crm/v8/Leads/{externalLeadId}",
+          http_method: "POST",
+          update_http_method: "PUT",
+        };
+      }
+      return { ...prev, [key]: value };
+    });
   };
 
   const handleFieldMappingChange = (index, key, value) => {
@@ -616,6 +712,14 @@ export default function DealerCRMConfig() {
   const addStatusMapping = () => {
     setSaveSuccess(false);
     setStatusMappings((prev) => [...prev, { source_status: "", target_status: "" }]);
+  };
+
+  const applyVerifiedAu008StatusMap = () => {
+    setSaveSuccess(false);
+    // Deliberately drop ROWIDs: the backend safely upserts these canonical
+    // pairs first, then removes the old reversed/duplicate AU008 rows.
+    setStatusMappings(AU008_VERIFIED_STATUS_MAPPINGS.map((mapping) => ({ ...mapping })));
+    setEditingStatusRows(new Set());
   };
 
   const removeStatusMapping = (index) => {
@@ -719,7 +823,23 @@ export default function DealerCRMConfig() {
       setSaveSuccess(true);
       clearSaveSuccessSoon();
     } catch (err) {
-      showAlert("error", err?.response?.data?.error || "Couldn't save the mapping. Try again.", {
+      const response = err?.response?.data;
+      const missing = Array.isArray(response?.missingFields) ? response.missingFields.join(", ") : "";
+      let message = response?.error || "Couldn't save the mapping. Try again.";
+      if (missing) message = `Map every mandatory field before saving. Missing: ${missing}`;
+      if (response?.error === "STATUS_MAPPING_INVALID_SOURCE") {
+        message = `“${response.value}” is not a current MG Lead Status.`;
+      }
+      if (response?.error === "STATUS_MAPPING_OEM_ONLY") {
+        message = `“${response.value}” is an MG-only workflow status and must not be mapped to a dealer value.`;
+      }
+      if (response?.error === "STATUS_MAPPING_AMBIGUOUS") {
+        message = `“${response.value}” has an ambiguous two-way status mapping. Keep exactly one approved counterpart.`;
+      }
+      if (response?.error === "FIELD_MAPPING_AMBIGUOUS") {
+        message = `Each MG and dealer field may appear only once. Check ${response.sourceField || "the source field"} and ${response.targetField || "the target field"}.`;
+      }
+      showAlert("error", message, {
         title: "Save failed",
       });
     } finally {
@@ -742,6 +862,28 @@ export default function DealerCRMConfig() {
       showAlert("error", message, { title: "Test connection failed" });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleRegisterWebhook = async () => {
+    if (!selectedDealer) return;
+    setWebhookRegistering(true);
+    try {
+      const result = await dealerCrmIntegrationService.registerWebhook(selectedDealer.dealer_code);
+      const expiresAt = result?.result?.expiresAt;
+      showAlert(
+        "success",
+        expiresAt ? `Dealer webhook renewed until ${expiresAt}.` : "Dealer webhook renewed successfully.",
+        { title: "Webhook renewed" }
+      );
+    } catch (err) {
+      showAlert(
+        "error",
+        err?.response?.data?.message || err?.response?.data?.error || "Webhook registration failed.",
+        { title: "Webhook renewal failed" }
+      );
+    } finally {
+      setWebhookRegistering(false);
     }
   };
 
@@ -1379,6 +1521,18 @@ export default function DealerCRMConfig() {
                           </button>
                         )}
 
+                        {isExternalCrm && isZohoCrm && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={handleRegisterWebhook}
+                            disabled={webhookRegistering || testing || isConnectionDirty || !hasStoredCredential || !config.webhook_enabled}
+                          >
+                            {webhookRegistering ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
+                            {webhookRegistering ? "Renewing webhook…" : "Renew Dealer Webhook"}
+                          </button>
+                        )}
+
                         {isConnectionDirty && (
                           <div className="dealer-crm-config__unsaved-bar">
                             <span className="dealer-crm-config__unsaved-text">
@@ -1524,7 +1678,7 @@ export default function DealerCRMConfig() {
                     ) : (
                       <div className="dealer-crm-config__mapping-table">
                         <p className="dealer-crm-config__mapping-intro">
-                          Match each of our lead statuses to the equivalent status name in the dealer's CRM.
+                          Match each MG lifecycle status to the approved dealer value. Saving creates both directions; MG-only states such as Update Pending, Dealer Unavailable and Unattended Alert are intentionally excluded.
                         </p>
                         <button
                           type="button"
@@ -1535,6 +1689,18 @@ export default function DealerCRMConfig() {
                           {picklistRefreshing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
                           {picklistRefreshing ? "Refreshing…" : "Refresh statuses from CRM"}
                         </button>
+
+                        {selectedDealer?.dealer_code === "AU008" && config.crm_type === "ZOHO_CRM" && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={applyVerifiedAu008StatusMap}
+                            disabled={saving}
+                          >
+                            <ShieldCheck size={14} />
+                            Load verified AU008 map
+                          </button>
+                        )}
 
                         {statusMappings.map((mapping, index) => {
                           if (isStatusRowSaved(mapping, index)) {
@@ -1547,7 +1713,7 @@ export default function DealerCRMConfig() {
                                   <CheckCircle2 size={15} className="dealer-crm-config__mapping-check" />
                                   <span className="dealer-crm-config__mapping-saved-text">
                                     {ourStatusLabel(mapping.source_status)}
-                                    <span className="dealer-crm-config__mapping-arrow-inline">→</span>
+                                    <span className="dealer-crm-config__mapping-arrow-inline">↔</span>
                                     {mapping.target_status}
                                   </span>
                                 </div>

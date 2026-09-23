@@ -16,23 +16,45 @@ const VIEW_STORAGE_KEY = "myLeads:view";
 
 const STATUS_CARDS = [
   { key: "Not Contacted", label: "Not Contacted" },
+  { key: "Follow-up 1", label: "Follow-up 1" },
   { key: "Contacted", label: "Contacted" },
-  { key: "In Progress", label: "In Progress" },
-  { key: "Converted", label: "Converted" },
+  { key: "Contact in Future", label: "Contact in Future" },
   { key: "Lost", label: "Lost" },
 ];
 
 const STATUS_TONES = {
   "Not Contacted": "neutral",
+  "Follow-up 1": "warning",
+  "Follow-up 2": "warning",
   Contacted: "info",
-  "In Progress": "warning",
-  Converted: "success",
+  "Contact in Future": "neutral",
+  "Not Qualified": "danger",
+  Dropped: "danger",
   Lost: "danger",
+  "Attempted to Contact": "warning",
+  "Junk Lead": "danger",
+  "Lost Lead": "danger",
+  "Pre-Qualified": "success",
 };
+
+const LEAD_STATUS_VALUES = [
+  "Not Contacted",
+  "Follow-up 1",
+  "Follow-up 2",
+  "Contacted",
+  "Contact in Future",
+  "Not Qualified",
+  "Dropped",
+  "Lost",
+  "Attempted to Contact",
+  "Junk Lead",
+  "Lost Lead",
+  "Pre-Qualified",
+];
 
 const STATUS_FILTER_OPTIONS = [
   { value: "", label: "All statuses" },
-  ...STATUS_CARDS.map(({ key, label }) => ({ value: key, label })),
+  ...LEAD_STATUS_VALUES.map((status) => ({ value: status, label: status })),
 ];
 
 function initialsFor(name) {

@@ -45,63 +45,75 @@ const STATUS_TONES = {
   "Unattended Alert": "danger",
 };
 
-// Terminal/negative outcomes count as "unhappy" path leads for the
-// toggle — everything else (new, in-progress, follow-up statuses)
-// defaults to "happy" so a new in-progress status added later doesn't
-// need to be whitelisted to show up on the happy side.
-// "Lost" / "Lost Lead" / "Rejected" all map to Unhappy 9 (dealer
-// rejects the enquiry) in the detail view, so they belong here too.
+// Commercial outcomes such as Lost / Dropped / Not Qualified are valid
+// Happy 2 status synchronisations. Only integration holds/failures and
+// an explicit spam/junk rejection belong on the Unhappy side.
 const UNHAPPY_LEAD_STATUSES = new Set([
-  "Not Qualified",
-  "Dropped",
-  "Lost",
-  "Lost Lead",
   "Rejected",
+  "Junk",
+  "Junk Lead",
+  "Spam",
   "Dealer Unavailable",
   "Unattended Alert",
 ]);
 
-const classifyLeadPath = (status) => (UNHAPPY_LEAD_STATUSES.has(status) ? "unhappy" : "happy");
+const UNHAPPY_SYNC_STATUSES = new Set([
+  "VALIDATION_HOLD",
+  "CONSENT_HOLD",
+  "ROUTING_HOLD",
+  "DELIVERY_FAILED",
+  "FAILED_CRITICAL",
+  "SLA_BREACH",
+  "HELD",
+]);
 
-// ===== HAPPY 3: DUPLICATE DETECTION =====
-// Check if a lead is a duplicate by matching email + phone with existing leads
-// Same logic as backend dedupeService.findBusinessDuplicate()
-const findDuplicateLead = (currentLead, allLeads) => {
-  if (!currentLead.email_address && !currentLead.mobile_number) {
-    return null; // No contact info to match
-  }
-
-  return allLeads.find((other) => {
-    // Don't compare lead with itself
-    if (other.ROWID === currentLead.ROWID) return false;
-
-    // Don't compare if already marked as duplicate link
-    if (currentLead.sync_status === "DUPLICATE_LINKED") return false;
-
-    // Match email + phone (same logic as backend)
-    const emailMatch =
-      currentLead.email_address &&
-      other.email_address &&
-      currentLead.email_address.toLowerCase() === other.email_address.toLowerCase();
-
-    const phoneMatch =
-      currentLead.mobile_number &&
-      other.mobile_number &&
-      currentLead.mobile_number.replace(/\D/g, "") === other.mobile_number.replace(/\D/g, "");
-
-    return emailMatch || phoneMatch;
-  });
+// A lead can be classified Unhappy purely from sync_status/lead_status when
+// the stored scenario name has not been mirrored onto the row yet. Without
+// this map those leads appeared in the Unhappy filter with no indication of
+// WHICH path they were on, which is the first thing anyone asks.
+const SYNC_STATUS_TO_PATH = {
+  CONSENT_HOLD: "Unhappy 8",
+  VALIDATION_HOLD: "Unhappy 2",
+  ROUTING_HOLD: "Unhappy 5",
+  DELIVERY_FAILED: "Unhappy 1",
+  FAILED: "Unhappy 1",
+  FAILED_CRITICAL: "Unhappy 3",
+  SLA_BREACH: "Unhappy 10",
+  HELD: "Unhappy 4",
+  RECONCILE_MISMATCH: "Unhappy 11",
+  DUPLICATE_LINKED: "Happy 3",
 };
 
-const classifyLeadWithDuplicate = (lead, allLeads) => {
-  // Happy 3: duplicate detected
-  const duplicate = findDuplicateLead(lead, allLeads);
-  if (duplicate) {
-    return { path: "happy", number: 3, isDuplicate: true, duplicateId: duplicate.ROWID };
+const LEAD_STATUS_TO_PATH = {
+  "Unattended Alert": "Unhappy 10",
+  "Dealer Unavailable": "Unhappy 3",
+  "Junk Lead": "Unhappy 9",
+  Junk: "Unhappy 9",
+  Spam: "Unhappy 9",
+  Rejected: "Unhappy 9",
+};
+
+const classifyLeadWithDuplicate = (lead) => {
+  const storedPath = (lead.happy_unhappy_path_name || "").trim();
+  const isDuplicate = lead.sync_status === "DUPLICATE_LINKED" || storedPath === "Happy 3";
+  if (isDuplicate) {
+    return { path: "happy", number: 3, isDuplicate: true, label: "Happy 3" };
   }
 
-  // Original classification (Happy or Unhappy based on status)
-  return { path: classifyLeadPath(lead.lead_status), isDuplicate: false };
+  const unhappy =
+    /^Unhappy\s+/i.test(storedPath) ||
+    UNHAPPY_SYNC_STATUSES.has(lead.sync_status) ||
+    UNHAPPY_LEAD_STATUSES.has(lead.lead_status);
+
+  // Prefer what the backend recorded; fall back to whatever the lead's
+  // current hold state implies, so a card is never left unlabelled.
+  const label =
+    (/^(Happy|Unhappy)\s+\d+$/i.test(storedPath) && storedPath) ||
+    SYNC_STATUS_TO_PATH[lead.sync_status] ||
+    LEAD_STATUS_TO_PATH[lead.lead_status] ||
+    (unhappy ? "Unhappy" : "");
+
+  return { path: unhappy ? "unhappy" : "happy", isDuplicate: false, label };
 };
 
 const PATH_FILTER_OPTIONS = [
@@ -669,6 +681,10 @@ export default function LeadExchangePage() {
                   const removed = row.sync_status === "Removed";
                   const classification = classifyLeadWithDuplicate(row, leads);
                   const isDuplicate = classification.isDuplicate && !removed;
+                  // Removed leads are soft-deleted upstream; labelling them
+                  // with an integration path would imply live activity.
+                  const pathLabel = removed ? "" : classification.label;
+                  const pathTone = classification.path === "unhappy" ? "unhappy" : "happy";
                   const tone = removed
                     ? "neutral"
                     : isDuplicate
@@ -696,6 +712,14 @@ export default function LeadExchangePage() {
                               {isDuplicate && (
                                 <span className="lead-card__duplicate-pill">
                                   Duplicate (Happy 3)
+                                </span>
+                              )}
+                              {!isDuplicate && pathLabel && (
+                                <span
+                                  className={`lead-card__path-pill lead-card__path-pill--${pathTone}`}
+                                  title={`Integration path: ${pathLabel}`}
+                                >
+                                  {pathLabel}
                                 </span>
                               )}
                             </div>

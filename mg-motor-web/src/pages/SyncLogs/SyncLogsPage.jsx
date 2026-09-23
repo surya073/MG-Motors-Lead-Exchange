@@ -16,7 +16,6 @@ import {
   Clock,
   Hash,
   Zap,
-  Activity,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { syncDealersService, syncLeadsService } from "../../services/api/syncService";
@@ -75,7 +74,7 @@ const SCENARIO_CATALOG = {
     number: 3,
     label: "Duplicate detected",
     source: "Middleware",
-    description: "During ingest of a new enquiry. Dedupe rule matches an existing record: same Enq. ID (idempotent replay) OR match on email/mobile + name for the same dealer within the configured window.",
+    description: "During ingest of a new enquiry, every mandatory duplicate-key field matches for the same dealer inside the configurable 15-minute window. Inquiry-ID replay protection is separate.",
     color: { bg: "var(--scenario-happy-3-bg)", text: "var(--scenario-happy-3-text)" },
   },
   "happy-4": {
@@ -312,8 +311,8 @@ const parseErrorEntries = (log) => {
 // ---------------------------------------------------------
 // Resolves a sync-log ROW into every distinct outcome it actually
 // contains, each with a record count — e.g. "27 fetched" can mean
-// 1 × Happy 1 (new lead), 2 × Unhappy 2 (missing Dealer_Code),
-// 24 × Happy 3 (already existed, correctly skipped) all in one run.
+// 1 × Happy 1 (new lead), 2 × Unhappy 2 (invalid data), and
+// 1 × Happy 3 (an actual exact 15-minute duplicate) all in one run.
 // This replaces the old one-badge-per-row model, which forced a
 // mixed run into a single misleading bucket.
 // ---------------------------------------------------------
@@ -371,6 +370,8 @@ const resolveRowScenariosLegacy = (log) => {
     ];
   }
 
+  if (log.sync_type === "Dealer_Sync") return [];
+
   const inserted = Number(log.records_inserted) || 0;
   const updated = Number(log.records_updated) || 0;
   const failed = Number(log.records_failed) || 0;
@@ -400,12 +401,8 @@ const resolveRowScenariosLegacy = (log) => {
     addToBucket(log.sync_type === "Dealer_Sync" ? "happy-5" : "happy-2", updated);
   }
 
-  const accounted = inserted + updated + errorEntries.length + Math.max(unexplainedFailed, 0);
-  const skipped = Math.max(fetched - accounted, 0);
-  if (skipped > 0) addToBucket("happy-3", skipped);
-
   if (buckets.size === 0) {
-    addToBucket(log.status === "Success" ? "happy-1" : "unhappy-1", fetched || 1);
+    if (log.status !== "Success") addToBucket("unhappy-1", fetched || 1);
   }
 
   return Array.from(buckets.entries())

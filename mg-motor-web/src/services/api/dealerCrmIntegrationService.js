@@ -30,6 +30,13 @@ export const dealerCrmIntegrationService = {
     return data;
   },
 
+  async registerWebhook(dealerCode) {
+    const { data } = await axiosInstance.post(
+      `${BASE}/${encodeURIComponent(dealerCode)}/register-webhook`
+    );
+    return data;
+  },
+
   async getMappings(dealerCode) {
     const { data } = await axiosInstance.get(`${BASE}/${encodeURIComponent(dealerCode)}/integration/mappings`);
     return data;
