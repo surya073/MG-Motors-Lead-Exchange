@@ -3,6 +3,7 @@
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
 const { registerWatchChannels, registerDealerWatchChannel } = require('../services/zohoWebhookService');
+const outboundRetryScheduler = require('../services/integrations/outboundRetryScheduler'); // NEW
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -57,6 +58,31 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
   }
 });
 
+/**
+ * NEW — re-attempts every lead currently stuck FAILED/FAILED_CRITICAL
+ * in lead_integrations whose next_retry_at has passed. This is what
+ * makes Unhappy 1 → Unhappy 3 escalation (and retries in general)
+ * happen on a schedule instead of only when an admin clicks Retry.
+ * See services/integrations/outboundRetryScheduler.js for the sweep
+ * itself and crmIntegrationService.js for the classification/bookkeeping
+ * it triggers on each lead it retries.
+ */
+router.post('/cron/retry-outbound-syncs', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp);
+    logger.info('cronRoutes', 'Outbound retry sweep completed via cron', results);
+    res.status(200).json({ success: true, results });
+  } catch (err) {
+    logger.error('cronRoutes', 'Outbound retry sweep cron failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
 
 router.get('/debug/check-lead-status', async (req, res) => {
   try {

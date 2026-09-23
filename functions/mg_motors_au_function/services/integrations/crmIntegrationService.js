@@ -26,7 +26,52 @@ const REJECTION_STATUS_VALUES = new Set([
   'spam',
   'Junk Lead / Spam',
 ]);
-   
+
+// Unhappy 3 — Dealer Unavailable escalation window. A ZOHO_TO_EXTERNAL_CRM
+// failure (Unhappy 1) that stays unresolved this long gets reclassified as
+// Unhappy 3 / P1 on every subsequent failed attempt, without altering how
+// or how often those attempts are retried (see recordOutboundFailureAndCheckEscalation).
+//
+// Configurable via the UNHAPPY_3_ESCALATION_WINDOW_MINUTES environment
+// variable so it can be shortened for testing (e.g. set it to 5 in the
+// Catalyst function's Environment Variables to see Unhappy 3 fire after
+// 5 minutes instead of 24 hours) without touching this file. Remove the
+// env var (or set it to 1440) to go back to the real 24h production window.
+const DEFAULT_ESCALATION_WINDOW_MINUTES = 24 * 60; // 24 hours
+const configuredEscalationMinutes = Number(process.env.UNHAPPY_3_ESCALATION_WINDOW_MINUTES);
+const ESCALATION_WINDOW_MINUTES =
+  Number.isFinite(configuredEscalationMinutes) && configuredEscalationMinutes > 0
+    ? configuredEscalationMinutes
+    : DEFAULT_ESCALATION_WINDOW_MINUTES;
+const UNHAPPY_3_ESCALATION_WINDOW_MS = ESCALATION_WINDOW_MINUTES * 60 * 1000;
+
+if (ESCALATION_WINDOW_MINUTES !== DEFAULT_ESCALATION_WINDOW_MINUTES) {
+  logger.info(
+    'crmIntegrationService',
+    `Unhappy 3 escalation window overridden to ${ESCALATION_WINDOW_MINUTES} minute(s) via UNHAPPY_3_ESCALATION_WINDOW_MINUTES — remove this env var for the real 24h production window.`
+  );
+}
+const DEALER_UNAVAILABLE_LEAD_STATUS = 'Dealer Unavailable';
+const UNHAPPY_3_MESSAGE =
+  'The dealer integration failure has remained unresolved for more than 24 hours. The affected enquiry has been routed for critical escalation and manual follow-up.';
+
+// How far apart automatic retries are spaced while a lead is sitting in
+// FAILED/FAILED_CRITICAL — read by outboundRetryScheduler.js's sweep via
+// lead_integrations.next_retry_at. Same override pattern as the
+// escalation window, for testing (OUTBOUND_RETRY_INTERVAL_MINUTES).
+const DEFAULT_RETRY_INTERVAL_MINUTES = 15;
+const configuredRetryMinutes = Number(process.env.OUTBOUND_RETRY_INTERVAL_MINUTES);
+const RETRY_INTERVAL_MINUTES =
+  Number.isFinite(configuredRetryMinutes) && configuredRetryMinutes > 0
+    ? configuredRetryMinutes
+    : DEFAULT_RETRY_INTERVAL_MINUTES;
+
+if (RETRY_INTERVAL_MINUTES !== DEFAULT_RETRY_INTERVAL_MINUTES) {
+  logger.info(
+    'crmIntegrationService',
+    `Outbound retry interval overridden to ${RETRY_INTERVAL_MINUTES} minute(s) via OUTBOUND_RETRY_INTERVAL_MINUTES.`
+  );
+}
 
 /**
  * crmIntegrationService.js
@@ -100,7 +145,96 @@ async function getStatusMappings(catalystApp, integrationId) {
   return rows.map((r) => r[STATUS_MAPPINGS_TABLE]);
 }
 
+/**
+ * Tracks how long an OUTBOUND (ZOHO_TO_EXTERNAL_CRM) sync has been
+ * continuously failing for a given lead, using lead_integrations as the
+ * source of truth — one row per zoho_lead_id, created here even if a
+ * lead has never successfully synced out yet.
+ *
+ * Uses the failure_streak_started_at / retry_count / next_retry_at /
+ * last_attempted_at / last_error columns that already existed in this
+ * table (evidently provisioned for exactly this), rather than adding
+ * new ones. next_retry_at is what outboundRetryScheduler.js's sweep
+ * reads to decide when to try this lead again automatically — this is
+ * the actual "keep retrying" mechanism; nothing else in the codebase
+ * re-attempts a failed outbound sync on its own.
+ *
+ * - First failure in a streak (no failure_streak_started_at yet, or the
+ *   row was previously SYNCED): stamps failure_streak_started_at,
+ *   sync_status FAILED. This is exactly today's Unhappy 1 path.
+ * - Same failure persisting, still inside the escalation window: leaves
+ *   failure_streak_started_at untouched, still Unhappy 1.
+ * - Same failure crossing the window: sync_status flips to
+ *   FAILED_CRITICAL (once) and every call from here on returns
+ *   escalate:true, so the caller logs Unhappy 3 on this and all
+ *   subsequent failed retries until a success resets the row.
+ *
+ * Requires a 'FAILED_CRITICAL' value alongside 'FAILED'/'SYNCED'/
+ * 'PENDING' on lead_integrations.sync_status.
+ */
+async function recordOutboundFailureAndCheckEscalation(catalystApp, integration, zohoLeadId, err) {
+  const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
+  const now = new Date();
+  const lastError = (err?.code || err?.message || 'EXTERNAL_CRM_ERROR').slice(0, 500);
+  const nextRetryAtStr = toCatalystDateTime(new Date(now.getTime() + RETRY_INTERVAL_MINUTES * 60 * 1000));
 
+  const existingMappingRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE zoho_lead_id = '${safeQuoteForZcql(zohoLeadId)}' LIMIT 1`
+  );
+  const existingMapping = existingMappingRows.length > 0 ? existingMappingRows[0][LEAD_INTEGRATIONS_TABLE] : null;
+
+  if (!existingMapping) {
+    // No mapping row exists yet (e.g. the very first CREATE_LEAD attempt
+    // for this lead failed before any row was ever written). Start the
+    // failure clock now; external_crm_lead_id stays unset, so the
+    // CREATE_LEAD vs UPDATE_LEAD branch in syncLeadToExternalCrm is
+    // unaffected on the next retry.
+    await mappingTable.insertRow({
+      dealer_code: integration.dealer_code,
+      zoho_lead_id: zohoLeadId,
+      integration_id: integration.ROWID,
+      sync_status: 'FAILED',
+      failure_streak_started_at: toCatalystDateTime(now),
+      retry_count: '1',
+      next_retry_at: nextRetryAtStr,
+      last_attempted_at: toCatalystDateTime(now),
+      last_error: lastError,
+    });
+    return { escalate: false };
+  }
+
+  const isNewStreak = !existingMapping.failure_streak_started_at || existingMapping.sync_status === 'SYNCED';
+  const streakStartedAt = isNewStreak ? toCatalystDateTime(now) : existingMapping.failure_streak_started_at;
+  const retryCount = isNewStreak ? 1 : (parseInt(existingMapping.retry_count, 10) || 0) + 1;
+
+  if (isNewStreak) {
+    // New failure streak (row was healthy, or never failed before).
+    await mappingTable.updateRow({
+      ROWID: existingMapping.ROWID,
+      sync_status: 'FAILED',
+      failure_streak_started_at: streakStartedAt,
+      retry_count: String(retryCount),
+      next_retry_at: nextRetryAtStr,
+      last_attempted_at: toCatalystDateTime(now),
+      last_error: lastError,
+    });
+    return { escalate: false };
+  }
+
+  const elapsedMs = now.getTime() - new Date(existingMapping.failure_streak_started_at).getTime();
+  const crossesEscalationWindow = elapsedMs >= UNHAPPY_3_ESCALATION_WINDOW_MS;
+
+  await mappingTable.updateRow({
+    ROWID: existingMapping.ROWID,
+    sync_status: crossesEscalationWindow ? 'FAILED_CRITICAL' : 'FAILED',
+    retry_count: String(retryCount),
+    next_retry_at: nextRetryAtStr,
+    last_attempted_at: toCatalystDateTime(now),
+    last_error: lastError,
+  });
+
+  return { escalate: crossesEscalationWindow };
+}
 
 /**
  * ============================================================
@@ -178,6 +312,13 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
         last_synced_at: toCatalystDateTime(),
         last_sync_direction: 'ZOHO_TO_EXTERNAL_CRM',
         last_sync_source_hash: sourceHash,
+        // Clear the Unhappy 1/3 failure clock and retry bookkeeping on
+        // recovery, so a future failure starts a fresh streak.
+        failure_streak_started_at: '',
+        retry_count: '0',
+        next_retry_at: '',
+        last_attempted_at: toCatalystDateTime(),
+        last_error: '',
       });
     } else {
       await mappingTable.insertRow({
@@ -212,6 +353,33 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
 
     return { ok: true, externalLeadId: result.externalLeadId };
   } catch (err) {
+    // Unhappy 3 check — does NOT change retry behaviour or the thrown
+    // error below; it only tracks how long this lead has been failing
+    // and, once that crosses 24h, reclassifies the log entry below and
+    // marks the lead. See recordOutboundFailureAndCheckEscalation.
+    let escalation = { escalate: false };
+    try {
+      escalation = await recordOutboundFailureAndCheckEscalation(catalystApp, integration, zohoLeadId, err);
+    } catch (trackingErr) {
+      logger.error('crmIntegrationService', `Unhappy 3 failure tracking errored for lead ${zohoLeadId} — continuing as Unhappy 1`, trackingErr);
+    }
+
+    if (escalation.escalate) {
+      try {
+        const localLeadRows = await catalystApp.zcql().executeZCQLQuery(
+          `SELECT ROWID FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(zohoLeadId)}' LIMIT 1`
+        );
+        if (localLeadRows.length > 0) {
+          await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+            ROWID: localLeadRows[0][LEADS_TABLE].ROWID,
+            lead_status: DEALER_UNAVAILABLE_LEAD_STATUS,
+          });
+        }
+      } catch (statusErr) {
+        logger.error('crmIntegrationService', `Failed to set "${DEALER_UNAVAILABLE_LEAD_STATUS}" status for lead ${zohoLeadId}`, statusErr);
+      }
+    }
+
     await writeLog(catalystApp, {
       integration_id: integration.ROWID,
       dealer_code: integration.dealer_code,
@@ -222,7 +390,7 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       http_status: err.response?.status,
       error_message: (err.code || err.message || 'EXTERNAL_CRM_ERROR').slice(0, 500),
       request_reference: requestReference,
-    });
+    }, { escalateToUnhappy3: escalation.escalate });
 
     if (err.response?.status === 401 || err.response?.status === 403) {
       await catalystApp.datastore().table(DEALER_INTEGRATIONS_TABLE).updateRow({
@@ -290,6 +458,12 @@ const INVALID_DATA_ERROR_CODES = new Set(['FIELD_MAPPING_INVALID', 'STATUS_MAPPI
  * success — both used to log identically as UPDATE_LEAD with no way to
  * tell them apart afterward.
  *
+ * classificationHint.escalateToUnhappy3 is set by syncLeadToExternalCrm
+ * once a ZOHO_TO_EXTERNAL_CRM failure (Unhappy 1) has been unresolved
+ * for 24h+ (see recordOutboundFailureAndCheckEscalation) — it takes
+ * priority over the plain Unhappy 1 fallback below, but nothing else
+ * about Unhappy 1's own classification changes.
+ *
  * NOTE: this now checks error_message codes even on the
  * EXTERNAL_CRM_TO_ZOHO direction. Previously that direction only ever
  * reached writeLog via the OEM-write-back catch block, so "any failure
@@ -299,7 +473,7 @@ const INVALID_DATA_ERROR_CODES = new Set(['FIELD_MAPPING_INVALID', 'STATUS_MAPPI
  * that shortcut would misclassify them, so those exact codes are
  * checked first.
  */
-function classifyLogScenario({ direction, operation, status, error_message }, { isStatusSync, leadStatusValue } = {}) {
+function classifyLogScenario({ direction, operation, status, error_message }, { isStatusSync, leadStatusValue, escalateToUnhappy3 } = {}) {
   if (operation === 'TEST_CONNECTION') {
     return status === 'SUCCESS'
       ? { name: 'Connection Test', message: 'Connection test succeeded.' }
@@ -340,6 +514,10 @@ function classifyLogScenario({ direction, operation, status, error_message }, { 
   }
 
   // ZOHO_TO_EXTERNAL_CRM, anything else — connectivity/API failure.
+  if (escalateToUnhappy3) {
+    return { name: 'Unhappy 3', message: UNHAPPY_3_MESSAGE, priority: 'P1' };
+  }
+
   return { name: 'Unhappy 1', message: 'API / integration failure' };
 }
 
@@ -351,6 +529,7 @@ async function writeLog(catalystApp, entry, classificationHint) {
       ...entry,
       happy_unhappy_path_name: scenario.name,
       happy_unhappy_path_message: scenario.message,
+      ...(scenario.priority ? { happy_unhappy_path_priority: scenario.priority } : {}),
     });
   } catch (err) {
     logger.error('crmIntegrationService', 'Failed to write integration log', err);
@@ -375,6 +554,7 @@ async function writeLog(catalystApp, entry, classificationHint) {
           ROWID: leadRows[0][LEADS_TABLE].ROWID,
           happy_unhappy_path_name: scenario.name,
           happy_unhappy_path_message: scenario.message,
+          ...(scenario.priority ? { happy_unhappy_path_priority: scenario.priority } : {}),
         });
       }
     } catch (err) {
@@ -766,5 +946,6 @@ module.exports = {
   checkAndRecordWebhookEvent,
   markWebhookEventStatus,
   testConnection,
-  getLeadActivityTimeline
+  getLeadActivityTimeline,
+  RETRY_INTERVAL_MINUTES, // read by outboundRetryScheduler.js for logging only
 };
