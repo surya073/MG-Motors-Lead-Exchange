@@ -257,6 +257,43 @@ async function recordOutboundFailureAndCheckEscalation(catalystApp, integration,
 }
 
 /**
+ * Builds the Unhappy 3 alert detail the register requires: dealer,
+ * failure start, duration, affected lead count and IDs, retry count and
+ * the last API error. Never throws — an alert with less detail is better
+ * than no alert.
+ */
+async function describeEscalation(catalystApp, integration, escalation, err, reason) {
+  const mapping = escalation.existingMapping || {};
+  const streakStart = pathPolicy.parseTimestamp(mapping.failure_streak_started_at);
+  const durationMinutes = streakStart
+    ? Math.max(0, Math.round((Date.now() - streakStart.getTime()) / 60000))
+    : null;
+  const retryCount = (parseInt(mapping.retry_count, 10) || 0) + 1;
+  const apiError = err.response?.status
+    ? `HTTP ${err.response.status} ${reason}`
+    : `${reason}${err.message && err.message !== reason ? ` (${err.message})` : ''}`;
+
+  let affected = [];
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT zoho_lead_id FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integration.ROWID} AND sync_status IN ('FAILED', 'FAILED_CRITICAL') LIMIT 0, 300`
+    );
+    affected = rows.map((row) => row[LEAD_INTEGRATIONS_TABLE].zoho_lead_id).filter(Boolean);
+  } catch (lookupErr) {
+    logger.error('crmIntegrationService', 'Failed to list affected leads for Unhappy 3 alert', lookupErr);
+  }
+
+  return [
+    `Dealer ${integration.dealer_code} unavailable`,
+    `failure started ${streakStart ? streakStart.toISOString() : 'unknown'}`,
+    `duration ${durationMinutes ?? 'unknown'} min`,
+    `affected leads ${affected.length}${affected.length ? ` (${affected.join(', ')})` : ''}`,
+    `retry count ${retryCount}`,
+    `last API error ${apiError}`,
+  ].join('; ').slice(0, 1500);
+}
+
+/**
  * Parks a lead_integrations row in a HELD state so the
  * inbound event is neither lost nor applied. Released once MG approves
  * the mapping and the dealer's next update arrives, or via a replay.
@@ -437,6 +474,24 @@ async function holdOutboundLead(catalystApp, integration, leadRow, {
 }) {
   const requestReference = crypto.randomUUID();
   await setLeadSyncState(catalystApp, leadRow, syncStatus);
+
+  // A lead that once failed delivery keeps a FAILED/FAILED_CRITICAL
+  // mapping row, which is exactly what the retry sweep selects. If the
+  // retry now stops at a hold (bad data, consent, routing) instead of a
+  // delivery failure, leaving that row FAILED made every sweep re-hold
+  // it and re-send the same alert — every 2 minutes under the Happy 4
+  // fast-recovery cron. Parking the row as HELD takes it out of the
+  // retry queue; correcting the lead in MG re-syncs it normally.
+  if (integration?.ROWID && leadRow.crm_record_id) {
+    try {
+      const mapping = await findLeadMappingForIntegration(catalystApp, integration, leadRow.crm_record_id);
+      if (mapping && ['FAILED', 'FAILED_CRITICAL'].includes(mapping.sync_status)) {
+        await markMappingHeld(catalystApp, mapping.ROWID, errorCode);
+      }
+    } catch (err) {
+      logger.error('crmIntegrationService', `Failed to park retry row for ${leadRow.crm_record_id}`, err);
+    }
+  }
 
   // The caller already worked out WHICH field failed and WHY; logging only
   // the bare code threw that away, leaving the operator with
@@ -777,6 +832,14 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     }
 
     const reason = (err.code || err.message || 'EXTERNAL_CRM_ERROR').slice(0, 500);
+    // The Unhappy 3 critical alert must carry the whole outage picture,
+    // not just this one lead: dealer, failure start, duration, affected
+    // lead count and IDs, retry count and last API error. Only the alert
+    // text is enriched; the log row keeps the plain error code.
+    let alertReason = reason;
+    if (escalation.newEscalation) {
+      alertReason = await describeEscalation(catalystApp, integration, escalation, err, reason);
+    }
     await writeLog(catalystApp, {
       integration_id: integration.ROWID,
       dealer_code: integration.dealer_code,
@@ -798,7 +861,7 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       scenarioCode,
       notify: escalation.firstFailure || escalation.newEscalation || isNonRetryableMappingError,
       leadRow,
-      reason,
+      reason: alertReason,
     });
 
     if (err.response?.status === 401 || err.response?.status === 403) {
