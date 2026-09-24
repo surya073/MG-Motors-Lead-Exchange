@@ -39,7 +39,13 @@ const RECONCILE_OWNER = process.env.RECONCILE_OWNER || 'FI Digital support (Lead
 
 const MAX_NEVER_CREATED_PER_SWEEP = 20;
 
+const RECONCILE_CONCURRENCY = (() => {
+  const configured = Number(process.env.RECONCILE_CONCURRENCY);
+  return Number.isFinite(configured) && configured >= 1 ? Math.min(configured, 10) : 6;
+})();
+
 const MG_ONLY_WAITING_STATUSES = new Set(['Unattended Alert', 'Update Pending']);
+const DELIVERED_LEAD_STATES = new Set(['SYNCED', 'SLA_BREACH']);
 
 // Catalyst system columns (CREATEDTIME) are in the project timezone —
 // Asia/Kolkata for this project (Console > Settings > General).
@@ -110,26 +116,41 @@ async function runDealerReconciliation(catalystApp, { heldExistenceOnly = false 
     unresolved: 0,
   };
 
+  // Integrations are few; load them once so parallel checks never race on
+  // the cache.
   for (const wrapped of mappingRows) {
+    const id = wrapped[LEAD_INTEGRATIONS_TABLE].integration_id;
+    if (!id || integrations.has(String(id))) continue;
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${id} LIMIT 1`
+    );
+    integrations.set(String(id), rows[0]?.[DEALER_INTEGRATIONS_TABLE] || null);
+  }
+
+  const processOne = async (wrapped) => {
     const mapping = wrapped[LEAD_INTEGRATIONS_TABLE];
     if (!mapping.integration_id || !mapping.external_crm_lead_id) {
+      // Rotate skipped rows too. They are selected oldest-first; left
+      // untouched they stayed at the head of every sweep, filled the window
+      // and starved newer records (the rest were never checked at all).
       results.skipped += 1;
-      continue;
+      try {
+        await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+          ROWID: mapping.ROWID,
+          last_attempted_at: toCatalystDateTime(),
+        });
+      } catch (touchErr) {
+        logger.error('dealerReconciliationService', `Could not rotate skipped mapping ROWID=${mapping.ROWID}`, touchErr);
+      }
+      return;
     }
 
     let integration = null;
     try {
-      integration = integrations.get(String(mapping.integration_id));
-      if (integration === undefined) {
-        const rows = await catalystApp.zcql().executeZCQLQuery(
-          `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${mapping.integration_id} LIMIT 1`
-        );
-        integration = rows[0]?.[DEALER_INTEGRATIONS_TABLE] || null;
-        integrations.set(String(mapping.integration_id), integration);
-      }
+      integration = integrations.get(String(mapping.integration_id)) || null;
       if (!integration || integration.integration_type !== 'EXTERNAL_CRM' || !isEnabled(integration.inbound_enabled)) {
         results.skipped += 1;
-        continue;
+        return;
       }
 
       results.checked += 1;
@@ -140,7 +161,7 @@ async function runDealerReconciliation(catalystApp, { heldExistenceOnly = false 
           last_attempted_at: toCatalystDateTime(),
         });
         results.held += 1;
-        continue;
+        return;
       }
       const outcome = await crmIntegrationService.replayInboundLead(
         catalystApp,
@@ -161,7 +182,17 @@ async function runDealerReconciliation(catalystApp, { heldExistenceOnly = false 
         // own P2 and counted, rather than logged and forgotten.
         results.missingAtDealer += 1;
         await reportMissingDealerRecord(catalystApp, integration, mapping, results);
-        continue;
+        return;
+      }
+
+      // The MG enquiry itself no longer exists (deleted in the OEM CRM), so
+      // MG rejects every write for it. Register Unhappy 1 case (e): keep the
+      // record as 'Removed' and stop retrying, rather than failing (and
+      // re-logging) on every sweep.
+      if (/id given seems to be invalid|INVALID_DATA.*\bid\b/i.test(String(err.message || ''))) {
+        results.mgEnquiryRemoved = (results.mgEnquiryRemoved || 0) + 1;
+        await markMgEnquiryRemoved(catalystApp, mapping);
+        return;
       }
 
       results.failed += 1;
@@ -183,6 +214,13 @@ async function runDealerReconciliation(catalystApp, { heldExistenceOnly = false 
         err
       );
     }
+    };
+
+  // Each record is one dealer round trip, so records are checked
+  // RECONCILE_CONCURRENCY at a time: a full dealer (~60 records) finishes in
+  // seconds rather than ~30s, well inside the function's execution limit.
+  for (let index = 0; index < mappingRows.length; index += RECONCILE_CONCURRENCY) {
+    await Promise.all(mappingRows.slice(index, index + RECONCILE_CONCURRENCY).map(processOne));
   }
 
   try {
@@ -246,10 +284,20 @@ async function reconcileNeverCreated(catalystApp, integrations, results) {
       `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(log.zoho_lead_id)}' LIMIT 1`
     );
     const leadRow = leadRows[0]?.[LEADS_TABLE];
-    // Only an enquiry still routed to this dealer and not linked as a
-    // duplicate (Happy 3) can be missing a dealer record it should have.
+    // Only an enquiry MG currently regards as delivered, still routed to
+    // this dealer, can be missing a dealer record it should have. A lead on
+    // a hold (validation, consent, routing) already has a known, alerted
+    // cause — re-sending it only re-holds it and re-alerts every run.
     if (!leadRow || leadRow.dealer_code !== integration.dealer_code) continue;
-    if (['DUPLICATE_LINKED', 'Removed'].includes(leadRow.sync_status)) continue;
+    if (!DELIVERED_LEAD_STATES.has(leadRow.sync_status)) continue;
+
+    // Raise each mismatch once: skip a lead that already has an Unhappy 11
+    // recorded since this delivery. It stays visible (and unresolved ones
+    // stay with their owner) without a new alert on every sweep.
+    const priorFlags = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM integration_logs WHERE zoho_lead_id = '${safeQuoteForZcql(log.zoho_lead_id)}' AND happy_unhappy_path_name = 'Unhappy 11' AND CREATEDTIME > '${safeQuoteForZcql(log.CREATEDTIME)}' LIMIT 1`
+    );
+    if (priorFlags.length) continue;
 
     processed += 1;
     results.neverCreated += 1;
@@ -318,6 +366,34 @@ async function resendForReconciliation(catalystApp, integration, leadRow, result
       `Unresolved mismatch (${mismatchKind}): re-delivery did not create a dealer record ` +
       `(${(outcome && outcome.reason) || 'no dealer acknowledgement'}). Owner: ${RECONCILE_OWNER}.`,
   });
+}
+
+/**
+ * The MG enquiry behind this link was deleted in the OEM CRM. The lead
+ * mirror is kept as 'Removed' (never discarded) and the link is parked, so
+ * neither the reconciliation nor the retry sweeps keep writing to a record
+ * that no longer exists.
+ */
+async function markMgEnquiryRemoved(catalystApp, mapping) {
+  try {
+    await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+      ROWID: mapping.ROWID,
+      sync_status: 'HELD',
+      last_attempted_at: toCatalystDateTime(),
+      last_error: 'MG_ENQUIRY_REMOVED',
+    });
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
+    );
+    if (rows.length) {
+      await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+        ROWID: rows[0][LEADS_TABLE].ROWID,
+        sync_status: 'Removed',
+      });
+    }
+  } catch (err) {
+    logger.error('dealerReconciliationService', `Could not mark MG enquiry ${mapping.zoho_lead_id} removed`, err);
+  }
 }
 
 /**
