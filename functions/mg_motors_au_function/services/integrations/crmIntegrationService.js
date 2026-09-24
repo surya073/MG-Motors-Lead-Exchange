@@ -859,7 +859,12 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       }]) : undefined,
     }, {
       scenarioCode,
-      notify: escalation.firstFailure || escalation.newEscalation || isNonRetryableMappingError,
+      // An acknowledgement write-back failure re-marks the mapping SYNCED on
+      // every attempt (the dealer record exists), so each retry looked like
+      // a first failure and re-alerted. Alert it once per lead.
+      notify: err.code === 'ZOHO_ACK_UPDATE_FAILED'
+        ? existingMapping?.last_error !== 'ZOHO_ACK_UPDATE_FAILED'
+        : (escalation.firstFailure || escalation.newEscalation || isNonRetryableMappingError),
       leadRow,
       reason: alertReason,
     });
@@ -1700,7 +1705,10 @@ async function processResolvedInboundLead(
 
     await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
       ROWID: mapping.ROWID,
-      sync_status: conflicts.length > 0 ? 'HELD' : 'SYNCED',
+      // The accepted fields were applied, so the record is in sync. A held
+      // protected field (Unhappy 6) is recorded in last_error so its alert
+      // is not repeated, without marking the whole record as held.
+      sync_status: 'SYNCED',
       last_synced_at: toCatalystDateTime(),
       last_sync_direction: 'EXTERNAL_CRM_TO_ZOHO',
       // Same canonical internal-state fingerprint the outbound side
@@ -1711,7 +1719,11 @@ async function processResolvedInboundLead(
       last_error: conflicts.length > 0 ? 'OWNERSHIP_CONFLICT' : '',
     });
 
-    if (conflicts.length === 0) {
+    // Always record what WAS applied (Happy 2 / Happy 5), even when the same
+    // dealer edit also touched a protected field — that part is its own
+    // Unhappy 6 entry above. Previously a mixed edit logged only the
+    // Unhappy 6, so the synchronised fields never reached the timeline.
+    {
       await writeLog(catalystApp, {
         integration_id: integration.ROWID,
         dealer_code: integration.dealer_code,
@@ -1737,9 +1749,7 @@ async function processResolvedInboundLead(
     return {
       ok: true,
       zohoLeadId: mapping.zoho_lead_id,
-      scenarioCode: conflicts.length > 0
-        ? 'Unhappy 6'
-        : (isStatusSync ? (pathPolicy.classifyDealerStatus(rawDealerStatus)?.code || 'Happy 2') : 'Happy 5'),
+      scenarioCode: isStatusSync ? (pathPolicy.classifyDealerStatus(rawDealerStatus)?.code || 'Happy 2') : 'Happy 5',
       conflicts,
     };
   } catch (err) {
