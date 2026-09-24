@@ -301,17 +301,17 @@ function timelineDetailText(entry) {
   const statusChange = changes.find((c) => c.field === "lead_status");
   const otherChanges = changes.filter((c) => c.field !== "lead_status");
 
+  // A dealer edit can change the status and other fields together; show
+  // every field that changed, not just the status.
+  const parts = [];
   if (statusChange) {
-    return `Status changed: ${statusChange.from || "—"} → ${statusChange.to || "—"}`;
+    parts.push(`Status changed: ${statusChange.from || "—"} → ${statusChange.to || "—"}`);
   }
+  otherChanges.forEach((c) => {
+    parts.push(`${formatFieldName(c.field)}: "${c.from || "—"}" → "${c.to || "—"}"`);
+  });
 
-  if (otherChanges.length > 0) {
-    return otherChanges
-      .map((c) => `${formatFieldName(c.field)}: "${c.from || "—"}" → "${c.to || "—"}"`)
-      .join(", ");
-  }
-
-  return null;
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 function scenarioFromLog(entry) {

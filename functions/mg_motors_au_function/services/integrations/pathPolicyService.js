@@ -147,12 +147,6 @@ const WAITING_DEALER_ACTION_STATUSES = new Set([
   'received / acknowledged',
 ]);
 
-const DEFAULT_DEALER_WRITABLE_FIELDS = Object.freeze([
-  'lead_status',
-  'enquiry_outcome',
-  'purchase_classification',
-]);
-
 const IDENTITY_FIELDS = new Set(['crm_record_id', 'enquiry_id', 'dealer_code']);
 const PRIVACY_FIELDS = new Set(['accept_privacy_policy']);
 
@@ -378,37 +372,71 @@ function isBusinessDuplicate(currentLead, candidateLead, windowMinutes = DUPLICA
   return gapMs >= 0 && gapMs <= windowMinutes * 60 * 1000;
 }
 
-function getDealerWritableFields() {
-  const configured = String(process.env.DEALER_WRITABLE_FIELDS || '')
+function parseFieldList(value) {
+  return String(value || '')
     .split(',')
     .map((field) => field.trim())
     .filter(Boolean);
-  return new Set(configured.length > 0 ? configured : DEFAULT_DEALER_WRITABLE_FIELDS);
+}
+
+// Contact fields MG keeps authoritative: a dealer edit to these is held as
+// an ownership conflict (Unhappy 6) and MG's value is kept. Every other
+// mapped field the dealer changes is synchronised to MG (Happy 5).
+// Overridable per environment via DEALER_PROTECTED_FIELDS.
+const DEFAULT_DEALER_PROTECTED_FIELDS = Object.freeze(['email_address', 'mobile_number']);
+
+function getDealerProtectedFields() {
+  const configured = parseFieldList(process.env.DEALER_PROTECTED_FIELDS);
+  return new Set(configured.length > 0 ? configured : DEFAULT_DEALER_PROTECTED_FIELDS);
+}
+
+// Legacy allow-list mode: when DEALER_WRITABLE_FIELDS is set explicitly,
+// ONLY those fields are dealer-writable, exactly as before.
+function getDealerWritableFields() {
+  const configured = parseFieldList(process.env.DEALER_WRITABLE_FIELDS);
+  return configured.length > 0 ? new Set(configured) : null;
 }
 
 /**
- * Applies the conservative ownership rule required while MG's complete
- * per-field matrix is awaiting sign-off. Identity and privacy always stay
- * MG-owned. Any other non-approved dealer change is held as Unhappy 6
- * instead of silently choosing a winner.
+ * Per-field source-of-truth rule for dealer -> MG updates (MG decision):
+ *   - Protected contact fields (default: email, mobile) stay MG-owned; a
+ *     dealer change to them is held as an ownership conflict (Unhappy 6).
+ *   - Every other genuine change is applied to MG (Happy 5).
+ *   - Identity (record / enquiry / dealer assignment) and privacy consent
+ *     are never taken from the dealer; consent has its own path (Unhappy 8).
+ *     They, and a dealer clearing a field MG holds a value for (register
+ *     Happy 5 edge case d — never blank an MG value), are left unchanged
+ *     without raising a conflict.
+ * Returns { allowed, conflicts, ignored }.
  */
 function partitionInboundByOwnership(internalUpdate, existingLead) {
   const allowed = {};
   const conflicts = [];
-  const dealerWritable = getDealerWritableFields();
+  const ignored = [];
+  const writableAllowList = getDealerWritableFields();
+  const protectedFields = getDealerProtectedFields();
 
   Object.entries(internalUpdate || {}).forEach(([field, value]) => {
     const oldValue = existingLead?.[field] ?? '';
     if (String(oldValue) === String(value ?? '')) return;
 
-    if (IDENTITY_FIELDS.has(field) || PRIVACY_FIELDS.has(field) || !dealerWritable.has(field)) {
+    if (IDENTITY_FIELDS.has(field) || PRIVACY_FIELDS.has(field)) {
+      ignored.push({ field, reason: 'MG_OWNED' });
+      return;
+    }
+    const blocked = writableAllowList ? !writableAllowList.has(field) : protectedFields.has(field);
+    if (blocked) {
       conflicts.push({ field, mgValue: oldValue, dealerValue: value });
+      return;
+    }
+    if (String(value ?? '').trim() === '' && String(oldValue).trim() !== '') {
+      ignored.push({ field, reason: 'BLANK_WOULD_ERASE_MG_VALUE' });
       return;
     }
     allowed[field] = value;
   });
 
-  return { allowed, conflicts };
+  return { allowed, conflicts, ignored };
 }
 
 function maskSensitiveValue(field, value) {

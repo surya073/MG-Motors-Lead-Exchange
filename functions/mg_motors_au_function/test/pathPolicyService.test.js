@@ -171,9 +171,21 @@ test('ownership permits approved dealer fields and holds MG-owned changes', () =
 
   assert.deepEqual(result.allowed, {
     lead_status: 'Contacted',
+    dealer_remarks: 'Called customer',
     enquiry_outcome: 'Test drive booked',
   });
-  assert.deepEqual(result.conflicts.map((item) => item.field), [
-    'dealer_remarks', 'email_address', 'accept_privacy_policy',
-  ]);
+  assert.deepEqual(result.conflicts.map((item) => item.field), ['email_address']);
+  assert.deepEqual(result.ignored.map((item) => item.field), ['accept_privacy_policy']);
+});
+
+test('ownership protects contact fields and never blanks an MG value', () => {
+  const result = policy.partitionInboundByOwnership({
+    mobile_number: '0499999999',
+    customer_message: 'Prefers Saturday',
+    postcode: '',
+  }, validLead({ customer_message: 'Hi', postcode: '3000' }));
+
+  assert.deepEqual(result.allowed, { customer_message: 'Prefers Saturday' });
+  assert.deepEqual(result.conflicts.map((item) => item.field), ['mobile_number']);
+  assert.deepEqual(result.ignored.map((item) => item.field), ['postcode']);
 });
