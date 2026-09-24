@@ -3,6 +3,8 @@
 const nodemailer = require('nodemailer');
 const logger = require('../../utils/logger');
 const { notifyAdmins } = require('../notificationService');
+const emailTemplates = require('./emailTemplates');
+const alertContext = require('./alertContext');
 
 /**
  * Two delivery channels, tried in order:
@@ -96,6 +98,45 @@ async function sendConfiguredEmail(catalystApp, { subject, content, html, recipi
   }
 }
 
+// Repeat suppression. The register wants an alert on the FIRST failure of
+// a lead, immediately — not one per retry. The same alert (same path, same
+// lead, same cause) inside this window is logged but not re-emailed or
+// re-pushed. Happy (recovery) notices are never suppressed.
+const DEDUPE_HOURS = (() => {
+  const configured = Number(process.env.ALERT_DEDUPE_HOURS);
+  return Number.isFinite(configured) && configured >= 0 ? configured : 6;
+})();
+
+// "CODE: detail" -> "CODE"; otherwise the first 60 characters. Two alerts
+// with the same cause share this key even when their detail text differs
+// only in counts or timestamps.
+function causeKey(reason) {
+  const text = String(reason || '').trim();
+  const code = /^([A-Z0-9_]{4,}):/.exec(text);
+  return code ? code[1] : text.slice(0, 60);
+}
+
+async function isDuplicateAlert(catalystApp, { type, leadId, reason }) {
+  if (!catalystApp || !leadId || DEDUPE_HOURS === 0) return false;
+  try {
+    const cutoff = new Date(Date.now() - DEDUPE_HOURS * 3600 * 1000);
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT message, created_time FROM notifications WHERE type = '${String(type).replace(/'/g, "''")}' AND related_lead_id = '${String(leadId).replace(/'/g, "''")}' AND recipient_role = 'ADMIN' ORDER BY CREATEDTIME DESC LIMIT 0, 20`
+    );
+    const key = causeKey(reason);
+    return rows.some((row) => {
+      const notification = row.notifications;
+      const at = new Date(`${String(notification.created_time || '').replace(' ', 'T')}Z`);
+      if (Number.isNaN(at.getTime()) || at < cutoff) return false;
+      return String(notification.message || '').includes(key);
+    });
+  } catch (err) {
+    // A failed lookup must never swallow an alert.
+    logger.error('integrationAlertService', 'Alert de-duplication lookup failed; sending anyway', err);
+    return false;
+  }
+}
+
 async function notifyScenario(catalystApp, {
   scenarioCode,
   scenarioMessage,
@@ -105,27 +146,57 @@ async function notifyScenario(catalystApp, {
   customerName,
   reason,
 }) {
-  const title = `${priority ? `${priority} ` : ''}${scenarioCode}: ${scenarioMessage}`.trim();
-  const parts = [
-    dealerCode ? `Dealer: ${dealerCode}` : null,
-    leadId ? `Inquiry: ${leadId}` : null,
-    customerName ? `Customer: ${String(customerName).slice(0, 1)}***` : null,
-    reason ? `Reason: ${reason}` : null,
-    `Time (UTC): ${new Date().toISOString()}`,
-  ].filter(Boolean);
-  const message = parts.join(' | ');
+  const type = scenarioCode.replace(/\s+/g, '_').toUpperCase();
+  const isHappy = /^Happy/i.test(scenarioCode);
 
-  await notifyAdmins(catalystApp, {
-    type: scenarioCode.replace(/\s+/g, '_').toUpperCase(),
-    title,
-    message,
-    relatedLeadId: leadId,
-    relatedDealerCode: dealerCode,
+  if (!isHappy && await isDuplicateAlert(catalystApp, { type, leadId, reason })) {
+    logger.info(
+      'integrationAlertService',
+      `Suppressed repeat ${scenarioCode} alert for lead ${leadId} (same cause within ${DEDUPE_HOURS}h)`
+    );
+    return { sent: false, reason: 'DUPLICATE_SUPPRESSED' };
+  }
+
+  const email = emailTemplates.renderAlertEmail({
+    scenarioCode,
+    scenarioMessage,
+    priority,
+    dealerCode,
+    leadId,
+    customerName,
+    reason,
   });
 
+  // In-app notification: short, scannable, and carries the cause key so the
+  // de-duplication above can recognise a repeat.
+  const title = `${priority && !isHappy ? `${priority} ` : ''}${scenarioCode}: ${scenarioMessage}`.trim();
+  const message = [
+    dealerCode ? `Dealer ${dealerCode}` : null,
+    customerName ? `Customer ${String(customerName).slice(0, 1)}***` : null,
+    reason ? String(reason).slice(0, 400) : null,
+  ].filter(Boolean).join(' · ');
+
+  if (catalystApp) {
+    await notifyAdmins(catalystApp, {
+      type,
+      title,
+      message,
+      relatedLeadId: leadId,
+      relatedDealerCode: dealerCode,
+    });
+  }
+
+  // Detected by a background scheduler rather than by someone's action:
+  // recorded above (and on the timeline / daily report), not emailed.
+  if (alertContext.isBackground() && !alertContext.backgroundEmailEnabled()) {
+    logger.info('integrationAlertService', `Background ${scenarioCode} alert for lead ${leadId || '-'} recorded without email`);
+    return { sent: false, reason: 'BACKGROUND_NO_EMAIL' };
+  }
+
   return sendConfiguredEmail(catalystApp, {
-    subject: `[MG Lead Exchange] ${title}`,
-    content: `${title}\n\n${parts.join('\n')}`,
+    subject: email.subject,
+    content: email.text,
+    html: email.html,
     recipientEnv: 'INTEGRATION_ALERT_TO_EMAILS',
   });
 }
@@ -138,17 +209,31 @@ async function notifyRecovery(catalystApp, { dealerCode, leadId, customerName, d
     dealerCode,
     leadId,
     customerName,
-    reason: `Recovered after ${durationMinutes ?? 'unknown'} minute(s), attempts=${attemptCount ?? 'unknown'}`,
+    reason:
+      `Delivered to the dealer CRM after ${durationMinutes ?? 'an unknown number of'} minute(s) of failure; ` +
+      `delivery attempts: ${attemptCount ?? 'unknown'}`,
+  });
+}
+
+async function sendTestAlert(catalystApp) {
+  const email = emailTemplates.renderTestEmail({
+    channel: smtpConfigured() ? 'SMTP' : 'Catalyst Email',
+  });
+  return sendConfiguredEmail(catalystApp, {
+    subject: email.subject,
+    content: email.text,
+    html: email.html,
+    recipientEnv: 'INTEGRATION_ALERT_TO_EMAILS',
   });
 }
 
 async function sendDailyReportEmail(catalystApp, content, html) {
   return sendConfiguredEmail(catalystApp, {
-    subject: `[MG Lead Exchange] Daily error report ${new Date().toISOString().slice(0, 10)}`,
+    subject: `[DAILY REPORT] MG Lead Exchange — ${new Date().toISOString().slice(0, 10)}`,
     content,
     html,
     recipientEnv: 'DAILY_ERROR_REPORT_TO_EMAILS',
   });
 }
 
-module.exports = { notifyScenario, notifyRecovery, sendDailyReportEmail, sendConfiguredEmail, smtpConfigured };
+module.exports = { notifyScenario, notifyRecovery, sendDailyReportEmail, sendConfiguredEmail, sendTestAlert, smtpConfigured };

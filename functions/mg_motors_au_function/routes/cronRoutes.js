@@ -10,6 +10,13 @@ const dealerReconciliationService = require('../services/integrations/dealerReco
 const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
 const logger = require('../utils/logger');
 const integrationAlertService = require('../services/integrations/integrationAlertService');
+const alertContext = require('../services/integrations/alertContext');
+
+// Background sweeps: alerts they raise are recorded but not emailed (see
+// alertContext.js). The daily report and test alert are not wrapped.
+function backgroundRun(req, res, next) {
+  alertContext.runInBackground(next);
+}
 
 // Unhappy 11 edge case (c): "the reconciliation job itself fails → alert;
 // a silent reconciliation failure hides every other gap."
@@ -102,7 +109,7 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
  * itself and crmIntegrationService.js for the classification/bookkeeping
  * it triggers on each lead it retries.
  */
-router.post('/cron/retry-outbound-syncs', async (req, res) => {
+router.post('/cron/retry-outbound-syncs', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -133,7 +140,7 @@ router.post('/cron/retry-outbound-syncs', async (req, res) => {
  * re-counted, and one that is held by policy (validation, consent, echo) is
  * reported under heldByPolicy rather than being pushed.
  */
-router.post('/cron/fast-recover', async (req, res) => {
+router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -184,7 +191,7 @@ router.post('/cron/fast-recover', async (req, res) => {
   }
 });
 
-router.post('/cron/replay-inbound-events', async (req, res) => {
+router.post('/cron/replay-inbound-events', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -199,7 +206,7 @@ router.post('/cron/replay-inbound-events', async (req, res) => {
   }
 });
 
-router.post('/cron/check-lead-sla', async (req, res) => {
+router.post('/cron/check-lead-sla', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -214,7 +221,7 @@ router.post('/cron/check-lead-sla', async (req, res) => {
   }
 });
 
-router.post('/cron/reconcile-dealer-leads', async (req, res) => {
+router.post('/cron/reconcile-dealer-leads', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -261,17 +268,7 @@ router.post('/cron/test-alert', async (req, res) => {
     const catalystApp = catalyst.initialize(req);
     const integrationAlertService = require('../services/integrations/integrationAlertService');
 
-    const result = await integrationAlertService.sendConfiguredEmail(catalystApp, {
-      subject: '[MG Lead Exchange] Test alert',
-      content: [
-        'This is a test of the Lead Exchange alert channel.',
-        '',
-        'If you are reading this, immediate Unhappy-path notifications (GR-04)',
-        'will reach this inbox without anyone logging into the application.',
-        `Sent (UTC): ${new Date().toISOString()}`,
-      ].join('\n'),
-      recipientEnv: 'INTEGRATION_ALERT_TO_EMAILS',
-    });
+    const result = await integrationAlertService.sendTestAlert(catalystApp);
 
     res.status(200).json({
       success: true,

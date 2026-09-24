@@ -2,6 +2,7 @@
 
 const logger = require('../../utils/logger');
 const integrationAlertService = require('./integrationAlertService');
+const emailTemplates = require('./emailTemplates');
 const pathPolicy = require('./pathPolicyService');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
@@ -237,62 +238,69 @@ function esc(value) {
 }
 
 function renderHtml(report) {
-  const d = report.generatedAt;
-  const colour = { P1: '#b3261e', P2: '#a15c00', P3: '#4a5568' };
-  const chip = (p) =>
-    `<span style="background:${colour[p] || '#4a5568'};color:#fff;border-radius:3px;padding:1px 7px;font:600 11px/1.6 system-ui,sans-serif">${esc(p || 'UNCLASSIFIED')}</span>`;
+  const { layout, section, esc: e, formatWhen, FONT, COLORS, TONES, APP_URL, button, PATH_GUIDE } = emailTemplates;
+  const tone = report.p1Open.length ? TONES.P1 : (report.openIssues.length ? TONES.P2 : TONES.RECOVERED);
 
-  const stat = (label, value, accent) => `
-    <td style="padding:10px 16px;border:1px solid #e3e6ea;border-radius:6px">
-      <div style="font:600 22px/1.2 system-ui,sans-serif;color:${accent || '#111'}">${esc(value)}</div>
-      <div style="font:400 11px/1.6 system-ui,sans-serif;color:#667">${esc(label)}</div>
+  const tile = (label, value, color) => `
+    <td width="25%" style="padding:4px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${COLORS.line};border-radius:8px;border-collapse:separate">
+        <tr><td style="padding:12px 12px 2px;font:700 22px/1.1 ${FONT};color:${color || COLORS.ink}">${e(value)}</td></tr>
+        <tr><td style="padding:0 12px 12px;font:500 11px/1.4 ${FONT};color:${COLORS.muted}">${e(label)}</td></tr>
+      </table>
     </td>`;
 
-  const rows = report.openIssues.map((issue) => `
-    <tr>
-      <td style="padding:12px 10px;border-top:1px solid #e3e6ea;vertical-align:top;white-space:nowrap">${chip(issue.priority)}</td>
-      <td style="padding:12px 10px;border-top:1px solid #e3e6ea;vertical-align:top">
-        <div style="font:600 14px/1.4 system-ui,sans-serif;color:#111">${esc(issue.scenario)}</div>
-        <div style="font:400 12px/1.6 system-ui,sans-serif;color:#556">${esc(issue.reason)}</div>
-        <div style="font:400 12px/1.7 system-ui,sans-serif;color:#334;margin-top:6px">
-          ${describeLeads(issue, report.leadInfo).map(esc).join(' &middot; ')}
-        </div>
-      </td>
-      <td style="padding:12px 10px;border-top:1px solid #e3e6ea;vertical-align:top;font:400 12px/1.6 system-ui,sans-serif;color:#334;white-space:nowrap">${esc(issue.dealer)}</td>
-      <td style="padding:12px 10px;border-top:1px solid #e3e6ea;vertical-align:top;font:600 13px/1.6 system-ui,sans-serif;color:#111;text-align:right">${issue.openLeads.length}</td>
-      <td style="padding:12px 10px;border-top:1px solid #e3e6ea;vertical-align:top;font:400 12px/1.6 system-ui,sans-serif;color:#667;white-space:nowrap">${esc(hhmm(issue.firstAt))}&ndash;${esc(hhmm(issue.lastAt))}</td>
-    </tr>`).join('');
+  const tiles = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+      ${tile('Open issues', report.openIssues.length)}
+      ${tile('P1 critical', report.p1Open.length, report.p1Open.length ? TONES.P1.fg : COLORS.ink)}
+      ${tile('Enquiries affected', report.affectedLeads)}
+      ${tile('Recovered', report.resolvedLeads, TONES.RECOVERED.fg)}
+    </tr></table>`;
 
-  return `<!doctype html><html><body style="margin:0;background:#f5f6f8;padding:24px">
-<div style="max-width:860px;margin:0 auto;background:#fff;border:1px solid #e3e6ea;border-radius:8px;overflow:hidden">
-  <div style="padding:20px 24px;border-bottom:1px solid #e3e6ea">
-    <div style="font:600 17px/1.3 system-ui,sans-serif;color:#111">MG Lead Exchange &mdash; Daily Error Report</div>
-    <div style="font:400 12px/1.6 system-ui,sans-serif;color:#667">${esc(d.toISOString().slice(0,10))} ${esc(hhmm(d))} UTC &middot; rolling ${report.windowHours} hours</div>
-  </div>
-  <div style="padding:18px 24px">
-    <table cellspacing="8" cellpadding="0" style="border-collapse:separate"><tr>
-      ${stat('Open issues', report.openIssues.length)}
-      ${stat('P1 critical', report.p1Open.length, report.p1Open.length ? '#b3261e' : '#111')}
-      ${stat('Leads affected', report.affectedLeads)}
-      ${stat('Recovered today', report.resolvedLeads, '#1e7a3c')}
-      ${stat('Dealers', report.dealersAffected)}
-    </tr></table>
-  </div>
-  ${report.openIssues.length === 0
-    ? `<div style="padding:0 24px 24px;font:400 13px/1.7 system-ui,sans-serif;color:#1e7a3c">No open issues &mdash; everything raised in the last 24 hours has recovered.</div>`
-    : `<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse">
-        <tr style="background:#fafbfc">
-          <th style="text-align:left;padding:9px 10px;font:600 11px/1.6 system-ui,sans-serif;color:#667">SEVERITY</th>
-          <th style="text-align:left;padding:9px 10px;font:600 11px/1.6 system-ui,sans-serif;color:#667">ISSUE &amp; AFFECTED ENQUIRIES</th>
-          <th style="text-align:left;padding:9px 10px;font:600 11px/1.6 system-ui,sans-serif;color:#667">DEALER</th>
-          <th style="text-align:right;padding:9px 10px;font:600 11px/1.6 system-ui,sans-serif;color:#667">OPEN</th>
-          <th style="text-align:left;padding:9px 10px;font:600 11px/1.6 system-ui,sans-serif;color:#667">WINDOW UTC</th>
-        </tr>${rows}
-      </table>`}
-  <div style="padding:14px 24px;border-top:1px solid #e3e6ea;font:400 11px/1.6 system-ui,sans-serif;color:#889">
-    Generated automatically by Lead Exchange. Repeated retries of the same enquiry are grouped into one row.
-  </div>
-</div></body></html>`;
+  const issueCard = (issue) => {
+    const issueTone = TONES[issue.priority] || TONES.P3;
+    const headline = (PATH_GUIDE[issue.scenario] && PATH_GUIDE[issue.scenario].headline) || issue.scenario;
+    const leads = describeLeads(issue, report.leadInfo);
+    return `
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${COLORS.line};border-left:4px solid ${issueTone.bar};border-radius:8px;border-collapse:separate;margin:0 0 12px">
+        <tr><td style="padding:14px 16px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+            <td style="font:700 11px/1.6 ${FONT};color:${issueTone.fg};letter-spacing:.04em">${e(issue.priority || 'UNCLASSIFIED')} &middot; ${e(issue.scenario)} &middot; DEALER ${e(issue.dealer)}</td>
+            <td align="right" style="font:700 13px/1.6 ${FONT};color:${COLORS.ink};white-space:nowrap">${e(issue.openLeads.length)} open${issue.resolvedCount ? ` <span style="font-weight:500;color:${TONES.RECOVERED.fg}">&middot; ${e(issue.resolvedCount)} recovered</span>` : ''}</td>
+          </tr></table>
+          <div style="font:600 15px/1.45 ${FONT};color:${COLORS.ink};margin:4px 0 4px">${e(headline)}</div>
+          <div style="font:400 13px/1.55 ${FONT};color:${COLORS.body};margin:0 0 8px">${e(issue.reason)}</div>
+          <div style="font:400 12px/1.6 ${FONT};color:${COLORS.muted}">${leads.map(e).join(' &nbsp;&middot;&nbsp; ')}</div>
+          <div style="font:400 11px/1.6 ${FONT};color:${COLORS.faint};margin-top:6px">${e(hhmm(issue.firstAt))}&ndash;${e(hhmm(issue.lastAt))} UTC &middot; ${e(issue.occurrences)} event(s)</div>
+        </td></tr>
+      </table>`;
+  };
+
+  const recovered = report.issues.filter((i) => i.resolvedCount > 0 && i.openLeads.length === 0);
+
+  const rowsHtml = [
+    section('Summary', tiles),
+    report.openIssues.length
+      ? section('Open issues — most urgent first', report.openIssues.map(issueCard).join(''))
+      : section('Open issues', `<div style="background:${TONES.RECOVERED.bg};border-radius:8px;padding:14px 16px;font:500 14px/1.6 ${FONT};color:${TONES.RECOVERED.fg}">No open issues — everything raised in the last ${e(report.windowHours)} hours has recovered.</div>`),
+    recovered.length
+      ? section('Resolved during the day', recovered.map((issue) => `<div style="font:400 13px/1.7 ${FONT};color:${COLORS.body}">&#10003; ${e(issue.scenario)} &middot; dealer ${e(issue.dealer)} &middot; ${e(issue.resolvedCount)} enquir${issue.resolvedCount === 1 ? 'y' : 'ies'} recovered</div>`).join(''))
+      : '',
+    `<tr><td style="padding:0 32px 30px">${button(APP_URL, 'Open Lead Exchange')}</td></tr>`,
+  ].join('');
+
+  const summary = report.openIssues.length
+    ? `${report.openIssues.length} open issue(s) across ${report.dealersAffected} dealer(s), affecting ${report.affectedLeads} enquir${report.affectedLeads === 1 ? 'y' : 'ies'}${report.p1Open.length ? ` — ${report.p1Open.length} critical` : ''}. Repeated retries of the same enquiry are grouped.`
+    : 'All clear — no open integration issues in the last 24 hours.';
+
+  return layout({
+    preheader: summary,
+    tone,
+    eyebrow: `Daily error report · ${formatWhen(report.generatedAt)}`,
+    title: 'MG Daily Error Report',
+    summary,
+    rowsHtml,
+    width: 640,
+  });
 }
 
 async function sendDailyErrorReport(catalystApp) {
