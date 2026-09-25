@@ -924,6 +924,7 @@ const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
   enquiry_variant: 'Enquiry_Variant',
   enquiry_powertrain: 'Enquiry_Powertrain',
   chat_transcript: 'Chat_Transcript',
+  dealer_rejected_reason: 'Dealer_Rejected_Reason',
 };
 
 function toZohoApiFields(internalFieldsObject) {

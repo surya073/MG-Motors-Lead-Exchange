@@ -81,6 +81,7 @@ const OUR_FIELDS = [
   "enquiry_powertrain",
   "chat_transcript",
   "lead_owner_email",
+  "dealer_rejected_reason",
 ];
 
 function humanizeFieldName(field) {
@@ -118,6 +119,8 @@ const DEFAULT_FIELD_MAPPINGS = [
   { source_field: "enquiry_outcome", target_field: "", data_type: "string", required: false },
   { source_field: "purchase_classification", target_field: "", data_type: "string", required: false },
   { source_field: "last_status_update", target_field: "", data_type: "datetime", required: false },
+  { source_field: "next_followup_date", target_field: "", data_type: "datetime", required: false },
+  { source_field: "dealer_rejected_reason", target_field: "", data_type: "string", required: false },
 ];
 
 const DEFAULT_STATUS_MAPPINGS = [

@@ -1247,6 +1247,528 @@ function AIAssistantPanel({ isDealer }) {
   );
 }
 
+/* ==================================================================== */
+/* NEW — Lead Exchange Health / Middleware Monitoring Dashboard.        */
+/* Everything below is additive: no component above this line was      */
+/* modified, and the dealer-side dashboard is untouched. Data comes     */
+/* entirely from adminDashboardService.getLeadExchangeHealth() and      */
+/* .getIntegrationLogs() (see the two new backend routes) — nothing     */
+/* here is hardcoded.                                                   */
+/* ==================================================================== */
+
+// Trigger source + plain-English description per Happy/Unhappy scenario.
+// This is DISPLAY TEXT ONLY — every count, dealer-affected number and
+// timestamp shown next to it comes from the real integration_logs rows
+// the backend returns; this map never supplies a number. Matches the
+// same 15-path register already used in LeadDetailView.jsx and
+// pathPolicyService.js, so a lead's detail view and this dashboard never
+// disagree on what a given path means.
+const SCENARIO_META = {
+  "Happy 1": { trigger: "OEM CRM", description: "New enquiry validated and routed to the dealer CRM successfully." },
+  "Happy 2": { trigger: "Dealer CRM", description: "Dealer progresses the enquiry; status changes sync back automatically." },
+  "Happy 3": { trigger: "Middleware", description: "A duplicate enquiry was detected and safely linked instead of resent." },
+  "Happy 4": { trigger: "Scheduler", description: "Delivery recovered after an outage; queued enquiries replayed without duplicates." },
+  "Happy 5": { trigger: "Dealer CRM", description: "Dealer-side field updates synchronised back to the OEM." },
+  "Unhappy 1": { trigger: "Middleware", description: "Push to the dealer failed (timeout / 5xx / connection error) — retried automatically." },
+  "Unhappy 2": { trigger: "Middleware", description: "Mandatory data missing or invalid on ingest — held, not retried." },
+  "Unhappy 3": { trigger: "Scheduler", description: "Dealer unavailable — failure unresolved past the 24h escalation window." },
+  "Unhappy 4": { trigger: "Middleware", description: "A dealer status update could not be written back to the OEM." },
+  "Unhappy 5": { trigger: "Middleware", description: "Routing failed — no dealer, ambiguous dealer, or invalid mapping." },
+  "Unhappy 6": { trigger: "Middleware", description: "OEM and dealer both changed the same field — resolved by ownership rules." },
+  "Unhappy 7": { trigger: "Middleware", description: "A status update arrived before its enquiry record existed — held for replay." },
+  "Unhappy 8": { trigger: "Middleware", description: "Consent/privacy data missing or mismatched — held pending validation." },
+  "Unhappy 9": { trigger: "Dealer CRM", description: "Dealer explicitly marked the enquiry as spam or junk." },
+  "Unhappy 10": { trigger: "Scheduler", description: "Dealer took no action within the SLA window — escalated." },
+  "Unhappy 11": { trigger: "Middleware", description: "Partial transaction — OEM recorded delivery but the dealer record is missing." },
+  "Unhappy 12": { trigger: "Scheduler", description: "Dealer CRM migration/offboarding — enquiry re-routed." },
+};
+
+const SEVERITY_META = {
+  P1: { label: "Critical", tone: "danger" },
+  P2: { label: "Warning", tone: "warning" },
+  P3: { label: "Low", tone: "info" },
+};
+
+function formatDateInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Computes {from, to} (YYYY-MM-DD) for a preset key; null for 'custom'. */
+function computePresetRange(key) {
+  const now = new Date();
+  const todayStr = formatDateInput(now);
+
+  switch (key) {
+    case "today":
+      return { from: todayStr, to: todayStr };
+    case "yesterday": {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      const s = formatDateInput(y);
+      return { from: s, to: s };
+    }
+    case "last7": {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 6);
+      return { from: formatDateInput(start), to: todayStr };
+    }
+    case "last30": {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 29);
+      return { from: formatDateInput(start), to: todayStr };
+    }
+    case "thisMonth": {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { from: formatDateInput(start), to: todayStr };
+    }
+    default:
+      return null; // 'custom' — caller keeps whatever the user typed
+  }
+}
+
+const DATE_PRESETS = [
+  { key: "today", label: "Today" },
+  { key: "yesterday", label: "Yesterday" },
+  { key: "last7", label: "Last 7 Days" },
+  { key: "last30", label: "Last 30 Days" },
+  { key: "thisMonth", label: "This Month" },
+  { key: "custom", label: "Custom Range" },
+];
+
+/** Date range + dealer filter bar. Pure controlled UI — no data logic. */
+function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onChange, onApply, onReset }) {
+  return (
+    <div className="health-filterbar">
+      <div className="health-filterbar__presets">
+        {DATE_PRESETS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            className={`health-filterbar__preset${preset === p.key ? " health-filterbar__preset--active" : ""}`}
+            onClick={() => onChange({ preset: p.key })}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="health-filterbar__row">
+        <label className="health-filterbar__field">
+          <span>From</span>
+          <input
+            type="date"
+            value={fromDate || ""}
+            max={toDate || undefined}
+            onChange={(e) => onChange({ preset: "custom", fromDate: e.target.value })}
+          />
+        </label>
+        <label className="health-filterbar__field">
+          <span>To</span>
+          <input
+            type="date"
+            value={toDate || ""}
+            min={fromDate || undefined}
+            onChange={(e) => onChange({ preset: "custom", toDate: e.target.value })}
+          />
+        </label>
+        <label className="health-filterbar__field">
+          <span>Dealer</span>
+          <select value={dealerCode} onChange={(e) => onChange({ dealerCode: e.target.value })}>
+            <option value="">All Dealers</option>
+            {dealers.map((d) => (
+              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code} — {d.dealer_name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="health-filterbar__actions">
+          <button type="button" className="health-filterbar__apply" onClick={onApply}>Apply Filters</button>
+          <button type="button" className="health-filterbar__reset" onClick={onReset}>Reset</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** One Happy/Unhappy path card — count + dealers affected + last occurrence are all real. */
+function PathCard({ scenario }) {
+  const meta = SCENARIO_META[scenario.name] || {};
+  return (
+    <div className={`path-card path-card--${scenario.type}`}>
+      <div className="path-card__top">
+        <span className={`path-card__badge path-card__badge--${scenario.type}`}>{scenario.name}</span>
+        <span className="path-card__count">{scenario.count}</span>
+      </div>
+      <p className="path-card__title">{scenario.message || meta.description || scenario.name}</p>
+      {meta.description && scenario.message && meta.description !== scenario.message && (
+        <p className="path-card__desc">{meta.description}</p>
+      )}
+      <div className="path-card__meta-row">
+        {meta.trigger && <span>Trigger: {meta.trigger}</span>}
+        <span>Dealers affected: {scenario.dealersAffected}</span>
+      </div>
+      <p className="path-card__time mono">Last occurrence: {scenario.lastOccurrence || "—"}</p>
+    </div>
+  );
+}
+
+/**
+ * Integration Errors report — paginated, filterable by dealer / error
+ * type / status, fed by GET /admin/integration-logs. Reacts to the
+ * parent date range + dealer filter, plus its own local filters.
+ */
+function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
+  const [page, setPage] = useState(1);
+  const [scenarioFilter, setScenarioFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [dealerFilter, setDealerFilter] = useState("");
+  const [data, setData] = useState({ logs: [], total: 0, pageSize: 25 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Reset to page 1 whenever any filter changes, so a stale page number
+  // never points past the end of a newly-narrowed result set.
+  useEffect(() => { setPage(1); }, [fromDate, toDate, dealerCode, scenarioFilter, statusFilter, dealerFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    adminDashboardService.getIntegrationLogs({
+      fromDate,
+      toDate,
+      dealerCode: dealerFilter || dealerCode || undefined,
+      scenarioCode: scenarioFilter || undefined,
+      status: statusFilter || undefined,
+      page,
+      pageSize: 25,
+    })
+      .then((result) => { if (!cancelled) setData(result); })
+      .catch((err) => { if (!cancelled) setError(err?.response?.data?.error || "Couldn't load the error report."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [fromDate, toDate, dealerCode, dealerFilter, scenarioFilter, statusFilter, page]);
+
+  const totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 25)));
+
+  return (
+    <div className="panel-card overview__table">
+      <div className="panel-card__header">
+        <h3>Integration Errors</h3>
+        <div className="error-report__filters">
+          <select value={dealerFilter} onChange={(e) => setDealerFilter(e.target.value)}>
+            <option value="">All dealers</option>
+            {dealers.map((d) => (
+              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code}</option>
+            ))}
+          </select>
+          <select value={scenarioFilter} onChange={(e) => setScenarioFilter(e.target.value)}>
+            <option value="">All error types</option>
+            {Object.keys(SCENARIO_META).filter((k) => k.startsWith("Unhappy")).map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">Any status</option>
+            <option value="FAILED">Failed</option>
+            <option value="SUCCESS">Success</option>
+          </select>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="skeleton-block" style={{ height: 200 }} />
+      ) : error ? (
+        <div className="overview__state overview__state--error">{error}</div>
+      ) : data.logs.length === 0 ? (
+        <p className="overview__empty-note">No integration activity found for the selected filters.</p>
+      ) : (
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>Date/Time</th>
+                <th>Dealer</th>
+                <th>Lead</th>
+                <th>Integration</th>
+                <th>Error Type</th>
+                <th>Error Message</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.logs.map((log) => {
+                const severity = SEVERITY_META[log.priority] || null;
+                return (
+                  <tr key={log.ROWID}>
+                    <td className="mono">{log.date}</td>
+                    <td>{log.dealerCode ? `${log.dealerCode}${log.dealerName ? ` — ${log.dealerName}` : ""}` : "—"}</td>
+                    <td>{log.customerName || log.leadId || "—"}</td>
+                    <td>{log.integration || "—"}</td>
+                    <td>
+                      {log.scenarioCode || "—"}
+                      {severity && (
+                        <span className={`status-pill status-pill--${severity.tone}`} style={{ marginLeft: 6 }}>
+                          {severity.label}
+                        </span>
+                      )}
+                    </td>
+                    <td>{log.errorMessage || "—"}</td>
+                    <td>
+                      <span className={`status-pill status-pill--${log.status === "SUCCESS" ? "success" : "danger"}`}>
+                        {log.status || "—"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="table-pagination">
+            <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
+            <span>Page {page} of {totalPages} · {data.total} result{data.total === 1 ? "" : "s"}</span>
+            <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * LeadExchangeHealthPanel — owns the date-range/dealer filter state,
+ * fetches getLeadExchangeHealth() once per "Apply", and renders the
+ * health summary cards, Happy/Unhappy Path cards, the Error Report,
+ * Dealer Health and SLA/Duplicate Leads sections. This is the single
+ * new addition wired into AdminOverview below.
+ */
+function LeadExchangeHealthPanel() {
+  const [dealers, setDealers] = useState([]);
+  const [preset, setPreset] = useState("last30");
+  const initialRange = computePresetRange("last30");
+  const [pendingFrom, setPendingFrom] = useState(initialRange.from);
+  const [pendingTo, setPendingTo] = useState(initialRange.to);
+  const [pendingDealer, setPendingDealer] = useState("");
+  const [appliedFilters, setAppliedFilters] = useState({
+    fromDate: initialRange.from,
+    toDate: initialRange.to,
+    dealerCode: "",
+  });
+
+  const [health, setHealth] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Dealer list for the filter dropdown — fetched once, reused by both
+  // the filter bar and the Error Report's own dealer filter, so it is
+  // never re-fetched on every filter change.
+  useEffect(() => {
+    adminDashboardService.listDealers().then(setDealers).catch(() => setDealers([]));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    adminDashboardService.getLeadExchangeHealth(appliedFilters)
+      .then((result) => { if (!cancelled) setHealth(result); })
+      .catch((err) => { if (!cancelled) setError(err?.response?.data?.error || "Couldn't load Lead Exchange health."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [appliedFilters]);
+
+  function handleFilterChange({ preset: newPreset, fromDate, toDate, dealerCode }) {
+    if (newPreset) {
+      setPreset(newPreset);
+      const range = computePresetRange(newPreset);
+      if (range) {
+        setPendingFrom(range.from);
+        setPendingTo(range.to);
+      }
+    }
+    if (fromDate !== undefined) setPendingFrom(fromDate);
+    if (toDate !== undefined) setPendingTo(toDate);
+    if (dealerCode !== undefined) setPendingDealer(dealerCode);
+  }
+
+  function handleApply() {
+    setAppliedFilters({ fromDate: pendingFrom, toDate: pendingTo, dealerCode: pendingDealer });
+  }
+
+  function handleReset() {
+    const range = computePresetRange("last30");
+    setPreset("last30");
+    setPendingFrom(range.from);
+    setPendingTo(range.to);
+    setPendingDealer("");
+    setAppliedFilters({ fromDate: range.from, toDate: range.to, dealerCode: "" });
+  }
+
+  return (
+    <div className="health-panel">
+      <div className="panel-card">
+        <div className="panel-card__header">
+          <h3>Lead Exchange Overview</h3>
+          <span className="panel-card__meta">
+            {appliedFilters.fromDate} → {appliedFilters.toDate}
+            {appliedFilters.dealerCode ? ` · ${appliedFilters.dealerCode}` : ""}
+          </span>
+        </div>
+        <DateRangeFilterBar
+          fromDate={pendingFrom}
+          toDate={pendingTo}
+          dealerCode={pendingDealer}
+          dealers={dealers}
+          preset={preset}
+          onChange={handleFilterChange}
+          onApply={handleApply}
+          onReset={handleReset}
+        />
+      </div>
+
+      {loading ? (
+        <div className="skeleton-block" style={{ height: 200 }} />
+      ) : error ? (
+        <div className="overview__state overview__state--error">
+          {error}
+          <button type="button" className="health-filterbar__apply" style={{ marginLeft: 12 }} onClick={handleApply}>
+            Retry
+          </button>
+        </div>
+      ) : !health ? null : (
+        <>
+          <div className="overview__kpis">
+            <KpiCard icon="car" label="Total Leads" value={health.leadStatusSummary.total} tone="info" meta="In selected range" />
+            <KpiCard icon="check" label="Successful" value={health.exchangeHealth.successfulExchanges} tone="success" />
+            <KpiCard icon="x" label="Failed" value={health.exchangeHealth.failedExchanges} tone="danger" />
+            <KpiCard icon="trending" label="Success Rate" value={health.exchangeHealth.successRate} suffix="%" tone="violet" />
+            <KpiCard
+              icon="alert"
+              label="SLA Breaches"
+              value={health.sla.breached}
+              tone="danger"
+              meta={`${health.sla.breachPercent}% of ${health.sla.monitored} monitored`}
+            />
+            <KpiCard
+              icon="refresh"
+              label="Duplicate Leads"
+              value={health.duplicates.total}
+              tone="warning"
+              meta={`${health.duplicates.dealersAffected} dealer(s) affected`}
+            />
+            <KpiCard
+              icon="building"
+              label="Inactive Dealers"
+              value={health.dealerHealth.noSuccessfulSyncInRange}
+              tone="danger"
+              meta={`of ${health.dealerHealth.total} dealers`}
+            />
+            <KpiCard icon="check" label="Active Dealers" value={health.dealerHealth.activeInRange} tone="success" />
+          </div>
+
+          {health.truncated && (
+            <p className="overview__empty-note">
+              This range has more integration events than a single fetch covers — narrow the date range for a complete count.
+            </p>
+          )}
+
+          <div className="panel-card">
+            <div className="panel-card__header"><h3>Happy Paths</h3></div>
+            {health.happyPaths.length === 0 ? (
+              <p className="overview__empty-note">No successful integration flows in this range.</p>
+            ) : (
+              <div className="path-card-grid">
+                {health.happyPaths.map((s) => <PathCard key={s.name} scenario={s} />)}
+              </div>
+            )}
+          </div>
+
+          <div className="panel-card">
+            <div className="panel-card__header"><h3>Unhappy Paths</h3></div>
+            {health.unhappyPaths.length === 0 ? (
+              <p className="overview__empty-note">No integration failures in this range.</p>
+            ) : (
+              <div className="path-card-grid">
+                {health.unhappyPaths.map((s) => <PathCard key={s.name} scenario={s} />)}
+              </div>
+            )}
+          </div>
+
+          <ErrorReportTable
+            fromDate={appliedFilters.fromDate}
+            toDate={appliedFilters.toDate}
+            dealerCode={appliedFilters.dealerCode}
+            dealers={dealers}
+          />
+
+          <div className="overview__mid">
+            <div className="panel-card">
+              <div className="panel-card__header"><h3>Dealer Health</h3></div>
+              <div className="drawer-stats">
+                <DrawerStat label="Total dealers" value={health.dealerHealth.total} />
+                <DrawerStat label="Active" value={health.dealerHealth.activeInRange} />
+                <DrawerStat label="No successful sync" value={health.dealerHealth.noSuccessfulSyncInRange} />
+                <DrawerStat label="With errors" value={health.dealerHealth.withErrorsInRange} />
+              </div>
+              <p className="drawer-note">{health.dealerHealth.definitionNote}</p>
+            </div>
+
+            <div className="panel-card">
+              <div className="panel-card__header"><h3>SLA Monitoring</h3></div>
+              <div className="drawer-stats">
+                <DrawerStat label="Monitored" value={health.sla.monitored} />
+                <DrawerStat label="Met" value={health.sla.met} />
+                <DrawerStat label="Breached" value={health.sla.breached} />
+                <DrawerStat label="Breach %" value={`${health.sla.breachPercent}%`} />
+                <DrawerStat label="Avg breach" value={health.sla.avgBreachMinutes != null ? `${health.sla.avgBreachMinutes} min` : "—"} />
+                <DrawerStat label="Max breach" value={health.sla.maxBreachMinutes != null ? `${health.sla.maxBreachMinutes} min` : "—"} />
+              </div>
+              {health.sla.recentBreaches.length > 0 && (
+                <ul className="task-list">
+                  {health.sla.recentBreaches.slice(0, 5).map((b, i) => (
+                    <li className="task-list__item" key={i}>
+                      <span className="task-list__title">{b.dealerCode || "—"} · {b.leadId || "—"}</span>
+                      <span className="task-list__time mono">
+                        {b.breachDurationMinutes != null ? `${b.breachDurationMinutes} min over` : b.date}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="panel-card">
+            <div className="panel-card__header"><h3>Duplicate Leads</h3></div>
+            <div className="drawer-stats">
+              <DrawerStat label="Total leads" value={health.leadStatusSummary.total} />
+              <DrawerStat label="Duplicates" value={health.duplicates.total} />
+              <DrawerStat
+                label="Duplicate %"
+                value={health.leadStatusSummary.total > 0
+                  ? `${Math.round((health.duplicates.total / health.leadStatusSummary.total) * 100)}%`
+                  : "0%"}
+              />
+              <DrawerStat label="Dealers affected" value={health.duplicates.dealersAffected} />
+            </div>
+            {health.duplicates.recent.length > 0 && (
+              <ul className="task-list">
+                {health.duplicates.recent.slice(0, 5).map((d, i) => (
+                  <li className="task-list__item" key={i}>
+                    <span className="task-list__title">
+                      {d.dealerCode || "—"} · linked {d.linkedLeadId || "—"} → {d.originalLeadId || "—"}
+                    </span>
+                    <span className="task-list__time mono">
+                      {d.gapMinutes != null ? `${d.gapMinutes} min gap` : d.date}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Dummy data helpers — STILL DUMMY, clearly isolated so they're      */
@@ -1526,6 +2048,12 @@ function AdminOverview({ data, openDrawer }) {
           accent
         />
       </div>
+
+      {/* NEW — Lead Exchange Health / Middleware Monitoring dashboard.
+          Self-contained: owns its own date-range/dealer filters and
+          fetches its own data (getLeadExchangeHealth / getIntegrationLogs),
+          independent of the dashboardSummary-driven sections below. */}
+      <LeadExchangeHealthPanel />
 
       <div className="panel-card">
         <div className="panel-card__header">

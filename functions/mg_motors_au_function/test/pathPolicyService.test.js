@@ -97,6 +97,36 @@ test('mandatory validation separates privacy and routing from invalid data', () 
   assert.equal(invalid.routingIssue.field, 'dealer_code');
 });
 
+test('Australian mobile validation accepts 04 and +61 formats', () => {
+  const validFormats = [
+    '0412345678',
+    '0412 345 678',
+    '+61412345678',
+    '+61 412 345 678',
+    '61412345678',
+    '+61 0412 345 678',
+    '+61 (0)412 345 678',
+  ];
+  validFormats.forEach((mobile) => {
+    const result = policy.validateLeadForDelivery(validLead({ mobile_number: mobile }));
+    assert.equal(
+      result.issues.some((issue) => issue.field === 'mobile_number'),
+      false,
+      `expected ${mobile} to be accepted`
+    );
+    assert.equal(policy.normalizePhone(mobile), '0412345678');
+  });
+
+  ['0000000000', '123456789', '0512345678', '0061412345678'].forEach((mobile) => {
+    const result = policy.validateLeadForDelivery(validLead({ mobile_number: mobile }));
+    assert.equal(
+      result.issues.some((issue) => issue.field === 'mobile_number'),
+      true,
+      `expected ${mobile} to be rejected`
+    );
+  });
+});
+
 test('Happy 3 requires every duplicate key to match within 15 minutes', () => {
   const original = validLead({ crm_record_id: 'MG-1', assigned_date: '2026-09-23 10:00:00' });
   const duplicate = validLead({ crm_record_id: 'MG-2', assigned_date: '2026-09-23 10:15:00' });

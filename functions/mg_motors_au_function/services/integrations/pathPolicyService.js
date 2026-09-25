@@ -171,7 +171,11 @@ function normalizeEmail(value) {
 
 function normalizePhone(value) {
   let digits = String(value ?? '').replace(/\D/g, '');
+  // +61 4XX XXX XXX / 61 4XX XXX XXX — country code, trunk 0 correctly dropped.
   if (digits.startsWith('61') && digits.length === 11) digits = `0${digits.slice(2)}`;
+  // +61 04XX XXX XXX — country code with the trunk 0 mistakenly kept, a common
+  // data-entry pattern that would otherwise fail Australian mobile validation.
+  else if (digits.startsWith('610') && digits.length === 12) digits = `0${digits.slice(3)}`;
   return digits;
 }
 

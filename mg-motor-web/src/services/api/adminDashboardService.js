@@ -4,7 +4,7 @@ import axiosInstance from "./axiosInstance";
  * adminDashboardService.js
  * -----------------------------------------------------------------------
  * Calls the /admin/* routes (Admin/Super Admin only, enforced server-side
- * by requireAdminRole). Read-only â€” no create/update/delete here.
+ * by requireAdminRole). Read-only — no create/update/delete here.
  */
 
 export const adminDashboardService = {
@@ -54,12 +54,31 @@ export const adminDashboardService = {
     return data.dealers;
   },
 
-  // NEW — chronological Happy/Unhappy activity history for one lead,
-  // pulled from integration_logs, keyed by the lead's crm_record_id.
-    async getLeadTimeline(crmRecordId) {
+  // Chronological Happy/Unhappy activity history for one lead, pulled
+  // from integration_logs, keyed by the lead's crm_record_id.
+  async getLeadTimeline(crmRecordId) {
     const { data } = await axiosInstance.get(
       `/mg_motors_au_function/admin/leads/${crmRecordId}/timeline`
     );
     return data.timeline;
+  },
+
+  // NEW — paginated / filterable Integration Error report. Powers the
+  // "Integration Errors" table on the Lead Exchange Health dashboard.
+  async getIntegrationLogs({ fromDate, toDate, dealerCode, scenarioCode, status, page = 1, pageSize = 25 } = {}) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/integration-logs", {
+      params: { fromDate, toDate, dealerCode, scenarioCode, status, page, pageSize },
+    });
+    return data;
+  },
+
+  // NEW — Happy/Unhappy path breakdown, duplicate leads, SLA monitoring,
+  // dealer health and exchange health, all scoped to an optional date
+  // range + dealer filter. Powers the rest of the health dashboard.
+  async getLeadExchangeHealth({ fromDate, toDate, dealerCode } = {}) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/lead-exchange-health", {
+      params: { fromDate, toDate, dealerCode },
+    });
+    return data;
   },
 };

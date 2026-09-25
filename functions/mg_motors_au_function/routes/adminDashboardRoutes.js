@@ -10,6 +10,8 @@ const {
   getSyncLogs,
   getDashboardSummary,
   getDealerInvitationStatus,
+  getIntegrationLogs, // NEW
+  getLeadExchangeHealth, // NEW
 } = require('../services/adminDashboardService');
 const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
@@ -58,6 +60,12 @@ router.get('/admin/leads', requireAdminRole, async (req, res) => {
  * status are fetched live for display and never stored.
  */
 const OUT_OF_ORDER_DETAIL_LIMIT = 25;
+
+// The panel refreshes every 30s; without a cache each refresh spent up to
+// 25 dealer API credits. Dealer-side name/status are display-only, so a
+// few minutes' staleness is fine.
+const DEALER_DETAIL_TTL_MS = 10 * 60 * 1000;
+const dealerDetailCache = new Map();
 
 router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
   const catalystApp = res.locals.catalystApp;
@@ -108,7 +116,16 @@ router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
 
     // Live dealer-side context (name, status) for the most recent records.
     const integrations = new Map();
+    for (const [key, entry] of dealerDetailCache) {
+      if (Date.now() - entry.at >= DEALER_DETAIL_TTL_MS) dealerDetailCache.delete(key);
+    }
     await Promise.all(events.slice(0, OUT_OF_ORDER_DETAIL_LIMIT).map(async (event) => {
+      const cacheKey = `${event.dealerCode}:${event.externalLeadId}`;
+      const cached = dealerDetailCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < DEALER_DETAIL_TTL_MS) {
+        Object.assign(event, cached.detail);
+        return;
+      }
       try {
         if (!integrations.has(event.dealerCode)) {
           integrations.set(
@@ -122,13 +139,21 @@ router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
         const fetched = await adapter.getLead(catalystApp, integration, event.externalLeadId);
         const raw = fetched && fetched.raw;
         const record = Array.isArray(raw && raw.data) ? raw.data[0] : raw;
-        if (!record || typeof record !== 'object') return;
-        event.customerName = record.Full_Name
-          || [record.First_Name, record.Last_Name].filter(Boolean).join(' ')
-          || record.name
-          || null;
-        event.dealerStatus = record.Lead_Status || record.status || null;
+        if (!record || typeof record !== 'object') {
+          dealerDetailCache.set(cacheKey, { at: Date.now(), detail: {} });
+          return;
+        }
+        const detail = {
+          customerName: record.Full_Name
+            || [record.First_Name, record.Last_Name].filter(Boolean).join(' ')
+            || record.name
+            || null,
+          dealerStatus: record.Lead_Status || record.status || null,
+        };
+        dealerDetailCache.set(cacheKey, { at: Date.now(), detail });
+        Object.assign(event, detail);
       } catch (detailErr) {
+        dealerDetailCache.set(cacheKey, { at: Date.now(), detail: { dealerRecordMissing: true } });
         event.dealerRecordMissing = true;
       }
     }));
@@ -202,6 +227,55 @@ router.get('/admin/dashboard-summary', requireAdminRole, async (req, res) => {
     res.status(200).json({ success: true, ...summary });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'GET /admin/dashboard-summary failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /admin/integration-logs — NEW
+ * -----------------------------------------------------------------------
+ * Paginated, filterable Integration Error report. Backs the "Integration
+ * Errors" table on the Lead Exchange Health dashboard. Query params:
+ * fromDate, toDate (YYYY-MM-DD), dealerCode, scenarioCode
+ * (happy_unhappy_path_name, e.g. "Unhappy 2"), status (SUCCESS/FAILED),
+ * page, pageSize. All optional — with none supplied this returns the
+ * most recent integration_logs rows, newest first.
+ */
+router.get('/admin/integration-logs', requireAdminRole, async (req, res) => {
+  try {
+    const { fromDate, toDate, dealerCode, scenarioCode, status, page, pageSize } = req.query;
+    const result = await getIntegrationLogs(res.locals.catalystApp, {
+      fromDate,
+      toDate,
+      dealerCode,
+      scenarioCode,
+      status,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', 'GET /admin/integration-logs failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /admin/lead-exchange-health — NEW
+ * -----------------------------------------------------------------------
+ * Single call backing the Happy/Unhappy Path cards, Duplicate Leads, SLA
+ * monitoring, Dealer Health and the top health summary cards. Query
+ * params: fromDate, toDate (YYYY-MM-DD), dealerCode — all optional; with
+ * none supplied this reports across the full integration_logs history
+ * (capped — see `truncated` in the response) and all dealers.
+ */
+router.get('/admin/lead-exchange-health', requireAdminRole, async (req, res) => {
+  try {
+    const { fromDate, toDate, dealerCode } = req.query;
+    const health = await getLeadExchangeHealth(res.locals.catalystApp, { fromDate, toDate, dealerCode });
+    res.status(200).json({ success: true, ...health });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', 'GET /admin/lead-exchange-health failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
 });

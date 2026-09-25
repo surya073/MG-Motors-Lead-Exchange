@@ -31,6 +31,34 @@ function parseSystemTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+// Each replay reads the record from the dealer CRM (one API credit). A
+// held update that keeps failing is retried less often the longer it has
+// been held: half its age, between 2 and 60 minutes. The oldest row's
+// MODIFIEDTIME marks the last attempt.
+const MIN_REPLAY_INTERVAL_MINUTES = 2;
+const MAX_REPLAY_INTERVAL_MINUTES = 60;
+
+function isReplayDue(oldestRow, waitedMinutes, now = Date.now()) {
+  const lastTriedAt = parseSystemTimestamp(oldestRow.MODIFIEDTIME);
+  if (!lastTriedAt) return true;
+  const interval = Math.min(
+    MAX_REPLAY_INTERVAL_MINUTES,
+    Math.max(MIN_REPLAY_INTERVAL_MINUTES, Math.floor(waitedMinutes / 2))
+  );
+  return (now - lastTriedAt.getTime()) / 60000 >= interval;
+}
+
+async function markReplayAttempted(catalystApp, oldestRow) {
+  try {
+    await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).updateRow({
+      ROWID: oldestRow.ROWID,
+      status: 'FAILED',
+    });
+  } catch (err) {
+    logger.error('inboundReplayScheduler', `Could not mark replay attempt on log ROWID=${oldestRow.ROWID}`, err);
+  }
+}
+
 function isOutOfOrderHold(logRow) {
   return logRow.happy_unhappy_path_name === 'Unhappy 7';
 }
@@ -111,6 +139,7 @@ async function runInboundReplaySweep(catalystApp) {
     closedRows: 0,
     stillWaiting: 0,
     awaitingMapping: 0,
+    backedOff: 0,
     expired: 0,
     failed: 0,
   };
@@ -190,7 +219,8 @@ async function runInboundReplaySweep(catalystApp) {
         continue;
       }
 
-      if (logRows.every(isMappingFailure)) {
+      const mappingFailuresOnly = logRows.every(isMappingFailure);
+      if (mappingFailuresOnly) {
         const heldSince = latest(logRows.map((row) => row.CREATEDTIME));
         const mapChanged = (await getStatusMapChangedAt(integrationId)) > heldSince;
         const resolvedSince = !String(leadMapping.last_error || '').startsWith('UNMAPPED_STATUS')
@@ -199,6 +229,13 @@ async function runInboundReplaySweep(catalystApp) {
           results.awaitingMapping += 1;
           continue;
         }
+      }
+
+      // Mapping failures are already gated on a map change above; expiry
+      // must not wait out a backoff.
+      if (!mappingFailuresOnly && !retentionExceeded && !isReplayDue(logRows[0], waitedMinutes)) {
+        results.backedOff += 1;
+        continue;
       }
 
       results.attempted += 1;
@@ -211,6 +248,7 @@ async function runInboundReplaySweep(catalystApp) {
       );
 
       if (replay?.held) {
+        await markReplayAttempted(catalystApp, logRows[0]);
         results.stillWaiting += 1;
         continue;
       }
@@ -242,7 +280,8 @@ async function runInboundReplaySweep(catalystApp) {
         }
       }
       // Still failing (e.g. MG CRM unreachable). The replay was silent, so
-      // the original FAILED rows stay open and are retried next sweep.
+      // the original FAILED rows stay open and are retried after a backoff.
+      await markReplayAttempted(catalystApp, logRows[0]);
       results.failed += 1;
       logger.error(
         'inboundReplayScheduler',

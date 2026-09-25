@@ -38,9 +38,14 @@ async function alertReconciliationFailure(catalystApp, err) {
 // window rather than on every call. Default: once a day, the register's
 // minimum. The cron fires every 2 minutes, so a window of <2 minutes past
 // each interval boundary matches exactly one run.
+// Floor of 60 minutes: every run reads each dealer record once, so a
+// 2-minute window cost ~43k dealer API credits a day against a 53k quota.
+const MIN_RECONCILE_EVERY_MINUTES = 60;
 const RECONCILE_EVERY_MINUTES = (() => {
   const configured = Number(process.env.RECONCILE_EVERY_MINUTES);
-  return Number.isFinite(configured) && configured >= 2 ? configured : 24 * 60;
+  return Number.isFinite(configured) && configured > 0
+    ? Math.max(configured, MIN_RECONCILE_EVERY_MINUTES)
+    : 24 * 60;
 })();
 
 function isReconciliationDue(now = new Date()) {

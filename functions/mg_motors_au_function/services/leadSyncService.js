@@ -111,6 +111,7 @@ function mapCrmRecordToLeadRow(crmRecord) {
     enquiry_variant: crmRecord.Enquiry_Variant || '',
     enquiry_powertrain: crmRecord.Enquiry_Powertrain || '',
     chat_transcript: crmRecord.Chat_Transcript || '',
+    dealer_rejected_reason: crmRecord.Lead_Rejected_Reason || '',
   };
 }
 
