@@ -682,8 +682,22 @@ function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
 }
 
 function MoreDetailsCard({ val, lead }) {
+  // Confirms the dealer CRM actually accepted and created the record for
+  // this enquiry (Happy 1). Written once the outbound push succeeds and
+  // cleared if reconciliation later finds the dealer no longer has it, so
+  // an operator can tell "delivered" apart from "dealer never got this".
+  const dealerCrmRecordId = lead.dealer_crm_record_id;
+
   const items = [
     { label: "CRM Record ID", value: val("crm_record_id"), icon: ClipboardIcon },
+    {
+      label: "Dealer CRM Record ID",
+      value: dealerCrmRecordId || "Not yet confirmed by dealer",
+      valueClass: dealerCrmRecordId
+        ? "lead-detail__more-details-value--confirmed"
+        : "lead-detail__more-details-value--pending",
+      icon: ClipboardIcon,
+    },
     { label: "Enquiry ID", value: val("enquiry_id"), icon: ClipboardIcon },
     { label: "Lead Source", value: val("lead_source"), icon: MegaphoneIcon },
     { label: "Postcode", value: val("postcode"), icon: BuildingIcon },
@@ -703,14 +717,14 @@ function MoreDetailsCard({ val, lead }) {
         More Details
       </h3>
       <div className="lead-detail__more-details-grid">
-        {items.map(({ label, value, icon: Icon }) => (
+        {items.map(({ label, value, valueClass, icon: Icon }) => (
           <div className="lead-detail__more-details-item" key={label}>
             <span className="lead-detail__more-details-icon">
               <Icon size={15} />
             </span>
             <div>
               <span className="lead-detail__more-details-label">{label}</span>
-              <span className="lead-detail__more-details-value">{value}</span>
+              <span className={`lead-detail__more-details-value ${valueClass || ""}`}>{value}</span>
             </div>
           </div>
         ))}

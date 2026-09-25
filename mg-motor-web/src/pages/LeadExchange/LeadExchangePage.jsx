@@ -133,10 +133,21 @@ const ALL_COLUMNS = [
   { key: "email_address", label: "Email", defaultVisible: false },
   { key: "assigned_date", label: "Assigned", defaultVisible: false },
   { key: "last_status_update", label: "Last update", defaultVisible: false },
+  { key: "dealer_crm_record_id", label: "Dealer CRM Record ID", defaultVisible: false },
 ];
 
 function cellText(value) {
   return value && String(value).trim() ? value : "—";
+}
+
+// Latest of the lead's known timestamps — used to sort "recently active"
+// leads (added OR updated) to the top. Catalyst datetime strings are
+// fixed-width, so plain string comparison sorts them correctly.
+function lastActivityAt(lead) {
+  return [lead.MODIFIEDTIME, lead.last_status_update, lead.CREATEDTIME]
+    .filter(Boolean)
+    .map(String)
+    .reduce((latest, value) => (value > latest ? value : latest), "");
 }
 
 function initialsFor(name) {
@@ -332,7 +343,7 @@ export default function LeadExchangePage() {
 
   const sortDropdownOptions = useMemo(
     () => [
-      { value: "recent", label: "Recently added" },
+      { value: "recent", label: "Recently added / updated" },
       { value: "alpha", label: "Alphabetical (A–Z)" },
     ],
     []
@@ -383,11 +394,16 @@ export default function LeadExchangePage() {
         })
       );
     } else {
-      // "recent" (default) — Catalyst ROWIDs are chronologically
-      // increasing, so a higher ROWID means the record was created
-      // more recently. Falls back to assigned_date if ROWID is ever
-      // missing/non-numeric.
+      // "recent" (default) — a lead that was just updated (e.g. a dealer
+      // status change) should bubble to the top just like a brand-new
+      // lead would, not stay buried under its original creation order.
+      // MODIFIEDTIME/last_status_update/CREATEDTIME are all Catalyst
+      // fixed-width datetime strings, so the latest one string-compares
+      // correctly without parsing. Falls back to ROWID, then
+      // assigned_date, if none of those are present.
       rows.sort((a, b) => {
+        const activityDiff = lastActivityAt(b).localeCompare(lastActivityAt(a));
+        if (activityDiff !== 0) return activityDiff;
         const aId = Number(a.ROWID);
         const bId = Number(b.ROWID);
         if (!Number.isNaN(aId) && !Number.isNaN(bId)) return bId - aId;
@@ -482,6 +498,15 @@ export default function LeadExchangePage() {
       ),
     assigned_date: (row) => dimmed(row, cellText(row.assigned_date)),
     last_status_update: (row) => dimmed(row, cellText(row.last_status_update)),
+    dealer_crm_record_id: (row) =>
+      dimmed(
+        row,
+        row.dealer_crm_record_id ? (
+          <span className="lead-exchange__dealer-confirmed">{row.dealer_crm_record_id}</span>
+        ) : (
+          "Not yet confirmed"
+        )
+      ),
   };
 
   const columns = [
@@ -511,10 +536,21 @@ export default function LeadExchangePage() {
         <div className="lead-exchange__panel" key="list">
           <div className="lead-exchange__header">
             <button
+              className={`lead-exchange__refresh-btn ${loading ? "lead-exchange__refresh-btn--spinning" : ""}`}
+              onClick={loadLeads}
+              disabled={loading || syncing}
+              aria-label="Refresh leads"
+              title="Reload the lead list — recently added or updated leads show first"
+            >
+              <RefreshCw size={16} strokeWidth={2} />
+              Refresh
+            </button>
+            <button
               className={`lead-exchange__refresh-btn ${syncing ? "lead-exchange__refresh-btn--spinning" : ""}`}
               onClick={handleSync}
               disabled={syncing}
               aria-label="Sync leads"
+              title="Pull the latest leads from the CRM, then refresh the list"
             >
               <RefreshCw size={16} strokeWidth={2} />
               {syncing ? "Syncing…" : "Sync now"}

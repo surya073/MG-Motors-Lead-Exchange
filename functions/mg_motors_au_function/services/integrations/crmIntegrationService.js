@@ -714,6 +714,27 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
 
     await setLeadSyncState(catalystApp, leadRow, 'SYNCED');
 
+    // dealer_crm_record_id is OUR OWN confirmation stamp, not the dealer
+    // CRM's own record ID (that is external_crm_lead_id, above). It is
+    // generated here — the first time this lead is successfully delivered
+    // to the dealer — and never regenerated afterwards, so it stays a
+    // stable "the dealer received this" marker across later Happy 5
+    // updates rather than changing on every sync.
+    if (leadRow.ROWID && !leadRow.dealer_crm_record_id) {
+      try {
+        await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+          ROWID: leadRow.ROWID,
+          dealer_crm_record_id: crypto.randomUUID(),
+        });
+      } catch (err) {
+        logger.error(
+          'crmIntegrationService',
+          `Failed to stamp dealer_crm_record_id onto lead ${leadRow.crm_record_id}`,
+          err
+        );
+      }
+    }
+
     await catalystApp.datastore().table(DEALER_INTEGRATIONS_TABLE).updateRow({
       ROWID: integration.ROWID,
       last_sync_at: toCatalystDateTime(),

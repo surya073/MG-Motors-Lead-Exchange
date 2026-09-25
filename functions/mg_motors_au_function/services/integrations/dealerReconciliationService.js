@@ -491,6 +491,18 @@ async function reportMissingDealerRecord(catalystApp, integration, mapping, resu
       external_crm_lead_id: '',
       last_sync_source_hash: '',
     });
+    // Also clear the lead's own delivery confirmation stamp so the UI stops
+    // showing "dealer confirmed" for a record the dealer no longer has,
+    // until re-delivery (below) succeeds and a fresh one is generated.
+    // Cleared to null, not '' — dealer_crm_record_id is a unique value per
+    // lead, and null (unlike repeated empty strings) never collides with
+    // another cleared row under a uniqueness constraint.
+    if (leadRow.ROWID) {
+      await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+        ROWID: leadRow.ROWID,
+        dealer_crm_record_id: null,
+      });
+    }
   } catch (err) {
     logger.error('dealerReconciliationService', `Could not clear dead dealer reference on ${mapping.ROWID}`, err);
     results.unresolved += 1;

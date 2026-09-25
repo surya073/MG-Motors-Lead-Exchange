@@ -1153,6 +1153,16 @@
   font-weight: 500;
 }
 
+.lead-detail__more-details-value--confirmed {
+  color: var(--color-success);
+}
+
+.lead-detail__more-details-value--pending {
+  color: var(--color-text-muted, #888);
+  font-style: italic;
+  font-weight: 400;
+}
+
 /* =========================================================
    PATH CHIPS (hero — full journey)
    ========================================================= */

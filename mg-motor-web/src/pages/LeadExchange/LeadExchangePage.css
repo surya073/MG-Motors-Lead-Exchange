@@ -297,6 +297,11 @@
   font-style: italic;
 }
 
+.lead-exchange__dealer-confirmed {
+  color: var(--color-success);
+  font-weight: var(--fw-medium);
+}
+
 @media (max-width: 600px) {
   .lead-exchange__header {
     flex-direction: column;

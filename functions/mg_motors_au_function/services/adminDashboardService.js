@@ -93,6 +93,10 @@ async function getAllLeads(catalystApp, { dealerCode, leadStatus } = {}) {
   const dealerNameByCode = {};
   dealers.forEach((d) => { dealerNameByCode[d.dealer_code] = d.dealer_name; });
 
+  // dealer_crm_record_id lives directly on the leads row (mirrored there by
+  // crmIntegrationService once the outbound push succeeds, and cleared by
+  // dealerReconciliationService if the dealer no longer has the record), so
+  // it passes through via the spread below with no join needed.
   let filtered = leads.map((lead) => ({
     ...lead,
     dealer_name: dealerNameByCode[lead.dealer_code] || 'Unknown',
