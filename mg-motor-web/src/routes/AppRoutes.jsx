@@ -44,6 +44,11 @@ const router = createHashRouter([
                   { path: ROUTES.DEALERS, element: <DealerListPage /> },
                   { path: ROUTES.DEALER_CRM_CONFIG, element: <DealerCRMConfig /> },
                   { path: ROUTES.LEAD_EXCHANGE, element: <LeadExchangePage /> },
+                  // Same component as the list route above — LeadExchangePage
+                  // itself decides list vs. detail from the :leadId param, so
+                  // a browser refresh on a lead's detail view re-resolves it
+                  // from the URL instead of falling back to the list.
+                  { path: ROUTES.LEAD_EXCHANGE_DETAIL, element: <LeadExchangePage /> },
                   { path: ROUTES.LOGS, element: <SyncLogsPage /> },
                 ],
               },

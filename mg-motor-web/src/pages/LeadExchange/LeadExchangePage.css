@@ -302,6 +302,13 @@
   font-weight: var(--fw-medium);
 }
 
+.lead-exchange__detail-status {
+  padding: var(--space-6);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+}
+
 @media (max-width: 600px) {
   .lead-exchange__header {
     flex-direction: column;
@@ -503,6 +510,7 @@
 .lead-card {
   display: flex;
   flex-direction: column;
+  height: 336px;
   background-color: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -520,6 +528,11 @@
   transform: translateY(-2px);
 }
 
+.lead-card:focus-visible {
+  outline: 2px solid var(--color-primary, #1d4ed8);
+  outline-offset: 2px;
+}
+
 .lead-card--removed {
   opacity: 0.6;
 }
@@ -528,33 +541,27 @@
   transform: none;
 }
 
-.lead-card__top {
+/* ---------- Header: avatar + name + status, the card's identity row ---------- */
+
+.lead-card__header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-4) var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.lead-card__identity {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
 }
 
 .lead-card__avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   border-radius: 50%;
   background-color: var(--color-black);
   color: var(--color-white);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
   font-weight: var(--fw-bold);
   letter-spacing: -0.2px;
 }
@@ -564,181 +571,171 @@
   color: var(--color-black);
 }
 
-.lead-card__name-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
+.lead-card__heading {
+  flex: 1;
+  min-width: 0;
 }
 
-.lead-card__name-row h3 {
-  font-size: var(--fs-sm);
+.lead-card__name {
+  font-size: var(--fs-md);
   font-weight: var(--fw-bold);
   color: var(--color-text-primary);
-}
-
-.lead-card__new-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 8px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: var(--fw-semibold);
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.lead-card__id {
-  display: block;
+.lead-card__subline {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   margin-top: 2px;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
   font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.lead-card__top-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.lead-card__header .badge {
   flex-shrink: 0;
 }
 
-.lead-card__more {
+/* ---------- Chips: source + integration path, one scannable strip ---------- */
+
+.lead-card__chips {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-
-.lead-card__more:hover {
-  background-color: var(--color-surface-alt);
-  color: var(--color-text-primary);
-}
-
-/* ---------- Body: icon + label/value grid ---------- */
-
-.lead-card__body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3) var(--space-4);
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.lead-card__field {
-  display: flex;
-  align-items: flex-start;
   gap: var(--space-2);
-  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  min-height: 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.lead-card__icon {
-  display: flex;
+.lead-card__chips::-webkit-scrollbar {
+  display: none;
+}
+
+.lead-card__chip {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+  gap: 4px;
   flex-shrink: 0;
-  border-radius: 50%;
-  background-color: var(--color-surface-alt);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-}
-
-.lead-card__field > div {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.lead-card__label {
-  font-size: 10px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font-size: 10.5px;
   font-weight: var(--fw-semibold);
-  color: var(--color-text-muted);
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+.lead-card__chip--new {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
 
-.lead-card__value {
-  font-size: var(--fs-sm);
+.lead-card__chip--duplicate {
+  background-color: #f0fdf4;
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+[data-theme="dark"] .lead-card__chip--duplicate {
+  background-color: #14301f;
+  border-color: #86efac;
+  color: #86efac;
+}
+
+.lead-card__chip--path-happy {
+  background: rgba(30, 122, 60, 0.1);
+  border-color: rgba(30, 122, 60, 0.28);
+  color: #1e7a3c;
+}
+
+.lead-card__chip--path-unhappy {
+  background: rgba(179, 38, 30, 0.1);
+  border-color: rgba(179, 38, 30, 0.28);
+  color: #b3261e;
+}
+
+.lead-card__chip--source {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+/* ---------- Sections: grouped, labelled rows (customer / vehicle+dealer) ---------- */
+
+.lead-card__section {
+  padding: var(--space-2) var(--space-4);
+}
+
+.lead-card__section + .lead-card__section {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.lead-card__section-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: 10px;
   font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lead-card__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lead-card__row + .lead-card__row {
+  margin-top: var(--space-2);
+}
+
+.lead-card__row-icon {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.lead-card__row-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
-/* ---------- Contact pills: green call, blue mail ---------- */
-
-.lead-card__contact-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
+.lead-card__row-value-secondary {
+  font-weight: var(--fw-regular, 400);
+  color: var(--color-text-muted);
 }
 
-.lead-card__contact-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background-color var(--transition-fast) var(--ease-premium),
-    border-color var(--transition-fast) var(--ease-premium),
-    transform var(--transition-fast) var(--ease-premium);
+.lead-card__row-value--muted {
+  font-weight: var(--fw-regular, 400);
+  font-style: italic;
+  color: var(--color-text-muted);
 }
 
-.lead-card__contact-btn--call {
-  background-color: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #15803d;
+.lead-card__row-value--link {
+  color: var(--color-primary, #1d4ed8);
 }
 
-.lead-card__contact-btn--call:hover {
-  background-color: #dcfce7;
-  border-color: #86efac;
-  transform: translateY(-1px);
+.lead-card__row-value--link:hover {
+  text-decoration: underline;
 }
 
-[data-theme="dark"] .lead-card__contact-btn--call {
-  background-color: #14301f;
-  border-color: #166534;
-  color: #86efac;
-}
-
-.lead-card__contact-btn--mail {
-  background-color: #eff6ff;
-  border: 1px solid #bfdbfe;
-  color: #1d4ed8;
-}
-
-.lead-card__contact-btn--mail:hover {
-  background-color: #dbeafe;
-  border-color: #93c5fd;
-  transform: translateY(-1px);
-}
-
-[data-theme="dark"] .lead-card__contact-btn--mail {
-  background-color: #1e3a5f;
-  border-color: #1e40af;
-  color: #93c5fd;
-}
-
-/* ---------- Footer ---------- */
+/* ---------- Footer: recency + the explicit click target ---------- */
 
 .lead-card__footer {
   display: flex;
@@ -746,21 +743,27 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
+  margin-top: auto;
+  border-top: 1px solid var(--color-border-subtle);
 }
 
-.lead-card__created {
+.lead-card__footer-note {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .lead-card__view-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
   padding: var(--space-1) var(--space-3);
   background-color: var(--color-black);
   color: var(--color-white);
@@ -783,20 +786,6 @@
 @media (max-width: 600px) {
   .lead-exchange__grid {
     grid-template-columns: 1fr;
-  }
-
-  .lead-card__body {
-    grid-template-columns: 1fr;
-  }
-
-  .lead-card__footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
-  .lead-card__view-btn {
-    justify-content: center;
   }
 }
 
@@ -850,38 +839,16 @@
 
 /* ===== HAPPY 3: DUPLICATE LEAD MARKER ===== */
 
-.lead-card--duplicate {
-  position: relative;
-}
-
-.lead-card__duplicate-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 10px;
-  border: 1px solid var(--color-success);
-  border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: var(--fw-semibold);
-  color: var(--color-success);
-  background-color: #f0fdf4;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-
-[data-theme="dark"] .lead-card__duplicate-pill {
-  background-color: #14301f;
-  border-color: #86efac;
-  color: #86efac;
-}
-
-/* Duplicate cards get a subtle green left accent instead of status color */
+/* Duplicate cards get a subtle green accent instead of status color */
 .lead-card--duplicate {
   border-bottom-color: var(--color-success);
 }
 
 /* =========================================================
    RESPONSIVE — grid + card, tightened for small screens
+   Tablet: drop to a narrower minimum column so 2-up fits comfortably.
+   Mobile: single column, cards stack; contact links stay full-width
+   and easy to tap, nothing overflows horizontally.
    ========================================================= */
 
 @media (max-width: 900px) {
@@ -896,50 +863,31 @@
     gap: var(--space-4);
   }
 
-  .lead-card__top {
-    padding: var(--space-3);
+  .lead-card {
+    height: auto;
+    min-height: 300px;
   }
 
-  .lead-card__identity {
-    gap: var(--space-2);
+  .lead-card__header {
+    padding: var(--space-3);
   }
 
   .lead-card__avatar {
     width: 40px;
     height: 40px;
-    font-size: var(--fs-sm);
+    font-size: var(--fs-xs);
   }
 
-  .lead-card__body {
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-3) var(--space-2);
-    padding: var(--space-3);
+  .lead-card__chips {
+    padding: var(--space-2) var(--space-3);
   }
 
-  .lead-card__contact-row {
-    padding: var(--space-3);
-  }
-
-  .lead-card__contact-btn {
-    flex: 1 1 100%;
-    justify-content: center;
+  .lead-card__section {
+    padding: var(--space-2) var(--space-3);
   }
 
   .lead-card__footer {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
     padding: var(--space-3);
-  }
-
-  .lead-card__view-btn {
-    justify-content: center;
-  }
-}
-
-@media (max-width: 360px) {
-  .lead-card__body {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -1000,36 +948,6 @@
   cursor: pointer;
   padding: 0 var(--space-1);
 }
-/* Integration-path pill on each lead card.
-   A lead can be classified Unhappy from sync_status alone, before the
-   scenario name is mirrored onto the row, so the label is resolved with a
-   fallback (see classifyLeadWithDuplicate). Without this the Unhappy filter
-   listed leads with nothing on the card saying which path they were on. */
-.lead-card__path-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.6;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  border: 1px solid transparent;
-}
-
-.lead-card__path-pill--happy {
-  background: rgba(30, 122, 60, 0.10);
-  border-color: rgba(30, 122, 60, 0.28);
-  color: #1e7a3c;
-}
-
-.lead-card__path-pill--unhappy {
-  background: rgba(179, 38, 30, 0.10);
-  border-color: rgba(179, 38, 30, 0.28);
-  color: #b3261e;
-}
-
 /* ---------------------------------------------------------------------
  * Unhappy 7 — dealer updates awaiting an MG enquiry (OutOfOrderEventsPanel)
  * ------------------------------------------------------------------- */

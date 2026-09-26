@@ -17,6 +17,9 @@ export const ROUTES = {
   DASHBOARD: "/dashboard",
   DEALERS: "/dealers",
   LEAD_EXCHANGE: "/lead-exchange",
+  // Route pattern for the config below — build an actual link with
+  // `${ROUTES.LEAD_EXCHANGE}/${rowId}`, not this constant directly.
+  LEAD_EXCHANGE_DETAIL: "/lead-exchange/:leadId",
   MY_LEADS: "/my-leads",
   MAPPINGS: "/mappings",
   LOGS: "/logs",

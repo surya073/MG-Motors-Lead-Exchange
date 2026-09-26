@@ -1,16 +1,15 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   LayoutGrid,
   List,
   Store,
-  Hash,
   Car,
   Megaphone,
   Phone,
   Mail,
   Calendar,
   Eye,
-  MoreVertical,
   RefreshCw,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
@@ -20,13 +19,14 @@ import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import LeadDetailView from "./LeadDetailView";
+import EmptyState from "../../common/EmptyState/EmptyState";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import { ROUTES } from "../../constants/routes.constants";
 import "./LeadExchangePage.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 
 const VIEW_STORAGE_KEY = "leadExchange:view";
-const DETAIL_STORAGE_KEY = "leadExchange:detailId";
 
 const STATUS_TONES = {
   "Not Contacted": "neutral",
@@ -165,34 +165,35 @@ function initialsFor(name) {
 function LeadCardSkeleton() {
   return (
     <div className="lead-card lead-card--skeleton">
-      <div className="lead-card__top">
-        <div className="lead-card__identity">
-          <Skeleton width={46} height={46} radius="50%" />
-          <div>
-            <Skeleton width={120} height={14} />
-            <div style={{ marginTop: 6 }}>
-              <Skeleton width={80} height={11} />
-            </div>
+      <div className="lead-card__header">
+        <Skeleton width={44} height={44} radius="50%" />
+        <div className="lead-card__heading">
+          <Skeleton width={130} height={14} />
+          <div style={{ marginTop: 6 }}>
+            <Skeleton width={90} height={11} />
           </div>
         </div>
         <Skeleton width={70} height={22} radius="var(--radius-full)" />
       </div>
-      <div className="lead-card__body">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div className="lead-card__field" key={i}>
-            <Skeleton width={32} height={32} radius="50%" />
-            <div>
-              <Skeleton width={50} height={9} />
-              <div style={{ marginTop: 4 }}>
-                <Skeleton width={70} height={13} />
-              </div>
-            </div>
+      <div className="lead-card__chips">
+        <Skeleton width={64} height={20} radius="var(--radius-full)" />
+        <Skeleton width={84} height={20} radius="var(--radius-full)" />
+      </div>
+      <div className="lead-card__section">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div className="lead-card__row" key={`c${i}`}>
+            <Skeleton width={14} height={14} radius="50%" />
+            <Skeleton width={150} height={12} />
           </div>
         ))}
       </div>
-      <div className="lead-card__contact-row">
-        <Skeleton width={110} height={26} radius="var(--radius-full)" />
-        <Skeleton width={130} height={26} radius="var(--radius-full)" />
+      <div className="lead-card__section">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div className="lead-card__row" key={`v${i}`}>
+            <Skeleton width={14} height={14} radius="50%" />
+            <Skeleton width={150} height={12} />
+          </div>
+        ))}
       </div>
       <div className="lead-card__footer">
         <Skeleton width={100} height={12} />
@@ -204,6 +205,8 @@ function LeadCardSkeleton() {
 
 export default function LeadExchangePage() {
   const { showAlert } = useAlerts();
+  const { leadId } = useParams();
+  const navigate = useNavigate();
 
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -226,8 +229,16 @@ export default function LeadExchangePage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(10);
 
-  const [detail, setDetail] = useState(null);
-  const restoredDetailRef = useRef(false);
+  // The lead being viewed in detail is derived entirely from the :leadId
+  // route param, not local/localStorage state — so a browser refresh on
+  // /lead-exchange/:leadId re-resolves the same lead from the URL, and
+  // navigating to the bare /lead-exchange list (e.g. via the sidebar) can
+  // never leave a stale detail view showing, since there is no id to match.
+  const detail = useMemo(() => {
+    if (!leadId) return null;
+    return leads.find((l) => String(l.ROWID) === String(leadId)) || null;
+  }, [leadId, leads]);
+  const detailNotFound = Boolean(leadId) && !loading && !detail;
 
   const [visibleColumns, setVisibleColumns] = useState(() =>
     Object.fromEntries(ALL_COLUMNS.map((c) => [c.key, c.defaultVisible]))
@@ -254,19 +265,6 @@ export default function LeadExchangePage() {
     loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Once leads are in, restore whichever lead was open in detail view
-  // before a refresh — only attempted once per mount so it doesn't
-  // fight with the user navigating back to the list afterward.
-  useEffect(() => {
-    if (loading || restoredDetailRef.current) return;
-    restoredDetailRef.current = true;
-    const savedId = localStorage.getItem(DETAIL_STORAGE_KEY);
-    if (!savedId) return;
-    const found = leads.find((l) => String(l.ROWID) === savedId);
-    if (found) setDetail(found);
-    else localStorage.removeItem(DETAIL_STORAGE_KEY);
-  }, [loading, leads]);
 
   useEffect(() => {
     if (!columnMenuOpen) return undefined;
@@ -302,13 +300,12 @@ export default function LeadExchangePage() {
   };
 
   const openDetail = (row) => {
-    setDetail(row);
-    if (row?.ROWID) localStorage.setItem(DETAIL_STORAGE_KEY, String(row.ROWID));
+    if (!row?.ROWID) return;
+    navigate(`${ROUTES.LEAD_EXCHANGE}/${row.ROWID}`);
   };
 
   const closeDetail = () => {
-    setDetail(null);
-    localStorage.removeItem(DETAIL_STORAGE_KEY);
+    navigate(ROUTES.LEAD_EXCHANGE);
   };
 
   const changeView = (next) => {
@@ -528,9 +525,23 @@ export default function LeadExchangePage() {
 
   return (
     <div className="lead-exchange">
-      {detail ? (
+      {leadId ? (
         <div className="lead-exchange__panel" key="detail">
-          <LeadDetailView lead={detail} onBack={closeDetail} />
+          {detail ? (
+            <LeadDetailView lead={detail} onBack={closeDetail} />
+          ) : detailNotFound ? (
+            <EmptyState
+              title="Lead not found"
+              description="This lead may have been removed, or the link is no longer valid."
+              action={
+                <button type="button" className="lead-exchange__refresh-btn" onClick={closeDetail}>
+                  Back to Leads
+                </button>
+              }
+            />
+          ) : (
+            <div className="lead-exchange__detail-status">Loading lead…</div>
+          )}
         </div>
       ) : (
         <div className="lead-exchange__panel" key="list">
@@ -726,6 +737,10 @@ export default function LeadExchangePage() {
                     : isDuplicate
                       ? "success"
                       : STATUS_TONES[row.lead_status] || "neutral";
+                  const isNew = row.lead_status === "Not Contacted" && !removed;
+                  const lastActivityLabel = cellText(row.last_status_update || row.assigned_date);
+                  const dealerTitle = [row.dealer_name, row.dealer_code].filter(Boolean).join(" · ");
+
                   return (
                     <div
                       key={row.ROWID || row.dealer_code + row.customer_name}
@@ -733,133 +748,138 @@ export default function LeadExchangePage() {
                         isDuplicate ? "lead-card--duplicate" : ""
                       }`}
                       onClick={() => openDetail(row)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openDetail(row);
+                        }
+                      }}
                     >
-                      <div className="lead-card__top">
-                        <div className="lead-card__identity">
-                          <span className="lead-card__avatar">
-                            {initialsFor(row.customer_name)}
-                          </span>
-                          <div>
-                            <div className="lead-card__name-row">
-                              <h3>{row.customer_name || "Unnamed lead"}</h3>
-                              {row.lead_status === "Not Contacted" && !removed && (
-                                <span className="lead-card__new-pill">New Lead</span>
-                              )}
-                              {isDuplicate && (
-                                <span className="lead-card__duplicate-pill">
-                                  Duplicate (Happy 3)
-                                </span>
-                              )}
-                              {!isDuplicate && pathLabel && (
-                                <span
-                                  className={`lead-card__path-pill lead-card__path-pill--${pathTone}`}
-                                  title={`Integration path: ${pathLabel}`}
-                                >
-                                  {pathLabel}
-                                </span>
-                              )}
-                            </div>
-                            {row.ROWID && (
-                              <span className="lead-card__id">Lead ID: {row.ROWID}</span>
-                            )}
+                      {/* ---- Identity: who this lead is, at a glance ---- */}
+                      <div className="lead-card__header">
+                        <span className="lead-card__avatar" aria-hidden="true">
+                          {initialsFor(row.customer_name)}
+                        </span>
+                        <div className="lead-card__heading">
+                          <h3 className="lead-card__name" title={row.customer_name || "Unnamed lead"}>
+                            {row.customer_name || "Unnamed lead"}
+                          </h3>
+                          <div className="lead-card__subline">
+                            {row.ROWID && <span>#{row.ROWID}</span>}
+                            {row.ROWID && <span aria-hidden="true">·</span>}
+                            <span>{lastActivityLabel}</span>
                           </div>
                         </div>
-                        <div className="lead-card__top-actions">
-                          {removed ? (
-                            <Badge tone="danger">Removed</Badge>
+                        {removed ? (
+                          <Badge tone="danger">Removed</Badge>
+                        ) : (
+                          <Badge tone={STATUS_TONES[row.lead_status] || "neutral"}>
+                            {row.lead_status || "—"}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* ---- Chips: origin + integration path, scannable at a glance ---- */}
+                      <div className="lead-card__chips">
+                        {isNew && <span className="lead-card__chip lead-card__chip--new">New</span>}
+                        {isDuplicate && (
+                          <span className="lead-card__chip lead-card__chip--duplicate">
+                            Duplicate · Happy 3
+                          </span>
+                        )}
+                        {!isDuplicate && pathLabel && (
+                          <span
+                            className={`lead-card__chip lead-card__chip--path-${pathTone}`}
+                            title={`Integration path: ${pathLabel}`}
+                          >
+                            {pathLabel}
+                          </span>
+                        )}
+                        {row.lead_source && (
+                          <span className="lead-card__chip lead-card__chip--source">
+                            <Megaphone size={11} strokeWidth={2.5} />
+                            {row.lead_source}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* ---- Customer info ---- */}
+                      <div className="lead-card__section">
+                        <span className="lead-card__section-label">Customer</span>
+                        <div className="lead-card__row">
+                          <Phone size={14} className="lead-card__row-icon" />
+                          {row.mobile_number ? (
+                            <a
+                              href={`tel:${row.mobile_number}`}
+                              className="lead-card__row-value lead-card__row-value--link"
+                              title={row.mobile_number}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {row.mobile_number}
+                            </a>
                           ) : (
-                            <Badge tone={STATUS_TONES[row.lead_status] || "neutral"}>
-                              {row.lead_status || "—"}
-                            </Badge>
+                            <span className="lead-card__row-value lead-card__row-value--muted">
+                              No mobile on file
+                            </span>
                           )}
-                          <button
-                            className="lead-card__more"
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label="More actions"
-                          >
-                            <MoreVertical size={16} />
-                          </button>
+                        </div>
+                        <div className="lead-card__row">
+                          <Mail size={14} className="lead-card__row-icon" />
+                          {row.email_address ? (
+                            <a
+                              href={`mailto:${row.email_address}`}
+                              className="lead-card__row-value lead-card__row-value--link"
+                              title={row.email_address}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {row.email_address}
+                            </a>
+                          ) : (
+                            <span className="lead-card__row-value lead-card__row-value--muted">
+                              No email on file
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      <div className="lead-card__body">
-                        <div className="lead-card__field">
-                          <span className="lead-card__icon">
-                            <Store size={16} />
+                      {/* ---- Vehicle + dealer info ---- */}
+                      <div className="lead-card__section">
+                        <span className="lead-card__section-label">Vehicle &amp; Dealer</span>
+                        <div className="lead-card__row">
+                          <Car size={14} className="lead-card__row-icon" />
+                          <span className="lead-card__row-value" title={row.vehicle_model || ""}>
+                            {cellText(row.vehicle_model)}
                           </span>
-                          <div>
-                            <span className="lead-card__label">Dealer</span>
-                            <span className="lead-card__value">{row.dealer_name || "—"}</span>
-                          </div>
                         </div>
-                        <div className="lead-card__field">
-                          <span className="lead-card__icon">
-                            <Hash size={16} />
+                        <div className="lead-card__row">
+                          <Store size={14} className="lead-card__row-icon" />
+                          <span className="lead-card__row-value" title={dealerTitle}>
+                            {row.dealer_name || "Unassigned"}
+                            {row.dealer_code && (
+                              <span className="lead-card__row-value-secondary"> · {row.dealer_code}</span>
+                            )}
                           </span>
-                          <div>
-                            <span className="lead-card__label">Dealer code</span>
-                            <span className="lead-card__value">{row.dealer_code || "—"}</span>
-                          </div>
-                        </div>
-                        <div className="lead-card__field">
-                          <span className="lead-card__icon">
-                            <Car size={16} />
-                          </span>
-                          <div>
-                            <span className="lead-card__label">Vehicle</span>
-                            <span className="lead-card__value">{cellText(row.vehicle_model)}</span>
-                          </div>
-                        </div>
-                        <div className="lead-card__field">
-                          <span className="lead-card__icon">
-                            <Megaphone size={16} />
-                          </span>
-                          <div>
-                            <span className="lead-card__label">Source</span>
-                            <span className="lead-card__value">{cellText(row.lead_source)}</span>
-                          </div>
                         </div>
                       </div>
 
-                      <div className="lead-card__contact-row">
-                        {row.mobile_number && (
-                          <a
-                            href={`tel:${row.mobile_number}`}
-                            className="lead-card__contact-btn lead-card__contact-btn--call"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Phone size={14} strokeWidth={2.5} />
-                            {row.mobile_number}
-                          </a>
-                        )}
-                        {row.email_address && (
-                          <a
-                            href={`mailto:${row.email_address}`}
-                            className="lead-card__contact-btn lead-card__contact-btn--mail"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Mail size={14} strokeWidth={2.5} />
-                            {row.email_address}
-                          </a>
-                        )}
-                      </div>
-
+                      {/* ---- Footer: when + the explicit click target ---- */}
                       <div className="lead-card__footer">
-                        {row.assigned_date && (
-                          <span className="lead-card__created">
-                            <Calendar size={14} />
-                            Created: {row.assigned_date}
-                          </span>
-                        )}
+                        <span className="lead-card__footer-note">
+                          <Calendar size={13} />
+                          {row.assigned_date ? `Since ${row.assigned_date}` : "—"}
+                        </span>
                         <button
+                          type="button"
                           className="lead-card__view-btn"
                           onClick={(e) => {
                             e.stopPropagation();
                             openDetail(row);
                           }}
                         >
-                          <Eye size={14} />
                           View Details
+                          <Eye size={13} />
                         </button>
                       </div>
                     </div>
