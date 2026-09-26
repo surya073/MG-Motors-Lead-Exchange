@@ -1,0 +1,256 @@
+/* ============================================================
+   Live operational monitoring cards (Dealer Health / SLA
+   Monitoring / Duplicate Leads) + their wave/area trend charts.
+   Same token system as paths.css — no new palette.
+   ============================================================ */
+
+.monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-5);
+  align-items: stretch;
+}
+
+.monitoring-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-elevated);
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.monitoring-card--clickable {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.monitoring-card--clickable:hover,
+.monitoring-card--clickable:focus-visible {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-hover);
+  transform: translateY(-2px);
+}
+
+.monitoring-card--clickable:focus-visible {
+  outline: 2px solid var(--color-primary, var(--color-info));
+  outline-offset: 2px;
+}
+
+/* Restrained top accent + a very soft corner wash, echoing the tone
+   without turning the whole card into a colored block. */
+.monitoring-card--success { border-top: 3px solid var(--color-success); background-image: linear-gradient(160deg, var(--color-success-soft) 0%, transparent 45%); }
+.monitoring-card--warning { border-top: 3px solid var(--color-warning); background-image: linear-gradient(160deg, var(--color-warning-soft) 0%, transparent 45%); }
+.monitoring-card--danger { border-top: 3px solid var(--color-danger); background-image: linear-gradient(160deg, var(--color-danger-soft) 0%, transparent 45%); }
+.monitoring-card--info { border-top: 3px solid var(--color-info); background-image: linear-gradient(160deg, var(--color-info-soft) 0%, transparent 45%); }
+.monitoring-card--neutral { border-top: 3px solid var(--color-border-strong); }
+
+.monitoring-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.monitoring-card__title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.monitoring-card__title-group h3 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.monitoring-card__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.monitoring-card__status-dot--success { background-color: var(--color-success); box-shadow: 0 0 0 3px var(--color-success-soft); }
+.monitoring-card__status-dot--warning { background-color: var(--color-warning); box-shadow: 0 0 0 3px var(--color-warning-soft); }
+.monitoring-card__status-dot--danger { background-color: var(--color-danger); box-shadow: 0 0 0 3px var(--color-danger-soft); }
+.monitoring-card__status-dot--info { background-color: var(--color-info); box-shadow: 0 0 0 3px var(--color-info-soft); }
+.monitoring-card__status-dot--neutral { background-color: var(--color-text-muted); }
+
+.monitoring-card__supporting {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.monitoring-card__kpi-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.monitoring-card__kpi {
+  display: flex;
+  flex-direction: column;
+}
+
+.monitoring-card__kpi-value {
+  font-size: 30px;
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.monitoring-card__kpi-label {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.monitoring-card__trend {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: 1;
+  min-width: 120px;
+}
+
+.monitoring-card__trend-caption {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.monitoring-card__body {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* ---------- TrendArea ---------- */
+
+.trend-area {
+  display: block;
+  width: 100%;
+  max-width: 240px;
+  height: 56px;
+}
+
+.trend-area__line {
+  stroke-width: 2;
+  transition: d 400ms var(--ease-premium);
+}
+
+.trend-area__dot {
+  transition: cy 400ms var(--ease-premium);
+}
+
+.trend-area--success .trend-area__line,
+.trend-area--success .trend-area__dot { stroke: var(--color-success); fill: var(--color-success); }
+.trend-area--warning .trend-area__line,
+.trend-area--warning .trend-area__dot { stroke: var(--color-warning); fill: var(--color-warning); }
+.trend-area--danger .trend-area__line,
+.trend-area--danger .trend-area__dot { stroke: var(--color-danger); fill: var(--color-danger); }
+.trend-area--info .trend-area__line,
+.trend-area--info .trend-area__dot { stroke: var(--color-info); fill: var(--color-info); }
+
+.trend-area--success .trend-area__stop-start { stop-color: var(--color-success); stop-opacity: 0.32; }
+.trend-area--success .trend-area__stop-end { stop-color: var(--color-success); stop-opacity: 0; }
+.trend-area--warning .trend-area__stop-start { stop-color: var(--color-warning); stop-opacity: 0.32; }
+.trend-area--warning .trend-area__stop-end { stop-color: var(--color-warning); stop-opacity: 0; }
+.trend-area--danger .trend-area__stop-start { stop-color: var(--color-danger); stop-opacity: 0.32; }
+.trend-area--danger .trend-area__stop-end { stop-color: var(--color-danger); stop-opacity: 0; }
+.trend-area--info .trend-area__stop-start { stop-color: var(--color-info); stop-opacity: 0.32; }
+.trend-area--info .trend-area__stop-end { stop-color: var(--color-info); stop-opacity: 0; }
+
+/* ---------- View Integration CTA (replaces the inline error table) ---------- */
+
+.integration-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.integration-cta__text h3 {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.integration-cta__text p {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  max-width: 480px;
+}
+
+.integration-cta__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-5);
+  border: none;
+  border-radius: var(--radius-full);
+  background-image: linear-gradient(135deg, var(--color-info) 0%, var(--color-primary, var(--color-info)) 100%);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.integration-cta__button:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 560px) {
+  .monitoring-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitoring-card__kpi-row {
+    align-items: flex-start;
+  }
+
+  .monitoring-card__trend {
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .trend-area {
+    max-width: 100%;
+  }
+
+  .integration-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .integration-cta__button {
+    justify-content: center;
+  }
+}

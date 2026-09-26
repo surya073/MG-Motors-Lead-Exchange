@@ -21,6 +21,7 @@ export const ROUTES = {
   // `${ROUTES.LEAD_EXCHANGE}/${rowId}`, not this constant directly.
   LEAD_EXCHANGE_DETAIL: "/lead-exchange/:leadId",
   MY_LEADS: "/my-leads",
+  INTEGRATIONS: "/integrations",
   MAPPINGS: "/mappings",
   LOGS: "/logs",
   SETTINGS: "/settings",

@@ -1,12 +1,15 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
+import { ROUTES } from "../../constants/routes.constants";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
 import ProgressRing from "./components/ProgressRing";
 import ProcessPathCard from "./components/ProcessPathCard";
 import PathDetailsOffcanvas from "./components/PathDetailsOffcanvas";
+import MonitoringCard, { healthTone, bucketByDay } from "./components/MonitoringCard";
 import "./Overview.css";
 
 // Hero/backdrop artwork — used to give the two overview screens a bit of
@@ -1249,7 +1252,7 @@ function AIAssistantPanel({ isDealer }) {
 // path succeeds or fails. It is a categorisation of the scenario's own
 // existing description above, not a measurement — there is no per-step
 // pass/fail count anywhere in the data, so the timeline never shows one.
-const SCENARIO_META = {
+export const SCENARIO_META = {
   "Happy 1": { trigger: "OEM CRM", description: "New enquiry validated and routed to the dealer CRM successfully.", stage: "delivered" },
   "Happy 2": { trigger: "Dealer CRM", description: "Dealer progresses the enquiry; status changes sync back automatically.", stage: "synced" },
   "Happy 3": { trigger: "Middleware", description: "A duplicate enquiry was detected and safely linked instead of resent.", stage: "validated" },
@@ -1267,12 +1270,6 @@ const SCENARIO_META = {
   "Unhappy 10": { trigger: "Scheduler", description: "Dealer took no action within the SLA window — escalated.", stage: "synced" },
   "Unhappy 11": { trigger: "Middleware", description: "Partial transaction — OEM recorded delivery but the dealer record is missing.", stage: "delivered" },
   "Unhappy 12": { trigger: "Scheduler", description: "Dealer CRM migration/offboarding — enquiry re-routed.", stage: "routed" },
-};
-
-const SEVERITY_META = {
-  P1: { label: "Critical", tone: "danger" },
-  P2: { label: "Warning", tone: "warning" },
-  P3: { label: "Low", tone: "info" },
 };
 
 function formatDateInput(date) {
@@ -1376,136 +1373,15 @@ function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onC
 
 
 /**
- * Integration Errors report — paginated, filterable by dealer / error
- * type / status, fed by GET /admin/integration-logs. Reacts to the
- * parent date range + dealer filter, plus its own local filters.
- */
-function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
-  const [page, setPage] = useState(1);
-  const [scenarioFilter, setScenarioFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [dealerFilter, setDealerFilter] = useState("");
-  const [data, setData] = useState({ logs: [], total: 0, pageSize: 25 });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Reset to page 1 whenever any filter changes, so a stale page number
-  // never points past the end of a newly-narrowed result set.
-  useEffect(() => { setPage(1); }, [fromDate, toDate, dealerCode, scenarioFilter, statusFilter, dealerFilter]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    adminDashboardService.getIntegrationLogs({
-      fromDate,
-      toDate,
-      dealerCode: dealerFilter || dealerCode || undefined,
-      scenarioCode: scenarioFilter || undefined,
-      status: statusFilter || undefined,
-      page,
-      pageSize: 25,
-    })
-      .then((result) => { if (!cancelled) setData(result); })
-      .catch((err) => { if (!cancelled) setError(err?.response?.data?.error || "Couldn't load the error report."); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [fromDate, toDate, dealerCode, dealerFilter, scenarioFilter, statusFilter, page]);
-
-  const totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 25)));
-
-  return (
-    <div className="panel-card overview__table">
-      <div className="panel-card__header">
-        <h3>Integration Errors</h3>
-        <div className="error-report__filters">
-          <select value={dealerFilter} onChange={(e) => setDealerFilter(e.target.value)}>
-            <option value="">All dealers</option>
-            {dealers.map((d) => (
-              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code}</option>
-            ))}
-          </select>
-          <select value={scenarioFilter} onChange={(e) => setScenarioFilter(e.target.value)}>
-            <option value="">All error types</option>
-            {Object.keys(SCENARIO_META).filter((k) => k.startsWith("Unhappy")).map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">Any status</option>
-            <option value="FAILED">Failed</option>
-            <option value="SUCCESS">Success</option>
-          </select>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="skeleton-block" style={{ height: 200 }} />
-      ) : error ? (
-        <div className="overview__state overview__state--error">{error}</div>
-      ) : data.logs.length === 0 ? (
-        <p className="overview__empty-note">No integration activity found for the selected filters.</p>
-      ) : (
-        <>
-          <table>
-            <thead>
-              <tr>
-                <th>Date/Time</th>
-                <th>Dealer</th>
-                <th>Lead</th>
-                <th>Integration</th>
-                <th>Error Type</th>
-                <th>Error Message</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.logs.map((log) => {
-                const severity = SEVERITY_META[log.priority] || null;
-                return (
-                  <tr key={log.ROWID}>
-                    <td className="mono">{log.date}</td>
-                    <td>{log.dealerCode ? `${log.dealerCode}${log.dealerName ? ` — ${log.dealerName}` : ""}` : "—"}</td>
-                    <td>{log.customerName || log.leadId || "—"}</td>
-                    <td>{log.integration || "—"}</td>
-                    <td>
-                      {log.scenarioCode || "—"}
-                      {severity && (
-                        <span className={`status-pill status-pill--${severity.tone}`} style={{ marginLeft: 6 }}>
-                          {severity.label}
-                        </span>
-                      )}
-                    </td>
-                    <td>{log.errorMessage || "—"}</td>
-                    <td>
-                      <span className={`status-pill status-pill--${log.status === "SUCCESS" ? "success" : "danger"}`}>
-                        {log.status || "—"}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div className="table-pagination">
-            <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
-            <span>Page {page} of {totalPages} · {data.total} result{data.total === 1 ? "" : "s"}</span>
-            <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/**
  * LeadExchangeHealthPanel — owns the date-range/dealer filter state,
  * fetches getLeadExchangeHealth() once per "Apply", and renders the
- * health summary cards, Happy/Unhappy Path cards, the Error Report,
- * Dealer Health and SLA/Duplicate Leads sections. This is the single
- * new addition wired into AdminOverview below.
+ * health summary cards, Happy/Unhappy Path cards, a "View Integration"
+ * entry point into the dedicated Integrations page (IntegrationsPage.jsx
+ * owns the full error report + its own filters now), and the Dealer
+ * Health / SLA / Duplicate Leads monitoring cards.
  */
 function LeadExchangeHealthPanel({ openDrawer }) {
+  const navigate = useNavigate();
   const [dealers, setDealers] = useState([]);
   const [preset, setPreset] = useState("last30");
   const initialRange = computePresetRange("last30");
@@ -1587,6 +1463,36 @@ function LeadExchangeHealthPanel({ openDrawer }) {
       />
     );
   }
+
+  // Real derived values feeding the three monitoring cards below — every
+  // input here (activeInRange/total, breachPercent, duplicates.total,
+  // leadStatusSummary.total) already exists on `health`; only the %
+  // and the day-bucketed trend are computed, never invented. Thresholds
+  // passed to healthTone are a presentation choice (which % counts as
+  // healthy/warning/critical for this metric), not new data.
+  const dealerActivePercent = health?.dealerHealth?.total > 0
+    ? Math.round((health.dealerHealth.activeInRange / health.dealerHealth.total) * 100)
+    : 0;
+  const dealerHealthCardTone = healthTone(dealerActivePercent, { goodThreshold: 80, warnThreshold: 50, higherIsBetter: true });
+  // No dated per-dealer event list exists for Dealer Health (unlike SLA
+  // breaches / duplicates below), so its "wave" reflects the real
+  // Active/No Sync/Errors composition rather than a trend over time.
+  const dealerCompositionPoints = health?.dealerHealth?.total > 0
+    ? [
+        { label: "Active", value: health.dealerHealth.activeInRange },
+        { label: "No Sync", value: health.dealerHealth.noSuccessfulSyncInRange },
+        { label: "Errors", value: health.dealerHealth.withErrorsInRange },
+      ]
+    : [];
+
+  const slaCardTone = healthTone(health?.sla?.breachPercent, { goodThreshold: 10, warnThreshold: 30, higherIsBetter: false });
+  const slaTrendPoints = bucketByDay(health?.sla?.recentBreaches);
+
+  const duplicatePercent = health?.leadStatusSummary?.total > 0
+    ? Math.round((health.duplicates.total / health.leadStatusSummary.total) * 100)
+    : 0;
+  const duplicateCardTone = healthTone(duplicatePercent, { goodThreshold: 5, warnThreshold: 15, higherIsBetter: false });
+  const duplicateTrendPoints = bucketByDay(health?.duplicates?.recent);
 
   return (
     <div className="health-panel">
@@ -1756,35 +1662,49 @@ function LeadExchangeHealthPanel({ openDrawer }) {
             )}
           </div>
 
-          <ErrorReportTable
-            fromDate={appliedFilters.fromDate}
-            toDate={appliedFilters.toDate}
-            dealerCode={appliedFilters.dealerCode}
-            dealers={dealers}
-          />
-
-          <div className="overview__mid">
-            <div className="panel-card">
-              <div className="panel-card__header"><h3>Dealer Health</h3></div>
-              <div className="drawer-stats">
-                <DrawerStat label="Total dealers" value={health.dealerHealth.total} />
-                <DrawerStat label="Active" value={health.dealerHealth.activeInRange} />
-                <DrawerStat label="No successful sync" value={health.dealerHealth.noSuccessfulSyncInRange} />
-                <DrawerStat label="With errors" value={health.dealerHealth.withErrorsInRange} />
-              </div>
-              <p className="drawer-note">{health.dealerHealth.definitionNote}</p>
+          {/* Integration Errors moved to its own page — see IntegrationsPage.jsx.
+              Keeps this dashboard a clean summary; the full filterable
+              report lives one click away, same data, same endpoint. */}
+          <div className="panel-card integration-cta">
+            <div className="integration-cta__text">
+              <h3>Integration Errors</h3>
+              <p>Detailed, filterable dealer integration error report has moved to its own page.</p>
             </div>
+            <button
+              type="button"
+              className="integration-cta__button"
+              onClick={() => navigate(ROUTES.INTEGRATIONS)}
+            >
+              View Integration
+            </button>
+          </div>
 
-            <div className="panel-card">
-              <div className="panel-card__header"><h3>SLA Monitoring</h3></div>
-              <div className="drawer-stats">
-                <DrawerStat label="Monitored" value={health.sla.monitored} />
-                <DrawerStat label="Met" value={health.sla.met} />
-                <DrawerStat label="Breached" value={health.sla.breached} />
-                <DrawerStat label="Breach %" value={`${health.sla.breachPercent}%`} />
-                <DrawerStat label="Avg breach" value={health.sla.avgBreachMinutes != null ? `${health.sla.avgBreachMinutes} min` : "—"} />
-                <DrawerStat label="Max breach" value={health.sla.maxBreachMinutes != null ? `${health.sla.maxBreachMinutes} min` : "—"} />
-              </div>
+          <div className="monitoring-grid">
+            <MonitoringCard
+              title="Dealer Health"
+              tone={dealerHealthCardTone}
+              kpiValue={`${dealerActivePercent}%`}
+              kpiLabel={`Active of ${health.dealerHealth.total} dealers`}
+              supporting={`${health.dealerHealth.withErrorsInRange} with errors`}
+              trendPoints={dealerCompositionPoints}
+              trendCaption="Active · No sync · Errors"
+            >
+              <p className="drawer-note">{health.dealerHealth.definitionNote}</p>
+            </MonitoringCard>
+
+            <MonitoringCard
+              title="SLA Monitoring"
+              tone={slaCardTone}
+              kpiValue={`${health.sla.breachPercent}%`}
+              kpiLabel={`Breach rate · ${health.sla.monitored} monitored`}
+              supporting={
+                health.sla.avgBreachMinutes != null
+                  ? `${health.sla.breached} breached · avg ${health.sla.avgBreachMinutes} min`
+                  : `${health.sla.breached} breached`
+              }
+              trendPoints={slaTrendPoints}
+              trendCaption="Breaches per day"
+            >
               {health.sla.recentBreaches.length > 0 && (
                 <ul className="task-list">
                   {health.sla.recentBreaches.slice(0, 5).map((b, i) => (
@@ -1797,36 +1717,32 @@ function LeadExchangeHealthPanel({ openDrawer }) {
                   ))}
                 </ul>
               )}
-            </div>
-          </div>
+            </MonitoringCard>
 
-          <div className="panel-card">
-            <div className="panel-card__header"><h3>Duplicate Leads</h3></div>
-            <div className="drawer-stats">
-              <DrawerStat label="Total leads" value={health.leadStatusSummary.total} />
-              <DrawerStat label="Duplicates" value={health.duplicates.total} />
-              <DrawerStat
-                label="Duplicate %"
-                value={health.leadStatusSummary.total > 0
-                  ? `${Math.round((health.duplicates.total / health.leadStatusSummary.total) * 100)}%`
-                  : "0%"}
-              />
-              <DrawerStat label="Dealers affected" value={health.duplicates.dealersAffected} />
-            </div>
-            {health.duplicates.recent.length > 0 && (
-              <ul className="task-list">
-                {health.duplicates.recent.slice(0, 5).map((d, i) => (
-                  <li className="task-list__item" key={i}>
-                    <span className="task-list__title">
-                      {d.dealerCode || "—"} · linked {d.linkedLeadId || "—"} → {d.originalLeadId || "—"}
-                    </span>
-                    <span className="task-list__time mono">
-                      {d.gapMinutes != null ? `${d.gapMinutes} min gap` : d.date}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <MonitoringCard
+              title="Duplicate Leads"
+              tone={duplicateCardTone}
+              kpiValue={`${duplicatePercent}%`}
+              kpiLabel={`Duplicate rate · ${health.leadStatusSummary.total} leads`}
+              supporting={`${health.duplicates.total} duplicates · ${health.duplicates.dealersAffected} dealer(s)`}
+              trendPoints={duplicateTrendPoints}
+              trendCaption="Duplicates per day"
+            >
+              {health.duplicates.recent.length > 0 && (
+                <ul className="task-list">
+                  {health.duplicates.recent.slice(0, 5).map((d, i) => (
+                    <li className="task-list__item" key={i}>
+                      <span className="task-list__title">
+                        {d.dealerCode || "—"} · linked {d.linkedLeadId || "—"} → {d.originalLeadId || "—"}
+                      </span>
+                      <span className="task-list__time mono">
+                        {d.gapMinutes != null ? `${d.gapMinutes} min gap` : d.date}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </MonitoringCard>
           </div>
         </>
       )}
@@ -1980,7 +1896,6 @@ function AdminOverview({ data, openDrawer }) {
     leadStatusBreakdown,
     dealerStatusSummary,
     topDealers,
-    activityTimeline,
     recentSyncLogs,
   } = data;
 
@@ -2228,17 +2143,6 @@ function AdminOverview({ data, openDrawer }) {
             </ul>
           )}
         </div>
-      </div>
-
-      <div className="panel-card">
-        <div className="panel-card__header">
-          <h3>Recent activity</h3>
-        </div>
-        {(activityTimeline || []).length === 0 ? (
-          <p className="overview__empty-note">No sync activity recorded yet.</p>
-        ) : (
-          <ActivityTimeline items={activityTimeline} />
-        )}
       </div>
 
       <div className="panel-card overview__table">

@@ -17,6 +17,7 @@ export const NAV_ITEMS = [
   { label: "Mappings", path: ROUTES.MAPPINGS, icon: "mappings" },
   { label: "Logs", path: ROUTES.LOGS, icon: "logs" },
   { label: "Settings", path: ROUTES.SETTINGS, icon: "settings" },
+  { label: "Integrations", path: ROUTES.INTEGRATIONS, icon: "integrations" },
 ];
 
 // Used by Breadcrumb to resolve the current path to a display label

@@ -12,6 +12,7 @@ import LeadExchangePage from "../pages/LeadExchange/LeadExchangePage";
 import MyLeadsPage from "../pages/MyLeads/MyLeadsPage";
 import SyncLogsPage from "../pages/SyncLogs/SyncLogsPage";
 import SettingsPage from "../pages/Settings/SettingsPage";
+import IntegrationsPage from "../pages/Integrations/IntegrationsPage";
 import { ROUTES } from "../constants/routes.constants";
 import { APP_ROLES } from "../constants/auth.constants";
 import UserManagementPage from "../pages/UserManagement/UserManagementPage";
@@ -50,6 +51,7 @@ const router = createHashRouter([
                   // from the URL instead of falling back to the list.
                   { path: ROUTES.LEAD_EXCHANGE_DETAIL, element: <LeadExchangePage /> },
                   { path: ROUTES.LOGS, element: <SyncLogsPage /> },
+                  { path: ROUTES.INTEGRATIONS, element: <IntegrationsPage /> },
                 ],
               },
 
