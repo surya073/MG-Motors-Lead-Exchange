@@ -1,0 +1,506 @@
+/* ============================================================
+   Process-monitoring visualization for Happy/Unhappy paths.
+   Reuses the app's existing semantic tokens (--color-success/
+   -warning/-danger/-info, --space-*, --radius-*, --fs-*, --fw-*,
+   --shadow-*, --ease-premium) — no new palette introduced. Scoped
+   under .overview so the --color-violet fallback declared there
+   is also available here if ever needed.
+   ============================================================ */
+
+/* ---------- ProgressRing ---------- */
+
+.progress-ring {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.progress-ring__svg {
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.progress-ring__track {
+  stroke: var(--color-border-subtle, var(--color-border));
+}
+
+.progress-ring__value {
+  transition: stroke-dasharray 500ms var(--ease-premium);
+}
+
+.progress-ring--success .progress-ring__value { stroke: var(--color-success); }
+.progress-ring--danger .progress-ring__value { stroke: var(--color-danger); }
+.progress-ring--warning .progress-ring__value { stroke: var(--color-warning); }
+.progress-ring--info .progress-ring__value { stroke: var(--color-info); }
+
+.progress-ring__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4px;
+}
+
+.progress-ring__percent {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+  line-height: 1.1;
+}
+
+.progress-ring__label {
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ---------- Status chip (path badge) ---------- */
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.2px;
+}
+
+.status-chip--success {
+  color: var(--color-success);
+  background-color: var(--color-success-soft);
+}
+
+.status-chip--danger {
+  color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+}
+
+/* ---------- Process timeline (stage steps + connectors) ---------- */
+
+.process-timeline {
+  display: flex;
+  align-items: flex-start;
+  margin: var(--space-3) 0;
+}
+
+.process-timeline__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.process-timeline__node-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.process-timeline__node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--color-border-strong);
+  background-color: var(--color-bg-elevated);
+  color: transparent;
+  margin-inline: auto;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.process-timeline__node--done {
+  border-color: var(--color-success);
+  background-color: var(--color-success);
+  color: #fff;
+}
+
+.process-timeline__node--failed {
+  border-color: var(--color-danger);
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.process-timeline__connector {
+  flex: 1;
+  height: 2px;
+  min-width: 8px;
+  background-color: var(--color-border-strong);
+}
+
+.process-timeline__connector--active {
+  background-color: var(--color-success);
+}
+
+.process-timeline__label {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.process-timeline__label--done {
+  color: var(--color-text-secondary);
+}
+
+.process-timeline__label--failed {
+  color: var(--color-danger);
+  font-weight: var(--fw-semibold);
+}
+
+.process-timeline--compact .process-timeline__node {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+.process-timeline--compact {
+  margin: var(--space-2) 0;
+}
+
+/* ---------- ProcessPathCard ---------- */
+
+.process-path-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-4);
+}
+
+.process-path-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-elevated);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.process-path-card:hover,
+.process-path-card:focus-visible {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-hover, var(--color-border-strong));
+  transform: translateY(-2px);
+}
+
+.process-path-card:focus-visible {
+  outline: 2px solid var(--color-primary, var(--color-info));
+  outline-offset: 2px;
+}
+
+/* Restrained accent — a top border, not a full tinted card — keeps
+   Unhappy paths reading as operational exceptions, not alarm bells. */
+.process-path-card--success {
+  border-top: 3px solid var(--color-success);
+}
+
+.process-path-card--danger {
+  border-top: 3px solid var(--color-danger);
+  background-image: linear-gradient(165deg, var(--color-danger-soft) 0%, transparent 38%);
+}
+
+.process-path-card--success.process-path-card {
+  background-image: linear-gradient(165deg, var(--color-success-soft) 0%, transparent 38%);
+}
+
+.process-path-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.process-path-card__badge-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-path-card__trigger {
+  font-size: 10.5px;
+  color: var(--color-text-muted);
+}
+
+.process-path-card__count-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.process-path-card__count {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+  line-height: 1.1;
+}
+
+.process-path-card__count-label {
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.process-path-card__title {
+  margin-top: var(--space-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.process-path-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.process-path-card__metrics {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.process-path-card__metric {
+  display: flex;
+  flex-direction: column;
+}
+
+.process-path-card__metric-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.process-path-card__metric-value--mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--fw-medium);
+}
+
+.process-path-card__metric-label {
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.process-path-card__ring-caption {
+  display: block;
+  margin-top: 6px;
+  text-align: right;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+/* ---------- Exchange health hero ring card ---------- */
+
+.exchange-health-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.exchange-health-hero:hover,
+.exchange-health-hero:focus-visible {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+
+.exchange-health-hero:focus-visible {
+  outline: 2px solid var(--color-primary, var(--color-info));
+  outline-offset: 2px;
+}
+
+.exchange-health-hero__rings {
+  display: flex;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.exchange-health-hero__ring-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.exchange-health-hero__ring-caption {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+}
+
+.exchange-health-hero__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 220px;
+}
+
+.exchange-health-hero__metric {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+}
+
+.exchange-health-hero__metric-value {
+  display: block;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+}
+
+.exchange-health-hero__metric-label {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+/* ---------- Path details (offcanvas content) ---------- */
+
+.path-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.path-details__section-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.path-details__section:not(:last-child) {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.path-details__heading-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.path-details__title {
+  margin-top: var(--space-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+}
+
+.path-details__desc {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.path-details__overview-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.path-details__stats {
+  flex: 1;
+  min-width: 160px;
+  margin-bottom: 0;
+}
+
+.path-details__status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.path-details__status-dot--success { background-color: var(--color-success); }
+.path-details__status-dot--danger { background-color: var(--color-danger); }
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 900px) {
+  .process-path-card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  .exchange-health-hero {
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 560px) {
+  .process-path-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .process-timeline__label {
+    font-size: 9px;
+  }
+
+  .exchange-health-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .exchange-health-hero__rings {
+    justify-content: center;
+  }
+
+  .path-details__overview-row {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .path-details__stats {
+    width: 100%;
+  }
+}

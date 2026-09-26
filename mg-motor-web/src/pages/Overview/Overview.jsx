@@ -4,6 +4,9 @@ import { APP_ROLES } from "../../constants/auth.constants";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
+import ProgressRing from "./components/ProgressRing";
+import ProcessPathCard from "./components/ProcessPathCard";
+import PathDetailsOffcanvas from "./components/PathDetailsOffcanvas";
 import "./Overview.css";
 
 // Hero/backdrop artwork — used to give the two overview screens a bit of
@@ -35,6 +38,24 @@ const STATUS_CARDS = [
   { key: "quotation", label: "Quotation", color: "var(--color-violet, #7C4DDA)", icon: "doc" },
   { key: "delivered", label: "Delivered", color: "var(--color-success, #16A34A)", icon: "check" },
   { key: "lost", label: "Lost", color: "var(--color-danger, #DC2626)", icon: "x" },
+];
+
+// Backs the admin "Lead status distribution" donut — grouped from the
+// ACTUAL current MG Lead_Status picklist values (see backend's
+// summarizeLeadsByRealStatus / VERIFIED-CRM-FACTS.md), not the
+// New/Contacted/Test Drive/Quotation/Delivered/Lost taxonomy above,
+// which Zoho's Lead_Status has never actually returned — this register
+// tracks enquiry-handling stage, not a sale/delivery outcome. Order here
+// is the legend/donut draw order: active stages first, then the
+// negative/terminal outcomes.
+const REAL_STATUS_CARDS = [
+  { key: "not_contacted", label: "Not Contacted", color: "var(--color-info, #3B82F6)", icon: "spark" },
+  { key: "in_progress", label: "In Progress", color: "var(--color-warning, #F59E0B)", icon: "phone" },
+  { key: "not_qualified", label: "Not Qualified", color: "var(--color-violet, #7C4DDA)", icon: "doc" },
+  { key: "lost", label: "Lost", color: "var(--color-danger, #DC2626)", icon: "x" },
+  { key: "junk", label: "Junk / Spam", color: "#B3261E", icon: "alert" },
+  { key: "needs_attention", label: "Needs Attention", color: "#B06C00", icon: "bell" },
+  { key: "other", label: "Other", color: "var(--color-text-muted, #9CA3AF)", icon: "square" },
 ];
 
 // Illustrative trend deltas for the admin KPI row until the dashboard
@@ -638,58 +659,6 @@ function DonutChart({ segments, size = 176, strokeWidth = 26 }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* RangeFilter — small pill-style dropdown used by the lead status     */
-/* card. Purely a display filter for now: swap the onChange handler   */
-/* for a real date-scoped fetch once the summary endpoint accepts a   */
-/* range param.                                                        */
-/* ------------------------------------------------------------------ */
-
-const RANGE_OPTIONS = [
-  { key: "10d", label: "Last 10 days" },
-  { key: "1w", label: "Last 7 days" },
-  { key: "1m", label: "Last 30 days" },
-  { key: "all", label: "All time" },
-];
-
-function RangeFilter({ value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const current = RANGE_OPTIONS.find((o) => o.key === value) || RANGE_OPTIONS[3];
-
-  return (
-    <div className="range-filter">
-      <button
-        type="button"
-        className="range-filter__trigger"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-      >
-        <Icon name="calendar" size={13} />
-        {current.label}
-        <Icon name="chevronDown" size={12} className="range-filter__chevron" />
-      </button>
-      {open && (
-        <>
-          <div className="range-filter__scrim" onClick={() => setOpen(false)} />
-          <ul className="range-filter__menu" role="listbox">
-            {RANGE_OPTIONS.map((o) => (
-              <li key={o.key}>
-                <button
-                  type="button"
-                  className={`range-filter__option${o.key === value ? " range-filter__option--active" : ""}`}
-                  onClick={() => { onChange(o.key); setOpen(false); }}
-                >
-                  {o.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
-
 function DonutLegend({ segments, total, onSelect }) {
   const [activeKey, setActiveKey] = useState(null);
   return (
@@ -1009,14 +978,24 @@ function DealerRankList({ dealers }) {
   );
 }
 
+// Terminal/negative outcomes excluded from the forward-moving pipeline
+// view below — a lead that's Lost, Not Qualified, Junk, or stuck needing
+// attention isn't "in progress", so it would misrepresent this card's
+// "share of active leads" framing rather than genuinely being a stage.
+const PIPELINE_TERMINAL_KEYS = new Set(["not_qualified", "lost", "junk", "needs_attention", "other"]);
+
 /**
  * PipelineStageBar — a stepped, labelled progress meter across the
- * lead lifecycle (New → Contacted → Test Drive → Quotation → Delivered),
- * each stage sized by its share of the pipeline. Sits where a generic
- * "quick actions" grid used to be — this card actually says something.
+ * real, currently-open lead-handling stages (Not Contacted → In
+ * Progress), each stage sized by its share of the active pipeline.
+ * Sits where a generic "quick actions" grid used to be — this card
+ * actually says something.
  */
 function PipelineStageBar({ segments, total }) {
-  const stages = segments.filter((s) => s.key !== "lost");
+  const stages = segments.filter((s) => !PIPELINE_TERMINAL_KEYS.has(s.key));
+  if (stages.length === 0) {
+    return <p className="overview__empty-note">No leads currently in progress.</p>;
+  }
   return (
     <div className="stage-bar">
       {stages.map((s) => {
@@ -1263,24 +1242,31 @@ function AIAssistantPanel({ isDealer }) {
 // same 15-path register already used in LeadDetailView.jsx and
 // pathPolicyService.js, so a lead's detail view and this dashboard never
 // disagree on what a given path means.
+//
+// `stage` is ALSO display-only: it says which point in the Lead Exchange
+// pipeline (see PIPELINE_STAGES in ProcessPathCard.jsx) this scenario
+// concerns, so the process-timeline visualization can highlight where a
+// path succeeds or fails. It is a categorisation of the scenario's own
+// existing description above, not a measurement — there is no per-step
+// pass/fail count anywhere in the data, so the timeline never shows one.
 const SCENARIO_META = {
-  "Happy 1": { trigger: "OEM CRM", description: "New enquiry validated and routed to the dealer CRM successfully." },
-  "Happy 2": { trigger: "Dealer CRM", description: "Dealer progresses the enquiry; status changes sync back automatically." },
-  "Happy 3": { trigger: "Middleware", description: "A duplicate enquiry was detected and safely linked instead of resent." },
-  "Happy 4": { trigger: "Scheduler", description: "Delivery recovered after an outage; queued enquiries replayed without duplicates." },
-  "Happy 5": { trigger: "Dealer CRM", description: "Dealer-side field updates synchronised back to the OEM." },
-  "Unhappy 1": { trigger: "Middleware", description: "Push to the dealer failed (timeout / 5xx / connection error) — retried automatically." },
-  "Unhappy 2": { trigger: "Middleware", description: "Mandatory data missing or invalid on ingest — held, not retried." },
-  "Unhappy 3": { trigger: "Scheduler", description: "Dealer unavailable — failure unresolved past the 24h escalation window." },
-  "Unhappy 4": { trigger: "Middleware", description: "A dealer status update could not be written back to the OEM." },
-  "Unhappy 5": { trigger: "Middleware", description: "Routing failed — no dealer, ambiguous dealer, or invalid mapping." },
-  "Unhappy 6": { trigger: "Middleware", description: "OEM and dealer both changed the same field — resolved by ownership rules." },
-  "Unhappy 7": { trigger: "Middleware", description: "A status update arrived before its enquiry record existed — held for replay." },
-  "Unhappy 8": { trigger: "Middleware", description: "Consent/privacy data missing or mismatched — held pending validation." },
-  "Unhappy 9": { trigger: "Dealer CRM", description: "Dealer explicitly marked the enquiry as spam or junk." },
-  "Unhappy 10": { trigger: "Scheduler", description: "Dealer took no action within the SLA window — escalated." },
-  "Unhappy 11": { trigger: "Middleware", description: "Partial transaction — OEM recorded delivery but the dealer record is missing." },
-  "Unhappy 12": { trigger: "Scheduler", description: "Dealer CRM migration/offboarding — enquiry re-routed." },
+  "Happy 1": { trigger: "OEM CRM", description: "New enquiry validated and routed to the dealer CRM successfully.", stage: "delivered" },
+  "Happy 2": { trigger: "Dealer CRM", description: "Dealer progresses the enquiry; status changes sync back automatically.", stage: "synced" },
+  "Happy 3": { trigger: "Middleware", description: "A duplicate enquiry was detected and safely linked instead of resent.", stage: "validated" },
+  "Happy 4": { trigger: "Scheduler", description: "Delivery recovered after an outage; queued enquiries replayed without duplicates.", stage: "delivered" },
+  "Happy 5": { trigger: "Dealer CRM", description: "Dealer-side field updates synchronised back to the OEM.", stage: "synced" },
+  "Unhappy 1": { trigger: "Middleware", description: "Push to the dealer failed (timeout / 5xx / connection error) — retried automatically.", stage: "delivered" },
+  "Unhappy 2": { trigger: "Middleware", description: "Mandatory data missing or invalid on ingest — held, not retried.", stage: "validated" },
+  "Unhappy 3": { trigger: "Scheduler", description: "Dealer unavailable — failure unresolved past the 24h escalation window.", stage: "delivered" },
+  "Unhappy 4": { trigger: "Middleware", description: "A dealer status update could not be written back to the OEM.", stage: "synced" },
+  "Unhappy 5": { trigger: "Middleware", description: "Routing failed — no dealer, ambiguous dealer, or invalid mapping.", stage: "routed" },
+  "Unhappy 6": { trigger: "Middleware", description: "OEM and dealer both changed the same field — resolved by ownership rules.", stage: "synced" },
+  "Unhappy 7": { trigger: "Middleware", description: "A status update arrived before its enquiry record existed — held for replay.", stage: "synced" },
+  "Unhappy 8": { trigger: "Middleware", description: "Consent/privacy data missing or mismatched — held pending validation.", stage: "validated" },
+  "Unhappy 9": { trigger: "Dealer CRM", description: "Dealer explicitly marked the enquiry as spam or junk.", stage: "synced" },
+  "Unhappy 10": { trigger: "Scheduler", description: "Dealer took no action within the SLA window — escalated.", stage: "synced" },
+  "Unhappy 11": { trigger: "Middleware", description: "Partial transaction — OEM recorded delivery but the dealer record is missing.", stage: "delivered" },
+  "Unhappy 12": { trigger: "Scheduler", description: "Dealer CRM migration/offboarding — enquiry re-routed.", stage: "routed" },
 };
 
 const SEVERITY_META = {
@@ -1388,27 +1374,6 @@ function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onC
   );
 }
 
-/** One Happy/Unhappy path card — count + dealers affected + last occurrence are all real. */
-function PathCard({ scenario }) {
-  const meta = SCENARIO_META[scenario.name] || {};
-  return (
-    <div className={`path-card path-card--${scenario.type}`}>
-      <div className="path-card__top">
-        <span className={`path-card__badge path-card__badge--${scenario.type}`}>{scenario.name}</span>
-        <span className="path-card__count">{scenario.count}</span>
-      </div>
-      <p className="path-card__title">{scenario.message || meta.description || scenario.name}</p>
-      {meta.description && scenario.message && meta.description !== scenario.message && (
-        <p className="path-card__desc">{meta.description}</p>
-      )}
-      <div className="path-card__meta-row">
-        {meta.trigger && <span>Trigger: {meta.trigger}</span>}
-        <span>Dealers affected: {scenario.dealersAffected}</span>
-      </div>
-      <p className="path-card__time mono">Last occurrence: {scenario.lastOccurrence || "—"}</p>
-    </div>
-  );
-}
 
 /**
  * Integration Errors report — paginated, filterable by dealer / error
@@ -1540,7 +1505,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
  * Dealer Health and SLA/Duplicate Leads sections. This is the single
  * new addition wired into AdminOverview below.
  */
-function LeadExchangeHealthPanel() {
+function LeadExchangeHealthPanel({ openDrawer }) {
   const [dealers, setDealers] = useState([]);
   const [preset, setPreset] = useState("last30");
   const initialRange = computePresetRange("last30");
@@ -1600,6 +1565,27 @@ function LeadExchangeHealthPanel() {
     setPendingTo(range.to);
     setPendingDealer("");
     setAppliedFilters({ fromDate: range.from, toDate: range.to, dealerCode: "" });
+  }
+
+  // Opens the shared Drawer with the rich per-path content. shareOfCategory
+  // is computed identically to the card's own ring, so the offcanvas ring
+  // never disagrees with what the user just clicked.
+  function openPathDetails(scenario) {
+    const categoryTotal = scenario.type === "happy"
+      ? health.exchangeHealth.successfulExchanges
+      : health.exchangeHealth.failedExchanges;
+    const shareOfCategory = categoryTotal > 0 ? (scenario.count / categoryTotal) * 100 : null;
+    openDrawer(
+      scenario.name,
+      scenario.type === "happy" ? "Happy path detail" : "Unhappy path detail",
+      <PathDetailsOffcanvas
+        scenario={scenario}
+        meta={SCENARIO_META[scenario.name]}
+        shareOfCategory={shareOfCategory}
+        dealersTotal={health.dealerHealth?.total}
+        filters={appliedFilters}
+      />
+    );
   }
 
   return (
@@ -1670,24 +1656,102 @@ function LeadExchangeHealthPanel() {
             </p>
           )}
 
+          {/* Exchange health hero — same exchangeHealth numbers as the KPI
+              row above, just given a ring so "success rate" reads at a
+              glance instead of as one more flat statistic tile. */}
+          <button
+            type="button"
+            className="panel-card exchange-health-hero"
+            onClick={() => openDrawer(
+              "Lead Exchange Health",
+              `${appliedFilters.fromDate} → ${appliedFilters.toDate}${appliedFilters.dealerCode ? ` · ${appliedFilters.dealerCode}` : ""}`,
+              (
+                <div className="drawer-stats">
+                  <DrawerStat label="Total events" value={health.exchangeHealth.totalEvents} />
+                  <DrawerStat label="Successful" value={health.exchangeHealth.successfulExchanges} />
+                  <DrawerStat label="Failed" value={health.exchangeHealth.failedExchanges} />
+                  <DrawerStat label="Success rate" value={`${health.exchangeHealth.successRate}%`} />
+                </div>
+              )
+            )}
+          >
+            <div className="exchange-health-hero__rings">
+              <div className="exchange-health-hero__ring-block">
+                <ProgressRing
+                  percent={health.exchangeHealth.successRate}
+                  tone="success"
+                  centerValue={`${health.exchangeHealth.successRate}%`}
+                  centerLabel="Success"
+                />
+                <span className="exchange-health-hero__ring-caption">Exchange success rate</span>
+              </div>
+            </div>
+            <div className="exchange-health-hero__metrics">
+              <div className="exchange-health-hero__metric">
+                <span className="exchange-health-hero__metric-value">{health.exchangeHealth.totalEvents.toLocaleString()}</span>
+                <span className="exchange-health-hero__metric-label">Total events</span>
+              </div>
+              <div className="exchange-health-hero__metric">
+                <span className="exchange-health-hero__metric-value">{health.exchangeHealth.successfulExchanges.toLocaleString()}</span>
+                <span className="exchange-health-hero__metric-label">Successful</span>
+              </div>
+              <div className="exchange-health-hero__metric">
+                <span className="exchange-health-hero__metric-value">{health.exchangeHealth.failedExchanges.toLocaleString()}</span>
+                <span className="exchange-health-hero__metric-label">Failed</span>
+              </div>
+            </div>
+          </button>
+
           <div className="panel-card">
-            <div className="panel-card__header"><h3>Happy Paths</h3></div>
+            <div className="panel-card__header">
+              <h3>Happy Paths</h3>
+              <span className="panel-card__meta">{health.exchangeHealth.successfulExchanges.toLocaleString()} successful exchanges</span>
+            </div>
             {health.happyPaths.length === 0 ? (
               <p className="overview__empty-note">No successful integration flows in this range.</p>
             ) : (
-              <div className="path-card-grid">
-                {health.happyPaths.map((s) => <PathCard key={s.name} scenario={s} />)}
+              <div className="process-path-card-grid">
+                {health.happyPaths.map((s) => (
+                  <ProcessPathCard
+                    key={s.name}
+                    scenario={s}
+                    meta={SCENARIO_META[s.name]}
+                    dealersTotal={health.dealerHealth?.total}
+                    shareOfCategory={
+                      health.exchangeHealth.successfulExchanges > 0
+                        ? (s.count / health.exchangeHealth.successfulExchanges) * 100
+                        : null
+                    }
+                    onOpenDetails={(scenario) => openPathDetails(scenario)}
+                  />
+                ))}
               </div>
             )}
           </div>
 
           <div className="panel-card">
-            <div className="panel-card__header"><h3>Unhappy Paths</h3></div>
+            <div className="panel-card__header">
+              <h3>Unhappy Paths</h3>
+              <span className="panel-card__meta">{health.exchangeHealth.failedExchanges.toLocaleString()} failed exchanges</span>
+            </div>
             {health.unhappyPaths.length === 0 ? (
               <p className="overview__empty-note">No integration failures in this range.</p>
             ) : (
-              <div className="path-card-grid">
-                {health.unhappyPaths.map((s) => <PathCard key={s.name} scenario={s} />)}
+              <div className="process-path-card-grid">
+                {health.unhappyPaths.map((s) => (
+                  <ProcessPathCard
+                    key={s.name}
+                    scenario={s}
+                    meta={SCENARIO_META[s.name]}
+                    dealersTotal={health.dealerHealth?.total}
+                    shareOfCategory={
+                      health.exchangeHealth.failedExchanges > 0
+                        ? (s.count / health.exchangeHealth.failedExchanges) * 100
+                        : null
+                    }
+                    onOpenDetails={(scenario) => openPathDetails(scenario)}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -1913,13 +1977,24 @@ function AdminOverview({ data, openDrawer }) {
     totalDealers,
     totalLeads,
     leadStatusSummary,
+    leadStatusBreakdown,
     dealerStatusSummary,
     topDealers,
     activityTimeline,
     recentSyncLogs,
   } = data;
 
-  const segments = STATUS_CARDS.map((c) => ({ ...c, value: leadStatusSummary[c.key] || 0 }));
+  // Real, current status distribution — see REAL_STATUS_CARDS above and
+  // summarizeLeadsByRealStatus on the backend. Zero-value buckets are
+  // dropped so the donut/legend only ever shows statuses actually present
+  // in the network right now, and totalActiveLeads (which excludes
+  // soft-deleted/Removed leads) is what percentages are computed against,
+  // so the ring and its legend always reconcile to the same 100%.
+  const totalActiveLeads = leadStatusBreakdown?.total ?? totalLeads;
+  const segments = REAL_STATUS_CARDS
+    .map((c) => ({ ...c, value: leadStatusBreakdown?.[c.key] || 0 }))
+    .filter((s) => s.value > 0);
+
   const activePipeline = (leadStatusSummary.new || 0)
     + (leadStatusSummary.contacted || 0)
     + (leadStatusSummary.test_drive || 0)
@@ -1942,8 +2017,6 @@ function AdminOverview({ data, openDrawer }) {
     () => (topDealers || []).map((d) => ({ label: d.name?.replace("MG ", "") || d.dealer_code, value: d.total_leads })),
     [topDealers]
   );
-
-  const [leadRange, setLeadRange] = useState("1m");
 
   // Dedicated deeper sync-log fetch for the trend chart — decoupled
   // from the 5-row recentSyncLogs used by the activity table, so the
@@ -2053,17 +2126,24 @@ function AdminOverview({ data, openDrawer }) {
           Self-contained: owns its own date-range/dealer filters and
           fetches its own data (getLeadExchangeHealth / getIntegrationLogs),
           independent of the dashboardSummary-driven sections below. */}
-      <LeadExchangeHealthPanel />
+      <LeadExchangeHealthPanel openDrawer={openDrawer} />
 
       <div className="panel-card">
         <div className="panel-card__header">
-          <h3>Lead status distribution</h3>
-          <RangeFilter value={leadRange} onChange={setLeadRange} />
+          <div>
+            <h3>Lead status distribution</h3>
+            <p className="panel-card__subtitle">Network-wide, current status of every active lead</p>
+          </div>
+          <span className="panel-card__meta">{totalActiveLeads.toLocaleString()} active leads</span>
         </div>
-        <div className="overview__donut-row">
-          <DonutChart segments={segments} />
-          <DonutLegend segments={segments} total={totalLeads} onSelect={openStatusDetail} />
-        </div>
+        {segments.length === 0 ? (
+          <p className="overview__empty-note">No active leads yet.</p>
+        ) : (
+          <div className="overview__donut-row">
+            <DonutChart segments={segments} />
+            <DonutLegend segments={segments} total={totalActiveLeads} onSelect={openStatusDetail} />
+          </div>
+        )}
       </div>
 
       <div className="panel-card">
@@ -2094,7 +2174,7 @@ function AdminOverview({ data, openDrawer }) {
             <h3>Pipeline progress</h3>
             <span className="panel-card__meta">Share of active leads</span>
           </div>
-          <PipelineStageBar segments={segments} total={totalLeads} />
+          <PipelineStageBar segments={segments} total={totalActiveLeads} />
         </div>
       </div>
 

@@ -499,6 +499,13 @@ ul{
 .panel-card__meta {
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.panel-card__subtitle {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
 }
 
 .panel-card__meta--dummy {

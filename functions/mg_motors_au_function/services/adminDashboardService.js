@@ -131,6 +131,61 @@ function summarizeLeadsByStatus(leads) {
 }
 
 /**
+ * Groups leads by their ACTUAL current MG Lead_Status value (see
+ * VERIFIED-CRM-FACTS.md / pathPolicyService.js's MG_LEAD_STATUS_VALUES),
+ * for the Overview dashboard's "Lead status distribution" donut.
+ *
+ * Deliberately a SEPARATE function from summarizeLeadsByStatus above —
+ * that one's New/Contacted/Test Drive/Quotation/Delivered/Lost buckets
+ * are not values Zoho's Lead_Status picklist has ever returned (this
+ * register has no "Delivered"/"Test Drive" outcome at all; it tracks
+ * enquiry-handling stage, not sale/delivery), so every real lead landed
+ * in none of them and the donut rendered as if there were no leads.
+ * summarizeLeadsByStatus itself is left untouched: getTopDealers/
+ * getDealerPerformance's conversion-rate math, the dealer-side leads
+ * summary (dealerLeadRoutes.js), and the AI assistant's dashboard
+ * summary prompt (onDemandAiService.js) all depend on its exact shape.
+ */
+const REAL_STATUS_GROUPS = [
+  { key: 'not_contacted', label: 'Not Contacted', statuses: ['Update Pending', 'Not Contacted'] },
+  {
+    key: 'in_progress',
+    label: 'In Progress',
+    statuses: ['Follow-up 1', 'Follow-up 2', 'Contacted', 'Attempted to Contact', 'Contact in Future', 'Pre-Qualified'],
+  },
+  { key: 'not_qualified', label: 'Not Qualified', statuses: ['Not Qualified', 'Dropped'] },
+  { key: 'lost', label: 'Lost', statuses: ['Lost', 'Lost Lead'] },
+  { key: 'junk', label: 'Junk / Spam', statuses: ['Junk Lead'] },
+  { key: 'needs_attention', label: 'Needs Attention', statuses: ['Dealer Unavailable', 'Unattended Alert'] },
+];
+
+const REAL_STATUS_KEY_BY_VALUE = REAL_STATUS_GROUPS.reduce((acc, group) => {
+  group.statuses.forEach((status) => { acc[status] = group.key; });
+  return acc;
+}, {});
+
+/**
+ * Excludes soft-deleted (sync_status = 'Removed') leads — those aren't
+ * part of an active network pipeline view. Every remaining lead lands
+ * somewhere: an unrecognised or blank lead_status falls into 'other'
+ * rather than being silently dropped, so segment counts always sum to
+ * `total` and the donut/legend never quietly under-report.
+ */
+function summarizeLeadsByRealStatus(leads) {
+  const active = leads.filter((lead) => lead.sync_status !== 'Removed');
+  const summary = { total: active.length, other: 0 };
+  REAL_STATUS_GROUPS.forEach((group) => { summary[group.key] = 0; });
+
+  active.forEach((lead) => {
+    const key = REAL_STATUS_KEY_BY_VALUE[lead.lead_status];
+    if (key) summary[key] += 1;
+    else summary.other += 1;
+  });
+
+  return summary;
+}
+
+/**
  * Splits dealers by their CRM-synced status field. sync_status
  * 'Removed' means CRM no longer returns this dealer (see
  * dealerSyncService.js's soft-delete pass) — kept separate from the
@@ -244,6 +299,7 @@ async function getDashboardSummary(catalystApp) {
     totalDealers: dealers.length,
     totalLeads: leads.length,
     leadStatusSummary: summarizeLeadsByStatus(leads),
+    leadStatusBreakdown: summarizeLeadsByRealStatus(leads), // NEW — backs the Overview donut
     dealerStatusSummary: summarizeDealerStatus(dealers),
     topDealers: getTopDealers(dealers, leads),
     activityTimeline: buildActivityTimeline(syncLogs),
@@ -701,6 +757,7 @@ module.exports = {
   getAllDealersWithLeadCounts,
   getAllLeads,
   summarizeLeadsByStatus,
+  summarizeLeadsByRealStatus,
   summarizeDealerStatus,
   getDealerPerformance,
   getTopDealers,
