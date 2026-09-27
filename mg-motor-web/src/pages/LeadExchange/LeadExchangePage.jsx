@@ -20,6 +20,7 @@ import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import LeadDetailView from "./LeadDetailView";
 import EmptyState from "../../common/EmptyState/EmptyState";
+import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import { ROUTES } from "../../constants/routes.constants";
 import "./LeadExchangePage.css";
@@ -929,27 +930,19 @@ export default function LeadExchangePage() {
 
 // Unhappy 7 — out-of-order dealer events. A dealer update that arrives
 // before its MG enquiry is linked has no MG lead, so it can never be a card
-// in the lead list above. This panel shows those dealer records on their
-// own, so the hold, the release and the expiry are all visible. It is
-// self-contained: it neither reads nor changes the lead list's state.
+// in the lead list above. This panel surfaces those dealer records; the
+// full list now opens in OutOfOrderEventsOffcanvas rather than an inline
+// table, so this section stays a compact summary + entry point. It is
+// self-contained: it neither reads nor changes the lead list's state, and
+// opening/closing its offcanvas is a separate local boolean that never
+// touches search/filter/pagination/detail-view state either.
 const OUT_OF_ORDER_REFRESH_MS = 30000;
-
-const OUT_OF_ORDER_STATES = {
-  HELD: { label: "Held", tone: "held", note: "Waiting for its MG enquiry" },
-  EXPIRED: { label: "Expired", tone: "expired", note: "Retention passed — not applied to MG" },
-  RELEASED: { label: "Released", tone: "released", note: "Applied to MG once the enquiry was linked" },
-};
-
-function formatSystemTimestamp(value) {
-  if (!value) return "—";
-  // Catalyst system timestamp "YYYY-MM-DD HH:MM:SS:mmm" — drop milliseconds.
-  return String(value).replace(/:\d{1,3}$/, "");
-}
 
 function OutOfOrderEventsPanel() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [offcanvasOpen, setOffcanvasOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -999,53 +992,28 @@ function OutOfOrderEventsPanel() {
       {error && <div className="ooo-panel__error">{error}</div>}
 
       {events.length > 0 && (
-        <>
-          <div className="ooo-panel__summary">
-            {heldCount} held · {events.length} total
+        <div className="ooo-panel__cta">
+          <div className="ooo-panel__cta-text">
+            <span className="ooo-panel__summary">{heldCount} held · {events.length} total</span>
+            <p>Full event details — dealer, status, timestamps and hold reason — are one click away.</p>
           </div>
-          <div className="ooo-panel__table-wrap">
-            <table className="ooo-panel__table">
-              <thead>
-                <tr>
-                  <th>Customer (dealer CRM)</th>
-                  <th>Dealer</th>
-                  <th>Dealer record ID</th>
-                  <th>Dealer status</th>
-                  <th>Held since</th>
-                  <th>State</th>
-                  <th>Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((event) => {
-                  const meta = OUT_OF_ORDER_STATES[event.state] || OUT_OF_ORDER_STATES.HELD;
-                  return (
-                    <tr key={`${event.dealerCode}:${event.externalLeadId}`}>
-                      <td className="ooo-panel__name">
-                        {event.customerName || (event.dealerRecordMissing ? "Not found at dealer" : "—")}
-                      </td>
-                      <td>{event.dealerCode || "—"}</td>
-                      <td className="ooo-panel__mono">{event.externalLeadId}</td>
-                      <td>{event.dealerStatus || "—"}</td>
-                      <td className="ooo-panel__mono">{formatSystemTimestamp(event.heldSince)}</td>
-                      <td>
-                        <span className={`ooo-panel__state ooo-panel__state--${meta.tone}`}>{meta.label}</span>
-                        <div className="ooo-panel__state-note">{meta.note}</div>
-                      </td>
-                      <td className="ooo-panel__reason">
-                        {event.reason}
-                        {event.expiredAt && (
-                          <div className="ooo-panel__state-note">Expired {formatSystemTimestamp(event.expiredAt)}</div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
+          <button
+            type="button"
+            className="ooo-panel__view-btn"
+            onClick={() => setOffcanvasOpen(true)}
+          >
+            <Eye size={14} />
+            View Out-of-Order Events
+          </button>
+        </div>
       )}
+
+      <OutOfOrderEventsOffcanvas
+        open={offcanvasOpen}
+        onClose={() => setOffcanvasOpen(false)}
+        events={events}
+        heldCount={heldCount}
+      />
     </section>
   );
 }

@@ -1,0 +1,272 @@
+/* ============================================================
+   Out-of-Order Events offcanvas — ~50% desktop viewport width,
+   full-width on mobile. Uses its own namespace (not the shared
+   .offcanvas/.drawer shells elsewhere) since those are sized/
+   styled for their own specific content.
+   ============================================================ */
+
+.ooo-offcanvas__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background-color: rgba(13, 13, 13, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast) var(--ease-premium);
+}
+
+.ooo-offcanvas__backdrop--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ooo-offcanvas {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 50vw;
+  max-width: 720px;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  z-index: calc(var(--z-modal) + 1);
+  transform: translate3d(100%, 0, 0);
+  transition: transform var(--transition-fast) var(--ease-premium);
+}
+
+.ooo-offcanvas--open {
+  transform: translate3d(0, 0, 0);
+}
+
+/* ---------- Header ---------- */
+
+.ooo-offcanvas__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.ooo-offcanvas__header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background-color: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.ooo-offcanvas__header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ooo-offcanvas__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ooo-offcanvas__header-text h2 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+}
+
+.ooo-offcanvas__path-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  font-size: 10.5px;
+  font-weight: var(--fw-semibold);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  white-space: nowrap;
+}
+
+.ooo-offcanvas__header-text p {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+}
+
+.ooo-offcanvas__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.ooo-offcanvas__close:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+/* ---------- Body ---------- */
+
+.ooo-offcanvas__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+.ooo-offcanvas__empty {
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: var(--space-6) 0;
+}
+
+.ooo-offcanvas__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.ooo-offcanvas__card {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  transition: box-shadow var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.ooo-offcanvas__card:hover {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--color-border-hover);
+}
+
+.ooo-offcanvas__card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ooo-offcanvas__card-name {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.ooo-offcanvas__card-note {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.ooo-offcanvas__meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ooo-offcanvas__meta-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ooo-offcanvas__meta-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.ooo-offcanvas__meta-item > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ooo-offcanvas__meta-label {
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.ooo-offcanvas__meta-value {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ooo-offcanvas__meta-value.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.ooo-offcanvas__reason {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.ooo-offcanvas__reason-label {
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.ooo-offcanvas__reason p {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.ooo-offcanvas__expired-note {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--color-danger);
+  font-weight: var(--fw-medium);
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1100px) {
+  .ooo-offcanvas {
+    width: 65vw;
+  }
+}
+
+@media (max-width: 720px) {
+  .ooo-offcanvas {
+    width: 100vw;
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .ooo-offcanvas__meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
