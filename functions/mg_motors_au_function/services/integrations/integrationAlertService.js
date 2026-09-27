@@ -5,6 +5,7 @@ const logger = require('../../utils/logger');
 const { notifyAdmins } = require('../notificationService');
 const emailTemplates = require('./emailTemplates');
 const alertContext = require('./alertContext');
+const integrationAlertBatchService = require('./integrationAlertBatchService');
 
 /**
  * Two delivery channels, tried in order:
@@ -157,16 +158,6 @@ async function notifyScenario(catalystApp, {
     return { sent: false, reason: 'DUPLICATE_SUPPRESSED' };
   }
 
-  const email = emailTemplates.renderAlertEmail({
-    scenarioCode,
-    scenarioMessage,
-    priority,
-    dealerCode,
-    leadId,
-    customerName,
-    reason,
-  });
-
   // In-app notification: short, scannable, and carries the cause key so the
   // de-duplication above can recognise a repeat.
   const title = `${priority && !isHappy ? `${priority} ` : ''}${scenarioCode}: ${scenarioMessage}`.trim();
@@ -192,6 +183,33 @@ async function notifyScenario(catalystApp, {
     logger.info('integrationAlertService', `Background ${scenarioCode} alert for lead ${leadId || '-'} recorded without email`);
     return { sent: false, reason: 'BACKGROUND_NO_EMAIL' };
   }
+
+  // Failures are grouped into one consolidated email instead of one email
+  // per event (see integrationAlertBatchService: flushed either once
+  // ALERT_BATCH_SIZE failures are queued, or once ALERT_BATCH_WINDOW_MINUTES
+  // elapses, whichever comes first). Recovery (Happy) notices are
+  // low-volume and time-sensitive, so they still go out immediately.
+  if (!isHappy) {
+    const queue = await integrationAlertBatchService.enqueueFailure(catalystApp, {
+      scenarioCode,
+      scenarioMessage,
+      priority,
+      dealerCode,
+      leadId,
+      reason,
+    });
+    return { sent: false, reason: 'QUEUED_FOR_BATCH', queued: queue.queued, flushed: queue.flush || null };
+  }
+
+  const email = emailTemplates.renderAlertEmail({
+    scenarioCode,
+    scenarioMessage,
+    priority,
+    dealerCode,
+    leadId,
+    customerName,
+    reason,
+  });
 
   return sendConfiguredEmail(catalystApp, {
     subject: email.subject,

@@ -350,6 +350,93 @@ function renderAlertEmail({
   return { subject, html, text };
 }
 
+/**
+ * Consolidated failure digest — one email for every failure queued by
+ * integrationAlertBatchService since the last flush, instead of one email
+ * per failure. Deliberately technical/reference-only: scenario, dealer code,
+ * MG enquiry (lead) ID, priority, reason. No customer name, phone or email
+ * ever reaches this template.
+ */
+function renderBatchAlertEmail({ failures, generatedAt = new Date() }) {
+  const priorityRank = { P1: 0, P2: 1, P3: 2, '': 3 };
+  const sorted = [...failures].sort((a, b) => {
+    const p = (priorityRank[a.priority] ?? 3) - (priorityRank[b.priority] ?? 3);
+    if (p !== 0) return p;
+    return String(a.CREATEDTIME).localeCompare(String(b.CREATEDTIME));
+  });
+
+  const p1Count = sorted.filter((f) => f.priority === 'P1').length;
+  const tone = p1Count ? TONES.P1 : (sorted.some((f) => f.priority === 'P2') ? TONES.P2 : TONES.P3);
+  const when = formatWhen(generatedAt);
+
+  const failureRow = (failure) => {
+    const failureTone = TONES[failure.priority] || TONES.P3;
+    const headline = (PATH_GUIDE[failure.scenario_code] && PATH_GUIDE[failure.scenario_code].headline)
+      || failure.scenario_message || failure.scenario_code;
+    const detectedAt = formatWhen(parseDatastoreTimestamp(failure.CREATEDTIME) || generatedAt);
+    return `
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid ${COLORS.line};border-left:4px solid ${failureTone.bar};border-radius:8px;border-collapse:separate;margin:0 0 10px">
+        <tr><td style="padding:12px 14px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+            <td style="font:700 11px/1.6 ${FONT};color:${failureTone.fg};letter-spacing:.04em">${esc(failure.priority || 'UNCLASSIFIED')} &middot; ${esc(failure.scenario_code)}${failure.dealer_code ? ` &middot; DEALER ${esc(failure.dealer_code)}` : ''}</td>
+            <td align="right" style="font:400 11px/1.6 ${FONT};color:${COLORS.faint};white-space:nowrap">${esc(detectedAt)}</td>
+          </tr></table>
+          <div style="font:600 14px/1.45 ${FONT};color:${COLORS.ink};margin:4px 0 4px">${esc(headline)}</div>
+          <div style="font:400 13px/1.55 ${FONT};color:${COLORS.body};margin:0 0 4px">${esc(failure.reason || failure.scenario_message || '')}</div>
+          ${failure.lead_id ? `<div style="font:400 12px/1.6 ${FONT};color:${COLORS.muted}">MG enquiry ID ${esc(failure.lead_id)}</div>` : ''}
+        </td></tr>
+      </table>`;
+  };
+
+  const summary = `${sorted.length} integration failure(s) queued since the last consolidated email${p1Count ? ` — ${p1Count} critical` : ''}. Grouped to avoid one email per failure.`;
+
+  const rowsHtml = [
+    section(`Failures (${sorted.length})`, sorted.map(failureRow).join('')),
+    `<tr><td style="padding:0 32px 30px">${button(APP_URL, 'Open Lead Exchange')}</td></tr>`,
+  ].join('');
+
+  const subject = `[${tone.tag}] ${sorted.length} integration failure(s) — consolidated alert`;
+
+  const html = layout({
+    preheader: summary,
+    tone,
+    eyebrow: `Consolidated alert · ${sorted.length} failure(s)`,
+    title: 'Integration failures — consolidated alert',
+    summary,
+    rowsHtml,
+  });
+
+  const text = [
+    `MG LEAD EXCHANGE — CONSOLIDATED FAILURE ALERT (${sorted.length} failure(s))`,
+    summary,
+    '',
+    ...sorted.flatMap((failure) => [
+      `[${failure.priority || 'UNCLASSIFIED'}] ${failure.scenario_code}${failure.dealer_code ? ` · Dealer ${failure.dealer_code}` : ''}`,
+      `  Reason:   ${failure.reason || failure.scenario_message || '(no reason recorded)'}`,
+      `  Enquiry:  ${failure.lead_id || '—'}`,
+      `  Detected: ${formatWhen(parseDatastoreTimestamp(failure.CREATEDTIME) || generatedAt)}`,
+      '',
+    ]),
+    `Open Lead Exchange: ${APP_URL}`,
+    '',
+    'Automated message from MG Lead Exchange — please do not reply.',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/** Datastore CREATEDTIME strings ("2026-09-27 04:15:00") are not directly
+ * parseable by Date(); normalise the same way pathPolicyService does,
+ * without importing it here to keep this template module dependency-free. */
+function parseDatastoreTimestamp(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? `${raw.replace(' ', 'T')}Z` : raw;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 /** Confirms the alert channel works end to end. */
 function renderTestEmail({ sentAt = new Date(), channel } = {}) {
   const tone = TONES.INFO;
@@ -391,6 +478,7 @@ function renderTestEmail({ sentAt = new Date(), channel } = {}) {
 
 module.exports = {
   renderAlertEmail,
+  renderBatchAlertEmail,
   renderTestEmail,
   layout,
   section,

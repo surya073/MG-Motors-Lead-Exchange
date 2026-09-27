@@ -10,6 +10,7 @@ const dealerReconciliationService = require('../services/integrations/dealerReco
 const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
 const logger = require('../utils/logger');
 const integrationAlertService = require('../services/integrations/integrationAlertService');
+const integrationAlertBatchService = require('../services/integrations/integrationAlertBatchService');
 const alertContext = require('../services/integrations/alertContext');
 
 // Background sweeps: alerts they raise are recorded but not emailed (see
@@ -188,6 +189,16 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         results.reconciliation = { error: reconcileErr.message };
         await alertReconciliationFailure(catalystApp, reconcileErr);
       }
+    }
+    // Consolidated failure digest: sends whatever is queued once the batch
+    // window has elapsed, even if ALERT_BATCH_SIZE was never reached (an
+    // immediate flush on hitting the threshold already happens inline when
+    // a failure is queued — see integrationAlertBatchService.js).
+    try {
+      results.alertBatch = await integrationAlertBatchService.flushIfWindowElapsed(catalystApp);
+    } catch (batchErr) {
+      logger.error('cronRoutes', 'Alert batch flush within fast recovery failed', batchErr);
+      results.alertBatch = { error: batchErr.message };
     }
     res.status(200).json({ success: true, mode: 'fast-recovery', results });
   } catch (err) {
