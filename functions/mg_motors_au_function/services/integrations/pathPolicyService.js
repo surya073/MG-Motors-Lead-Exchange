@@ -295,10 +295,14 @@ function validateLeadForDelivery(lead) {
   if (nameParts.length < 2) {
     issues.push(validationIssue('customer_name', 'Customer first and last name are required', lead.customer_name));
   }
-  if (!isValidAustralianMobile(lead.mobile_number)) {
+  // Mobile and email are alternative contact methods, not both mandatory:
+  // reject (Unhappy 2) only when NEITHER is a usable contact — one valid
+  // method is enough to continue. Both are still reported together when
+  // neither is valid, so the operator sees exactly what's wrong with each.
+  const mobileValid = isValidAustralianMobile(lead.mobile_number);
+  const emailValid = isValidEmail(lead.email_address);
+  if (!mobileValid && !emailValid) {
     issues.push(validationIssue('mobile_number', 'Must be a valid 10-digit Australian mobile number', lead.mobile_number));
-  }
-  if (!isValidEmail(lead.email_address)) {
     issues.push(validationIssue('email_address', 'Must be a valid email address', lead.email_address));
   }
   if (!isValidAustralianPostcode(lead.postcode)) {
@@ -479,6 +483,8 @@ module.exports = {
   statusComponents,
   classifyDealerStatus,
   isWaitingForDealerActionStatus,
+  isValidEmail,
+  isValidAustralianMobile,
   validateLeadForDelivery,
   duplicateFingerprint,
   isBusinessDuplicate,

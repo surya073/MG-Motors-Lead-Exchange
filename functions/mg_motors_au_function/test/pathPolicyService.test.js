@@ -108,23 +108,41 @@ test('Australian mobile validation accepts 04 and +61 formats', () => {
     '+61 (0)412 345 678',
   ];
   validFormats.forEach((mobile) => {
-    const result = policy.validateLeadForDelivery(validLead({ mobile_number: mobile }));
-    assert.equal(
-      result.issues.some((issue) => issue.field === 'mobile_number'),
-      false,
-      `expected ${mobile} to be accepted`
-    );
+    assert.equal(policy.isValidAustralianMobile(mobile), true, `expected ${mobile} to be accepted`);
     assert.equal(policy.normalizePhone(mobile), '0412345678');
   });
 
   ['0000000000', '123456789', '0512345678', '0061412345678'].forEach((mobile) => {
-    const result = policy.validateLeadForDelivery(validLead({ mobile_number: mobile }));
-    assert.equal(
-      result.issues.some((issue) => issue.field === 'mobile_number'),
-      true,
-      `expected ${mobile} to be rejected`
-    );
+    assert.equal(policy.isValidAustralianMobile(mobile), false, `expected ${mobile} to be rejected`);
   });
+});
+
+test('partial invalid contact data: one valid contact method (email or phone) is enough to continue', () => {
+  // Both valid -> continue, no contact-field issues.
+  const bothValid = policy.validateLeadForDelivery(validLead());
+  assert.equal(bothValid.issues.some((i) => i.field === 'mobile_number'), false);
+  assert.equal(bothValid.issues.some((i) => i.field === 'email_address'), false);
+
+  // Invalid email, valid phone -> continue.
+  const badEmail = policy.validateLeadForDelivery(validLead({ email_address: 'not-an-email' }));
+  assert.equal(badEmail.issues.some((i) => i.field === 'mobile_number'), false);
+  assert.equal(badEmail.issues.some((i) => i.field === 'email_address'), false);
+  assert.equal(badEmail.valid, true);
+
+  // Valid email, invalid phone -> continue.
+  const badPhone = policy.validateLeadForDelivery(validLead({ mobile_number: '0000000000' }));
+  assert.equal(badPhone.issues.some((i) => i.field === 'mobile_number'), false);
+  assert.equal(badPhone.issues.some((i) => i.field === 'email_address'), false);
+  assert.equal(badPhone.valid, true);
+
+  // Both invalid -> existing rejection/invalid-data flow, both fields named.
+  const bothInvalid = policy.validateLeadForDelivery(validLead({
+    email_address: 'not-an-email',
+    mobile_number: '0000000000',
+  }));
+  assert.equal(bothInvalid.issues.some((i) => i.field === 'mobile_number'), true);
+  assert.equal(bothInvalid.issues.some((i) => i.field === 'email_address'), true);
+  assert.equal(bothInvalid.valid, false);
 });
 
 test('Happy 3 requires every duplicate key to match within 15 minutes', () => {
