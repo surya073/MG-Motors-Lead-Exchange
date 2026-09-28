@@ -873,12 +873,6 @@ export default function LeadDetailView({ lead, onBack }) {
             {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
           </div>
 
-          {lead.lead_status === "Not Qualified" && lead.dealer_rejected_reason && (
-            <div className="lead-detail__rejection-reason">
-              <strong>Dealer rejection reason:</strong> {lead.dealer_rejected_reason}
-            </div>
-          )}
-
           {/* All distinct scenarios this lead has been through, not just the current one */}
           <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />
 

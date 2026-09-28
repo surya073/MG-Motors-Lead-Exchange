@@ -401,16 +401,10 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings) {
     // key and must not make an otherwise valid enquiry disappear.
     enquiry_id: leadRow.enquiry_id || leadRow.crm_record_id,
   };
-  // dealer_rejected_reason is excluded from the generic mapper and handled
-  // explicitly below (like lead_status above it): the generic engine's
-  // "required" check is meant for core mandatory enquiry fields, and would
-  // wrongly throw FIELD_MAPPING_INVALID (-> Unhappy 2) for every ordinary,
-  // non-rejected lead whose value is blank, if that mapping row happened
-  // to be marked required.
   const payload = leadMappingService.mapZohoLeadToExternal(
     normalizedLead,
     fieldMappings,
-    { excludeSourceFields: ['lead_status', 'dealer_rejected_reason'] }
+    { excludeSourceFields: ['lead_status'] }
   );
   const statusFieldMapping = fieldMappings.find((mapping) => mapping.source_field === 'lead_status');
   // Update Pending, Dealer Unavailable and Unattended Alert are MG-only
@@ -428,19 +422,6 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings) {
       statusMappings,
       'ZOHO_TO_EXTERNAL'
     );
-  }
-
-  // Unhappy 9: MG's own record of the rejection reason (Dealer_Rejected_Reason)
-  // is pushed back to the dealer's own field for it, using whichever field
-  // the admin has mapped dealer_rejected_reason to (dynamic — never a
-  // hardcoded field name), the same way statusFieldMapping.target_field is
-  // resolved above. Only included when MG actually holds a value, so a
-  // blank/unset MG value never overwrites an existing dealer-side value.
-  const rejectionReasonFieldMapping = fieldMappings.find(
-    (mapping) => mapping.source_field === 'dealer_rejected_reason' && mapping.target_field
-  );
-  if (rejectionReasonFieldMapping && leadRow.dealer_rejected_reason) {
-    payload[rejectionReasonFieldMapping.target_field] = leadRow.dealer_rejected_reason;
   }
 
   return payload;
@@ -1520,22 +1501,17 @@ async function processResolvedInboundLead(
     }
   }
 
-  // Status, privacy, and the dealer's rejection reason are governed
-  // separately from the generic per-dealer field map: status must pass
-  // through the approved status map, MG is authoritative for privacy
-  // consent, and dealer_rejected_reason must only ever be populated by the
-  // Unhappy 9 handling below — never by a generic admin-configured field
-  // mapping — so it can never appear on a lead that was not actually
-  // rejected as spam/junk. Copying any of these raw values through the
-  // generic mapper is what previously allowed an unmapped dealer status or
-  // privacy edit to leak into MG.
+  // Status and privacy are governed separately: status must pass through
+  // the approved status map, and MG is authoritative for privacy consent.
+  // Copying either raw value through the generic mapper is what previously
+  // allowed an unmapped dealer status or privacy edit to leak into MG.
   const effectiveFieldMappings = affectedFields
     ? fieldMappings.filter((mappingRow) => affectedFields.includes(mappingRow.target_field))
     : fieldMappings;
   const mappedUpdate = leadMappingService.mapExternalLeadToZoho(
     externalRecord,
     effectiveFieldMappings,
-    { excludeSourceFields: ['lead_status', 'accept_privacy_policy', 'dealer_rejected_reason'] }
+    { excludeSourceFields: ['lead_status', 'accept_privacy_policy'] }
   );
 
   const statusFieldMapping = fieldMappings.find((m) => m.source_field === 'lead_status');
@@ -1618,24 +1594,6 @@ async function processResolvedInboundLead(
   // rejection reason, so it is never lost.
   if (isStatusSync && pathPolicy.classifyDealerStatus(rawDealerStatus)?.code === 'Unhappy 9') {
     mappedUpdate.lead_status = 'Not Qualified';
-
-    // The dealer's own free-text explanation for the rejection lives on a
-    // fixed dealer-CRM field, Lead_Rejected_Reason — read directly from
-    // the record already fetched above (adapter.getLead()/the webhook
-    // payload), not a separate dealer CRM call. Handled here specifically
-    // for Unhappy 9 rather than through the admin-configurable field map,
-    // since this is a fixed field name, not a per-dealer mapping choice.
-    // From here it flows through the SAME existing pipeline as every other
-    // dealer-writable field below: ownership check, field_changes, the
-    // local leads mirror, and the write-back to MG's own CRM
-    // (dealer_rejected_reason -> Dealer_Rejected_Reason, already mapped in
-    // INTERNAL_FIELD_TO_ZOHO_API_FIELD/toZohoApiFields). Only set when
-    // non-empty, so a blank/missing value never overwrites a previously
-    // recorded reason.
-    const dealerRejectedReason = String(externalRecord.Lead_Rejected_Reason || '').trim();
-    if (dealerRejectedReason) {
-      mappedUpdate.dealer_rejected_reason = dealerRejectedReason;
-    }
   }
 
   // Once Unhappy 10 has raised Unattended Alert, a repeated dealer

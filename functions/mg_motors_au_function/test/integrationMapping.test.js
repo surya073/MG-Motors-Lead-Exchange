@@ -61,31 +61,6 @@ test('MG-only workflow status is not invented in the dealer payload', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(payload, 'DealerStatus'), false);
 });
 
-test('Unhappy 9: dealer_rejected_reason is pushed to the dealer\'s mapped field, never as a required-field failure', () => {
-  const withRejectionReasonMapping = [
-    ...fieldMappings,
-    { source_field: 'dealer_rejected_reason', target_field: 'Lead_Rejected_Reason', required: false },
-  ];
-
-  const rejected = crmIntegration._test.buildOutboundPayload({
-    crm_record_id: 'MG-3',
-    customer_name: 'Alex Morgan',
-    lead_status: 'Lost',
-    dealer_rejected_reason: 'Duplicate enquiry',
-  }, withRejectionReasonMapping, statusMappings);
-  assert.equal(rejected.Lead_Rejected_Reason, 'Duplicate enquiry');
-
-  // An ordinary lead with no rejection reason must sync with no error and
-  // must not send a blank value that would overwrite an existing dealer
-  // value — the key is simply absent.
-  const ordinary = crmIntegration._test.buildOutboundPayload({
-    crm_record_id: 'MG-4',
-    customer_name: 'Alex Morgan',
-    lead_status: 'Lost',
-  }, withRejectionReasonMapping, statusMappings);
-  assert.equal(Object.prototype.hasOwnProperty.call(ordinary, 'Lead_Rejected_Reason'), false);
-});
-
 test('both directions produce the same canonical fingerprint and real changes differ', () => {
   const existing = {
     customer_name: 'Alex Morgan',
