@@ -1,6 +1,6 @@
 'use strict';
 
-const { fetchOemLeads } = require('./zohoCrmService');
+const { fetchOemLeads, updateOemLead } = require('./zohoCrmService');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
@@ -497,6 +497,27 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
           const gapMinutes = originalSubmittedAt && duplicateSubmittedAt
             ? Math.max(0, (duplicateSubmittedAt.getTime() - originalSubmittedAt.getTime()) / 60000)
             : null;
+
+          // Confirmed duplicate: this branch never reaches the dealer
+          // dispatch call below (mutually exclusive with the `else` branch
+          // that calls dispatchNewLeadToDealer), so the duplicate is
+          // already guaranteed to skip the dealer CRM push — no change
+          // needed there. Reflect the outcome on the NEW duplicate lead's
+          // own OEM CRM record only, using the existing OEM status-update
+          // call and an already-approved Lead_Status value — crmRecord.id
+          // is THIS incoming record, never duplicate.crm_record_id (the
+          // original/existing lead, which stays untouched). No new field,
+          // no change to detection/linking above. Best-effort: a rejected
+          // write here must not affect the duplicate outcome already
+          // recorded.
+          try {
+            await updateOemLead(crmRecord.id, { Lead_Status: 'Not Qualified' });
+            await table.updateRow({ ROWID: fullLeadRow.ROWID, lead_status: 'Not Qualified' });
+            fullLeadRow.lead_status = 'Not Qualified';
+          } catch (err) {
+            logger.error('leadSyncService', `Failed to set Not Qualified on duplicate OEM lead ${crmRecord.id}`, err);
+          }
+
           await crmIntegrationService.recordScenario(catalystApp, {
             scenarioCode: 'Happy 3',
             dealerCode: fullLeadRow.dealer_code,
