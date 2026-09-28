@@ -37,7 +37,14 @@ async function fetchPending(catalystApp, limit = MAX_BATCH_ROWS) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${ALERT_QUEUE_TABLE} ORDER BY CREATEDTIME ASC LIMIT 0, ${Math.min(limit, MAX_BATCH_ROWS)}`
   );
-  return rows.map((r) => r[ALERT_QUEUE_TABLE]);
+  // The datastore column is priority_for, not priority — "priority" is a
+  // reserved word in Catalyst Data Store. Aliased back to `priority` here,
+  // at the one place rows are read, so every other consumer (email
+  // rendering, sorting) can keep using the natural field name.
+  return rows.map((r) => {
+    const row = r[ALERT_QUEUE_TABLE];
+    return { ...row, priority: row.priority_for };
+  });
 }
 
 /**
@@ -86,7 +93,9 @@ async function enqueueFailure(catalystApp, { scenarioCode, scenarioMessage, prio
   const row = {
     scenario_code: String(scenarioCode || '').slice(0, 60),
     scenario_message: String(scenarioMessage || '').slice(0, 200),
-    priority: String(priority || '').slice(0, 10),
+    // Column is named priority_for — "priority" is a reserved word in
+    // Catalyst Data Store and could not be used as the column name.
+    priority_for: String(priority || '').slice(0, 10),
     dealer_code: String(dealerCode || '').slice(0, 40),
     lead_id: String(leadId || '').slice(0, 60),
     reason: String(reason || '').slice(0, 500),
