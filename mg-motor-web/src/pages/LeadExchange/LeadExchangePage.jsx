@@ -25,6 +25,8 @@ import EmptyState from "../../common/EmptyState/EmptyState";
 import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import { ROUTES } from "../../constants/routes.constants";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 import "./LeadExchangePage.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
@@ -210,6 +212,9 @@ export default function LeadExchangePage() {
   const { showAlert } = useAlerts();
   const { leadId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
+  const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
 
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -577,9 +582,9 @@ export default function LeadExchangePage() {
             <button
               className={`lead-exchange__refresh-btn ${syncing ? "lead-exchange__refresh-btn--spinning" : ""}`}
               onClick={handleSync}
-              disabled={syncing}
+              disabled={syncing || isViewUser}
               aria-label="Sync leads"
-              title="Pull the latest leads from the CRM, then refresh the list"
+              title={viewOnlyTitle || "Pull the latest leads from the CRM, then refresh the list"}
             >
               <RefreshCw size={16} strokeWidth={2} />
               {syncing ? "Syncing…" : "Sync now"}

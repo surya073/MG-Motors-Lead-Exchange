@@ -44,6 +44,11 @@ export default function SettingsPage() {
   const displayName = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email_id;
   const isSuperAdmin = user?.appRole === APP_ROLES.SUPER_ADMIN;
   const isAdmin = user?.appRole === APP_ROLES.ADMIN || isSuperAdmin;
+  // View-only: sees the same cards Admin/Super Admin see, but every action
+  // that mutates/opens a management surface is disabled rather than the
+  // card being hidden — see the Dealer CRM Connection and User Management
+  // cards below.
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
 
   const handlePasswordReset = async () => {
     setResetSending(true);
@@ -189,12 +194,13 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Admin / Super Admin only — configure external dealer CRM
-            integrations (Portal vs External CRM, field/status mappings,
-            connection test). Role-agnostic here; the real security
-            boundary is requireAdminRole/requireSuperAdminRole on the
-            backend and the RequireRole wrapper on the route itself. */}
-        {isAdmin && (
+        {/* Admin / Super Admin — full access; View User — same card and a
+            working "Configure" link (the Dealer CRM Config page itself is
+            view-only for this role: every mutating control there is
+            disabled, see DealerCRMConfig.jsx). Role-agnostic here; the
+            real security boundary is requireAdminRole/requireAdminOrViewRole
+            on the backend and the RequireRole wrapper on the route itself. */}
+        {(isAdmin || isViewUser) && (
           <div className="settings__card">
             <div className="settings__card-header">
               <span className="settings__card-icon">
@@ -218,13 +224,16 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Super Admin only — invite/manage Dealer-role users via
-            admin_user_mapping. Not a RequireRole route guard here since
-            SettingsPage itself is role-agnostic; this section is simply
-            conditionally rendered. The real security boundary is still
-            the backend's requireSuperAdminRole middleware and the
-            RequireRole wrapper on the /user-management route itself. */}
-        {isSuperAdmin && (
+        {/* Super Admin — full access via a working link. View User — the
+            card stays visible (per spec: show the UI, don't hide it) but
+            "Manage users" is a disabled button instead of a Link, so it
+            neither navigates nor reaches /user-management — that route is
+            still SUPER_ADMIN-only via RequireRole/requireSuperAdminRole
+            regardless, this just keeps the disabled control from looking
+            or behaving like it works. Not a RequireRole route guard here
+            since SettingsPage itself is role-agnostic; this section is
+            simply conditionally rendered. */}
+        {(isSuperAdmin || isViewUser) && (
           <div className="settings__card">
             <div className="settings__card-header">
               <span className="settings__card-icon">
@@ -238,10 +247,22 @@ export default function SettingsPage() {
                 <p className="settings__label">Dealer access</p>
                 <p className="settings__value-muted">Invite, resend, or remove Admin-role users.</p>
               </div>
-              <Link to={ROUTES.USER_MANAGEMENT} className="settings__button settings__button--primary">
-                Manage users
-                <ChevronRight size={14} strokeWidth={2.5} />
-              </Link>
+              {isViewUser ? (
+                <button
+                  type="button"
+                  className="settings__button settings__button--primary"
+                  disabled
+                  title="View-only access"
+                >
+                  Manage users
+                  <ChevronRight size={14} strokeWidth={2.5} />
+                </button>
+              ) : (
+                <Link to={ROUTES.USER_MANAGEMENT} className="settings__button settings__button--primary">
+                  Manage users
+                  <ChevronRight size={14} strokeWidth={2.5} />
+                </Link>
+              )}
             </div>
           </div>
         )}

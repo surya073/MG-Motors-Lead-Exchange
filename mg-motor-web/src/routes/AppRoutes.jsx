@@ -39,8 +39,13 @@ const router = createHashRouter([
               { path: ROUTES.DASHBOARD, element: <Overview /> },
               { path: ROUTES.SETTINGS, element: <SettingsPage /> },
 
+              // View User has the same page access as Admin/Super Admin here
+              // (per explicit request) — every page in this group disables
+              // its own mutating controls for that role individually (see
+              // each page's isViewUser checks), so this route guard just
+              // grants entry; it is not the read/write boundary.
               {
-                element: <RequireRole allowedRoles={[APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN]} />,
+                element: <RequireRole allowedRoles={[APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.VIEW_USER]} />,
                 children: [
                   { path: ROUTES.DEALERS, element: <DealerListPage /> },
                   { path: ROUTES.DEALER_CRM_CONFIG, element: <DealerCRMConfig /> },

@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
+const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const {
   getAllDealersWithLeadCounts,
   getAllLeads,
@@ -28,7 +29,10 @@ const router = express.Router();
 // behavior (see expressjs/express#5753) when multiple routers share a
 // mount path — router.use() middleware isn't as isolated as it appears.
 
-router.get('/admin/dealers', requireAdminRole, async (req, res) => {
+// View User needs this only to populate the dealer picker on the
+// (view-only) Dealer CRM Config page — every mutating admin route in this
+// file stays on requireAdminRole, unchanged.
+router.get('/admin/dealers', requireAdminOrViewRole, async (req, res) => {
   try {
     const dealers = await getAllDealersWithLeadCounts(res.locals.catalystApp);
     res.status(200).json({ success: true, count: dealers.length, dealers });
@@ -38,7 +42,7 @@ router.get('/admin/dealers', requireAdminRole, async (req, res) => {
   }
 });
 
-router.get('/admin/leads', requireAdminRole, async (req, res) => {
+router.get('/admin/leads', requireAdminOrViewRole, async (req, res) => {
   try {
     const { dealerCode, leadStatus } = req.query;
     const leads = await getAllLeads(res.locals.catalystApp, { dealerCode, leadStatus });
@@ -67,7 +71,7 @@ const OUT_OF_ORDER_DETAIL_LIMIT = 25;
 const DEALER_DETAIL_TTL_MS = 10 * 60 * 1000;
 const dealerDetailCache = new Map();
 
-router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
+router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = res.locals.catalystApp;
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
@@ -178,7 +182,7 @@ router.get('/admin/out-of-order-events', requireAdminRole, async (req, res) => {
  * (:crmRecordId/timeline vs. summary) either order is actually fine —
  * kept here for readability next to the sibling /admin/leads route.
  */
-router.get('/admin/leads/:crmRecordId/timeline', requireAdminRole, async (req, res) => {
+router.get('/admin/leads/:crmRecordId/timeline', requireAdminOrViewRole, async (req, res) => {
   try {
     const { crmRecordId } = req.params;
     const timeline = await crmIntegrationService.getLeadActivityTimeline(res.locals.catalystApp, crmRecordId);
@@ -189,7 +193,7 @@ router.get('/admin/leads/:crmRecordId/timeline', requireAdminRole, async (req, r
   }
 });
 
-router.get('/admin/leads/summary', requireAdminRole, async (req, res) => {
+router.get('/admin/leads/summary', requireAdminOrViewRole, async (req, res) => {
   try {
     const leads = await getAllLeads(res.locals.catalystApp);
     const summary = summarizeLeadsByStatus(leads);
@@ -200,7 +204,7 @@ router.get('/admin/leads/summary', requireAdminRole, async (req, res) => {
   }
 });
 
-router.get('/admin/dealers/performance', requireAdminRole, async (req, res) => {
+router.get('/admin/dealers/performance', requireAdminOrViewRole, async (req, res) => {
   try {
     const performance = await getDealerPerformance(res.locals.catalystApp);
     res.status(200).json({ success: true, count: performance.length, performance });
@@ -210,7 +214,7 @@ router.get('/admin/dealers/performance', requireAdminRole, async (req, res) => {
   }
 });
 
-router.get('/admin/sync-logs', requireAdminRole, async (req, res) => {
+router.get('/admin/sync-logs', requireAdminOrViewRole, async (req, res) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const logs = await getSyncLogs(res.locals.catalystApp, { limit });
@@ -221,7 +225,7 @@ router.get('/admin/sync-logs', requireAdminRole, async (req, res) => {
   }
 });
 
-router.get('/admin/dashboard-summary', requireAdminRole, async (req, res) => {
+router.get('/admin/dashboard-summary', requireAdminOrViewRole, async (req, res) => {
   try {
     const summary = await getDashboardSummary(res.locals.catalystApp);
     res.status(200).json({ success: true, ...summary });
@@ -241,7 +245,7 @@ router.get('/admin/dashboard-summary', requireAdminRole, async (req, res) => {
  * page, pageSize. All optional — with none supplied this returns the
  * most recent integration_logs rows, newest first.
  */
-router.get('/admin/integration-logs', requireAdminRole, async (req, res) => {
+router.get('/admin/integration-logs', requireAdminOrViewRole, async (req, res) => {
   try {
     const { fromDate, toDate, dealerCode, scenarioCode, status, page, pageSize } = req.query;
     const result = await getIntegrationLogs(res.locals.catalystApp, {
@@ -269,7 +273,7 @@ router.get('/admin/integration-logs', requireAdminRole, async (req, res) => {
  * none supplied this reports across the full integration_logs history
  * (capped — see `truncated` in the response) and all dealers.
  */
-router.get('/admin/lead-exchange-health', requireAdminRole, async (req, res) => {
+router.get('/admin/lead-exchange-health', requireAdminOrViewRole, async (req, res) => {
   try {
     const { fromDate, toDate, dealerCode } = req.query;
     const health = await getLeadExchangeHealth(res.locals.catalystApp, { fromDate, toDate, dealerCode });
@@ -280,7 +284,7 @@ router.get('/admin/lead-exchange-health', requireAdminRole, async (req, res) => 
   }
 });
 
-router.get('/admin/dealer-invitations', requireAdminRole, async (req, res) => {
+router.get('/admin/dealer-invitations', requireAdminOrViewRole, async (req, res) => {
   try {
     const syncedDealers = await getAllDealersWithLeadCounts(res.locals.catalystApp);
     const dealers = syncedDealers

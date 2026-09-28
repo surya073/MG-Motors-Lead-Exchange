@@ -26,6 +26,7 @@ const CURRENT_USER_ROLE_LABELS = {
   [APP_ROLES.SUPER_ADMIN]: "Super Admin",
   [APP_ROLES.ADMIN]: "Admin",
   [APP_ROLES.DEALER]: "Dealer",
+  [APP_ROLES.VIEW_USER]: "View User",
 };
 
 function roleOptionsForDropdown() {

@@ -18,6 +18,7 @@ const APP_ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
   ADMIN: 'ADMIN',
   DEALER: 'DEALER',
+  VIEW_USER: 'VIEW_USER',
   UNKNOWN: 'UNKNOWN',
 };
 
@@ -25,12 +26,14 @@ const CATALYST_ROLE_ID_MAP = {
   '37148000000359008': APP_ROLES.SUPER_ADMIN, // App Administrator
   '37148000000430003': APP_ROLES.ADMIN,        // Admin
   '37148000000430005': APP_ROLES.DEALER,       // Dealer
+  '37148000000899033': APP_ROLES.VIEW_USER,    // View User
 };
 
 const CATALYST_ROLE_NAME_MAP = {
   'App Administrator': APP_ROLES.SUPER_ADMIN,
   'Admin': APP_ROLES.ADMIN,
   'Dealer': APP_ROLES.DEALER,
+  'View User': APP_ROLES.VIEW_USER,
 };
 
 function normalizeRole(user) {

@@ -23,6 +23,8 @@ import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 import "./SyncLogsPage.css";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
@@ -467,6 +469,9 @@ function ScenarioCell({ scenarios, filterPath = "all" }) {
 
 export default function SyncLogsPage() {
   const { showAlert } = useAlerts();
+  const { user } = useAuth();
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
+  const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
 
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -820,7 +825,8 @@ export default function SyncLogsPage() {
             type="button"
             className="sync-logs__sync-btn sync-logs__sync-btn--dealers"
             onClick={handleSyncDealers}
-            disabled={anySyncing}
+            disabled={anySyncing || isViewUser}
+            title={viewOnlyTitle}
           >
             {syncingDealers ? (
               <RefreshCw size={16} strokeWidth={2.5} className="sync-logs__sync-icon--spinning" />
@@ -833,7 +839,8 @@ export default function SyncLogsPage() {
             type="button"
             className="sync-logs__sync-btn sync-logs__sync-btn--leads"
             onClick={handleSyncLeads}
-            disabled={anySyncing}
+            disabled={anySyncing || isViewUser}
+            title={viewOnlyTitle}
           >
             {syncingLeads ? (
               <RefreshCw size={16} strokeWidth={2.5} className="sync-logs__sync-icon--spinning" />
@@ -1237,7 +1244,8 @@ export default function SyncLogsPage() {
                   type="button"
                   className="sync-logs__retry-btn"
                   onClick={handleRetryFromDetail}
-                  disabled={anySyncing}
+                  disabled={anySyncing || isViewUser}
+                  title={viewOnlyTitle}
                 >
                   <RefreshCw size={16} className={anySyncing ? "sync-logs__sync-icon--spinning" : ""} />
                   Retry Sync

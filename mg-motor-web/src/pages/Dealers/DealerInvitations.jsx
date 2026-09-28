@@ -11,6 +11,8 @@ import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 
@@ -49,6 +51,10 @@ function emailLink(email) {
  *             (covers both "not_invited" and "invited")
  */
 export default function DealerInvitations({ statusFilter = "all" } = {}) {
+  const { user } = useAuth();
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
+  const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
+
   const [dealers, setDealers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -176,7 +182,8 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
         <button
           className="dealer-invitations__remove-btn"
           onClick={() => setConfirmRemove(row)}
-          disabled={busyCode === row.dealer_code}
+          disabled={busyCode === row.dealer_code || isViewUser}
+          title={viewOnlyTitle}
         >
           {busyCode === row.dealer_code ? "Removing…" : "Remove dealer"}
         </button>
@@ -191,7 +198,8 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
           <button
             className="dealer-invitations__resend-button"
             onClick={() => handleResend(row)}
-            disabled={busyCode === row.dealer_code}
+            disabled={busyCode === row.dealer_code || isViewUser}
+            title={viewOnlyTitle}
           >
             {busyCode === row.dealer_code ? "Sending…" : "Send again"}
           </button>
@@ -202,7 +210,8 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
       <button
         className="dealer-invitations__invite-button"
         onClick={() => handleInvite(row)}
-        disabled={busyCode === row.dealer_code}
+        disabled={busyCode === row.dealer_code || isViewUser}
+        title={viewOnlyTitle}
       >
         {busyCode === row.dealer_code ? "Inviting…" : "Invite"}
       </button>

@@ -14,6 +14,8 @@ import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
 import { PhoneIcon, MailIcon } from "../../ui/icons";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 
 const REGION_LABELS = { East: "East", West: "West", North: "North", South: "South" };
@@ -86,6 +88,9 @@ function Icon({ name, size = 16, className = "" }) {
 
 export default function DealerListPage() {
   const { showAlert } = useAlerts();
+  const { user } = useAuth();
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
+  const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
 
   const [dealers, setDealers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -378,8 +383,9 @@ export default function DealerListPage() {
           <button
             className={`dealer-list__refresh-btn ${syncing ? "dealer-list__refresh-btn--spinning" : ""}`}
             onClick={handleSync}
-            disabled={syncing}
+            disabled={syncing || isViewUser}
             aria-label="Sync dealers"
+            title={viewOnlyTitle}
           >
             <Icon name="refresh" size={16} />
             {syncing ? "Syncing…" : "Sync now"}

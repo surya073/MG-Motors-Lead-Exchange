@@ -3,6 +3,7 @@
 const logger = require('../utils/logger');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const { SUPER_ADMIN_ROLE_ID, ADMIN_ROLE_ID } = require('../middleware/requireAdminRole');
+const { VIEW_USER_ROLE_ID } = require('../middleware/requireAdminOrViewRole');
 
 const MAPPING_TABLE = 'admin_user_mapping';
 
@@ -12,14 +13,15 @@ const MAPPING_TABLE = 'admin_user_mapping';
 const APP_USER_ROLE_ID = '37148000000359009';  // App User (Default)
 const DEALER_ROLE_ID = '37148000000430005';    // Dealer
 
-// Only these two roles are assignable from this screen. Super Admin can
-// promote/demote between them, but never to App User or Dealer here —
-// those are separate flows (self-signup / CRM dealer invite).
-const ASSIGNABLE_ROLE_IDS = [SUPER_ADMIN_ROLE_ID, ADMIN_ROLE_ID];
+// Roles assignable from this screen: Super Admin can promote/demote
+// between these three, but never to App User or Dealer here — those are
+// separate flows (self-signup / CRM dealer invite).
+const ASSIGNABLE_ROLE_IDS = [SUPER_ADMIN_ROLE_ID, ADMIN_ROLE_ID, VIEW_USER_ROLE_ID];
 
 const ROLE_LABELS = {
   [SUPER_ADMIN_ROLE_ID]: 'Super Admin',
   [ADMIN_ROLE_ID]: 'Admin',
+  [VIEW_USER_ROLE_ID]: 'View User',
 };
 
 // Superset used only for labeling *existing* Catalyst accounts found
@@ -323,7 +325,7 @@ async function updateUser(catalystApp, rowId, { admin_name, role_id }) {
     throw new Error(`${mapping.admin_email} was removed — invite them again instead of editing`);
   }
   if (role_id && !ASSIGNABLE_ROLE_IDS.includes(String(role_id))) {
-    throw new Error('Role must be Super Admin or Admin.');
+    throw new Error('Role must be Super Admin, Admin, or View User.');
   }
 
   const userManagement = catalystApp.userManagement();

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useLayout } from "../../../contexts/LayoutContext";
 import { useAuth } from "../../../contexts/AuthContext";
 import Logo from "../../../ui/Logo/Logo";
-import { Crown, Car } from "lucide-react";
+import { Crown, Car, Eye } from "lucide-react";
 import { ROUTES } from "../../../constants/routes.constants";
 import { APP_ROLES } from "../../../constants/auth.constants";
 import { NAV_ICONS, LogOutIcon, ChevronLeftIcon, ChevronRightIcon } from "../../../ui/icons";
@@ -17,7 +17,7 @@ const NAV_SECTIONS = [
         to: ROUTES.DASHBOARD,
         icon: NAV_ICONS.dashboard,
         label: "Overview",
-        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.DEALER],
+        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.DEALER, APP_ROLES.VIEW_USER],
       },
       // {
       //   to: ROUTES.ON_DEMAND_DASHBOARD,
@@ -29,13 +29,13 @@ const NAV_SECTIONS = [
         to: ROUTES.DEALERS,
         icon: NAV_ICONS.dealers,
         label: "Dealers",
-        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN],
+        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.VIEW_USER],
       },
       {
         to: ROUTES.LEAD_EXCHANGE,
         icon: NAV_ICONS.leadExchange,
         label: "Lead exchange",
-        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN],
+        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.VIEW_USER],
       },
       {
         to: ROUTES.MY_LEADS,
@@ -52,7 +52,7 @@ const NAV_SECTIONS = [
         to: ROUTES.LOGS,
         icon: NAV_ICONS.logs,
         label: "Sync Logs",
-        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN],
+        allowedRoles: [APP_ROLES.SUPER_ADMIN, APP_ROLES.ADMIN, APP_ROLES.VIEW_USER],
       },
     ],
   },
@@ -62,12 +62,14 @@ const ROLE_LABELS = {
   [APP_ROLES.SUPER_ADMIN]: "Super Admin",
   [APP_ROLES.ADMIN]: "Admin",
   [APP_ROLES.DEALER]: "Dealer",
+  [APP_ROLES.VIEW_USER]: "View User",
 };
 
 const ROLE_ICONS = {
   [APP_ROLES.SUPER_ADMIN]: Crown,
   [APP_ROLES.ADMIN]: Crown,
   [APP_ROLES.DEALER]: Car,
+  [APP_ROLES.VIEW_USER]: Eye,
 };
 
 export default function Sidebar() {
@@ -106,7 +108,10 @@ export default function Sidebar() {
     items: section.items.filter((item) => item.allowedRoles.includes(user?.appRole)),
   })).filter((section) => section.items.length > 0);
 
-  const showSettings = user?.appRole === APP_ROLES.SUPER_ADMIN;
+  // View User's only entry points (User Management — disabled there — and
+  // Dealer CRM Config, view-only) live on this page, so it needs the link
+  // too, same as Super Admin.
+  const showSettings = [APP_ROLES.SUPER_ADMIN, APP_ROLES.VIEW_USER].includes(user?.appRole);
 
   const displayName =
     [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email_id || "Account";

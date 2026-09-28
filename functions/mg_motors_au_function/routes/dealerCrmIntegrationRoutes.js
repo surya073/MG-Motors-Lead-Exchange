@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
+const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
 const pathPolicy = require('../services/integrations/pathPolicyService');
 
@@ -78,7 +79,7 @@ router.post('/:dealerCode/register-webhook', requireAdminRole, async (req, res) 
   }
 });
 
-router.get('/:dealerCode/integration', requireAdminRole, async (req, res) => {
+router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
   try {
@@ -194,7 +195,7 @@ router.post('/:dealerCode/integration/test', requireAdminRole, async (req, res) 
   }
 });
 
-router.get('/:dealerCode/integration/mappings', requireAdminRole, async (req, res) => {
+router.get('/:dealerCode/integration/mappings', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
   try {
@@ -487,7 +488,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
   }
 });
 
-router.get('/:dealerCode/integration/logs', requireAdminRole, async (req, res) => {
+router.get('/:dealerCode/integration/logs', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
@@ -557,7 +558,7 @@ router.post('/oem-crm/status-picklist/refresh', requireAdminRole, async (req, re
   }
 });
 
-router.get('/oem-crm/status-picklist', requireAdminRole, async (req, res) => {
+router.get('/oem-crm/status-picklist', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   try {
     const values = await oemPicklistService.getCachedStatusPicklist(catalystApp, 'Lead_Status');

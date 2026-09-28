@@ -27,6 +27,8 @@ import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 import "./DealerCRMConfig.css";
 import "../../ui/Skeleton/Skeleton.css";
@@ -469,6 +471,13 @@ function LogDetailOffcanvas({ row, onClose }) {
 export default function DealerCRMConfig() {
   const { showAlert } = useAlerts();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+  // View User can open this page and see everything on it (config, field
+  // mappings, status mappings, activity log), but every control that saves,
+  // connects, tests, renews, or otherwise mutates/triggers an integration
+  // action is disabled. Admin/Super Admin behavior is completely unchanged.
+  const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
+  const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
 
   const [dealers, setDealers] = useState([]);
   const [dealersLoading, setDealersLoading] = useState(true);
@@ -971,6 +980,8 @@ export default function DealerCRMConfig() {
                 e.stopPropagation();
                 handleRetrySync(row);
               }}
+              disabled={isViewUser}
+              title={viewOnlyTitle}
             >
               Retry
             </button>
@@ -1350,6 +1361,8 @@ export default function DealerCRMConfig() {
                                       type="button"
                                       className="dealer-crm-config__link-button"
                                       onClick={() => setEditingCredentials(true)}
+                                      disabled={isViewUser}
+                                      title={viewOnlyTitle}
                                     >
                                       Edit credentials
                                     </button>
@@ -1411,6 +1424,8 @@ export default function DealerCRMConfig() {
                                   type="button"
                                   className="dealer-crm-config__link-button"
                                   onClick={() => setEditingCredentials(true)}
+                                  disabled={isViewUser}
+                                  title={viewOnlyTitle}
                                 >
                                   Edit credential
                                 </button>
@@ -1517,7 +1532,8 @@ export default function DealerCRMConfig() {
                             type="button"
                             className="dealer-crm-config__button--outline"
                             onClick={handleTestConnection}
-                            disabled={testing || !config.base_url}
+                            disabled={testing || !config.base_url || isViewUser}
+                            title={viewOnlyTitle}
                           >
                             {testing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
                             {testing ? "Connecting…" : "Connect Dealer CRM"}
@@ -1529,7 +1545,8 @@ export default function DealerCRMConfig() {
                             type="button"
                             className="dealer-crm-config__button--outline"
                             onClick={handleRegisterWebhook}
-                            disabled={webhookRegistering || testing || isConnectionDirty || !hasStoredCredential || !config.webhook_enabled}
+                            disabled={webhookRegistering || testing || isConnectionDirty || !hasStoredCredential || !config.webhook_enabled || isViewUser}
+                            title={viewOnlyTitle}
                           >
                             {webhookRegistering ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
                             {webhookRegistering ? "Renewing webhook…" : "Renew Dealer Webhook"}
@@ -1546,7 +1563,8 @@ export default function DealerCRMConfig() {
                               type="button"
                               className={`dealer-crm-config__button--primary ${saveSuccess ? "dealer-crm-config__button--success" : ""}`}
                               onClick={handleSaveConnection}
-                              disabled={saving}
+                              disabled={saving || isViewUser}
+                              title={viewOnlyTitle}
                             >
                               {saveButtonContent("Save Configuration")}
                             </button>
@@ -1604,6 +1622,8 @@ export default function DealerCRMConfig() {
                                     className="dealer-crm-config__icon-button"
                                     onClick={() => startEditingFieldMapping(index)}
                                     aria-label="Edit mapping"
+                                    disabled={isViewUser}
+                                    title={viewOnlyTitle}
                                   >
                                     <Pencil size={14} />
                                   </button>
@@ -1612,6 +1632,8 @@ export default function DealerCRMConfig() {
                                     className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
                                     onClick={() => removeFieldMapping(index)}
                                     aria-label="Delete mapping"
+                                    disabled={isViewUser}
+                                    title={viewOnlyTitle}
                                   >
                                     <Trash2 size={14} />
                                   </button>
@@ -1646,13 +1668,21 @@ export default function DealerCRMConfig() {
                                 className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
                                 onClick={() => removeFieldMapping(index)}
                                 aria-label="Remove mapping"
+                                disabled={isViewUser}
+                                title={viewOnlyTitle}
                               >
                                 <Trash2 size={14} />
                               </button>
                             </div>
                           );
                         })}
-                        <button type="button" className="dealer-crm-config__add-mapping" onClick={addFieldMapping}>
+                        <button
+                          type="button"
+                          className="dealer-crm-config__add-mapping"
+                          onClick={addFieldMapping}
+                          disabled={isViewUser}
+                          title={viewOnlyTitle}
+                        >
                           + Add another field
                         </button>
 
@@ -1663,7 +1693,8 @@ export default function DealerCRMConfig() {
                               saveSuccess ? "dealer-crm-config__button--success" : ""
                             }`}
                             onClick={handleSaveMappings}
-                            disabled={saving}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
                           >
                             {saveButtonContent("Save Field Mapping")}
                           </button>
@@ -1687,7 +1718,8 @@ export default function DealerCRMConfig() {
                           type="button"
                           className="dealer-crm-config__button--outline"
                           onClick={handleRefreshStatusPicklist}
-                          disabled={picklistRefreshing}
+                          disabled={picklistRefreshing || isViewUser}
+                          title={viewOnlyTitle}
                         >
                           {picklistRefreshing ? <Loader2 size={14} className="dealer-crm-config__spin" /> : <RefreshCw size={14} />}
                           {picklistRefreshing ? "Refreshing…" : "Refresh statuses from CRM"}
@@ -1698,7 +1730,8 @@ export default function DealerCRMConfig() {
                             type="button"
                             className="dealer-crm-config__button--outline"
                             onClick={applyVerifiedAu008StatusMap}
-                            disabled={saving}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
                           >
                             <ShieldCheck size={14} />
                             Load verified AU008 map
@@ -1726,6 +1759,8 @@ export default function DealerCRMConfig() {
                                     className="dealer-crm-config__icon-button"
                                     onClick={() => startEditingStatusMapping(index)}
                                     aria-label="Edit status mapping"
+                                    disabled={isViewUser}
+                                    title={viewOnlyTitle}
                                   >
                                     <Pencil size={14} />
                                   </button>
@@ -1734,6 +1769,8 @@ export default function DealerCRMConfig() {
                                     className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
                                     onClick={() => removeStatusMapping(index)}
                                     aria-label="Delete status mapping"
+                                    disabled={isViewUser}
+                                    title={viewOnlyTitle}
                                   >
                                     <Trash2 size={14} />
                                   </button>
@@ -1760,13 +1797,21 @@ export default function DealerCRMConfig() {
                                 className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"
                                 onClick={() => removeStatusMapping(index)}
                                 aria-label="Remove mapping"
+                                disabled={isViewUser}
+                                title={viewOnlyTitle}
                               >
                                 <Trash2 size={14} />
                               </button>
                             </div>
                           );
                         })}
-                        <button type="button" className="dealer-crm-config__add-mapping" onClick={addStatusMapping}>
+                        <button
+                          type="button"
+                          className="dealer-crm-config__add-mapping"
+                          onClick={addStatusMapping}
+                          disabled={isViewUser}
+                          title={viewOnlyTitle}
+                        >
                           + Add another status
                         </button>
 
@@ -1777,7 +1822,8 @@ export default function DealerCRMConfig() {
                               saveSuccess ? "dealer-crm-config__button--success" : ""
                             }`}
                             onClick={handleSaveMappings}
-                            disabled={saving}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
                           >
                             {saveButtonContent("Save Status Mapping")}
                           </button>
