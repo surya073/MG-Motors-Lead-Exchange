@@ -229,6 +229,24 @@
   color: var(--color-text-primary);
 }
 
+/* Dealer's rejection reason — shown under the status pill only when the
+   lead's status is Not Qualified and a reason was recorded. Same callout
+   style as .lead-detail__path-card-reason for visual consistency. */
+.lead-detail__rejection-reason {
+  margin-top: var(--space-2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(179, 38, 30, 0.07);
+  border-left: 3px solid rgba(179, 38, 30, 0.55);
+  font-size: 13px;
+  line-height: 1.6;
+  color: #7a1c16;
+}
+
+.lead-detail__rejection-reason strong {
+  font-weight: 600;
+}
+
 /* =========================================================
    HERO META
    ========================================================= */

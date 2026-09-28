@@ -105,6 +105,13 @@ const OEM_LEADS_FIELDS = [
   'Enquiry_Variant',
   'Enquiry_Powertrain',
   'Chat_Transcript',
+  // Zoho silently DROPS unknown names from `fields` rather than erroring
+  // (same class of bug as Lead_Status_Modified_Time above) — this name was
+  // simply missing from the allowlist, so every fetch came back with this
+  // field absent regardless of what the OEM CRM actually held, and
+  // leadSyncService.js's `crmRecord.Dealer_Rejected_Reason || ''` always
+  // fell through to ''.
+  'Dealer_Rejected_Reason',
 ];
 
 

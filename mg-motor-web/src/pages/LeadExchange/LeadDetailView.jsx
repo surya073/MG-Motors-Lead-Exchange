@@ -201,7 +201,7 @@ const UNHAPPY_PATHS = [
     trigger: "Dealer CRM",
     match: ["Junk", "Junk Lead", "Spam", "Junk Lead / Spam"],
     description: "The dealer explicitly marked the enquiry as spam or junk.",
-    outcome: "Raw classification captured; AU008 Junk Lead maps exactly to MG Junk Lead and alerts support.",
+    outcome: "MG status is set to Not Qualified; the dealer's own rejection wording is retained and shown in the activity log below, and alerts support.",
   },
   {
     id: "Unhappy 10",
@@ -306,6 +306,17 @@ function timelineDetailText(entry) {
   const parts = [];
   if (statusChange) {
     parts.push(`Status changed: ${statusChange.from || "—"} → ${statusChange.to || "—"}`);
+    // Unhappy 9: MG status is normalized to "Not Qualified" regardless of
+    // the dealer's own wording (Junk Lead / Spam / etc.), so surface that
+    // original wording here as the rejection reason — otherwise it would
+    // only be visible in the entry's title, not the detail line.
+    if (
+      /^unhappy 9/i.test(entry.happy_unhappy_path_name || "") &&
+      statusChange.raw_dealer_value &&
+      statusChange.raw_dealer_value !== statusChange.to
+    ) {
+      parts.push(`Dealer rejection reason: "${statusChange.raw_dealer_value}"`);
+    }
   }
   otherChanges.forEach((c) => {
     parts.push(`${formatFieldName(c.field)}: "${c.from || "—"}" → "${c.to || "—"}"`);
@@ -861,6 +872,12 @@ export default function LeadDetailView({ lead, onBack }) {
             <h1>{lead.customer_name || "Unnamed Customer"}</h1>
             {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
           </div>
+
+          {lead.lead_status === "Not Qualified" && lead.dealer_rejected_reason && (
+            <div className="lead-detail__rejection-reason">
+              <strong>Dealer rejection reason:</strong> {lead.dealer_rejected_reason}
+            </div>
+          )}
 
           {/* All distinct scenarios this lead has been through, not just the current one */}
           <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />

@@ -111,7 +111,13 @@ function mapCrmRecordToLeadRow(crmRecord) {
     enquiry_variant: crmRecord.Enquiry_Variant || '',
     enquiry_powertrain: crmRecord.Enquiry_Powertrain || '',
     chat_transcript: crmRecord.Chat_Transcript || '',
-    dealer_rejected_reason: crmRecord.Lead_Rejected_Reason || '',
+    // Written back to MG's own CRM as Dealer_Rejected_Reason (see
+    // INTERNAL_FIELD_TO_ZOHO_API_FIELD in crmIntegrationService.js, and the
+    // Unhappy 9 handling in processResolvedInboundLead that populates it
+    // from the dealer's Lead_Rejected_Reason). Read back under the SAME
+    // MG-side name here so this periodic OEM mirror does not blank it out
+    // again on the next sync.
+    dealer_rejected_reason: crmRecord.Dealer_Rejected_Reason || '',
   };
 }
 

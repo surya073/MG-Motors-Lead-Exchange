@@ -96,7 +96,7 @@ Create scheduler calls (all `POST`, all with `X-Cron-Secret`):
 | Unhappy 6 | Dealer attempts to change an MG-owned identity/contact/privacy field. | Change is not applied; both masked values and ownership decision are audited; Unhappy 6. |
 | Unhappy 7 | Send dealer update before its `lead_integrations` mapping exists, then create the mapping and run replay cron. | Event remains PENDING, then re-fetches and applies after prerequisite exists. |
 | Unhappy 8 | Set privacy consent false/missing/untranslatable while marketing is independently optional. | `CONSENT_HOLD`, no PII sent to dealer, P1 alert; missing marketing alone still delivers. |
-| Unhappy 9 | Dealer sets exact `Junk Lead`. Also test `Lost (final)`. | Junk maps to MG `Junk Lead` and alerts as Unhappy 9; Lost maps to MG `Lost` and is Happy 2. |
+| Unhappy 9 | Dealer sets exact `Junk Lead`. Also test `Lost (final)`. | MG status is set to `Not Qualified` (not `Junk Lead`), the dealer's own wording is retained as the rejection reason on the lead's activity log, and it alerts as Unhappy 9; Lost maps to MG `Lost` and is Happy 2. |
 | Unhappy 10 | Leave a successfully acknowledged Not Contacted lead unchanged beyond the SLA and run SLA cron. | Integration health is checked first; MG becomes Unattended Alert; dealer/admin alert and Unhappy 10. |
 
 ## Verification
