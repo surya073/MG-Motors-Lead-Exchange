@@ -133,7 +133,7 @@
 
 .health-filterbar__preset:hover {
   border-color: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-text-primary);
 }
 
 .health-filterbar__preset--active {
