@@ -45,13 +45,6 @@ export default function LoginPage() {
       clearTimeout(fallback);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-
-    
-    // Complete the pending AI chat integration in the dashboard and verify the end-to-end flow.
-// Start reviewing the Dealer CRM configuration requirements.
-// Analyze the integration approach for Dealer CRM, including webhook/API connectivity, authentication, access-token handling, and required configuration details.
-// Review the required field mapping and data exchange flow between Dealer CRM, Catalyst middleware, and MG Zoho CRM.
-// Identify any pending requirements or dependencies needed to proceed with the Dealer CRM integration.
   }, [status]);
 
   if (status === SESSION_STATUS.AUTHENTICATED) {

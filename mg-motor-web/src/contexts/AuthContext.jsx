@@ -149,6 +149,20 @@ export function AuthProvider({ children }) {
     // can fall back to the app's default route on some static hosts.
     const redirectUrl = `${window.location.origin}${APP_BASE_PATH}/#${targetPath}`;
     authService.signOut(redirectUrl);
+
+    // ProtectedRoute already soft-navigates to /login the instant status
+    // flips above, so the embedded sign-in widget can start mounting
+    // before catalyst.auth.signOut() has actually cleared the session.
+    // Its own redirect only changes the hash (same origin/path as the
+    // current page), which browsers treat as a same-document navigation,
+    // not a reload — so the SDK's widget state from the old session is
+    // never guaranteed to reset. Force a real reload as a fallback; if
+    // the SDK's own redirect already unloaded the page first, this never
+    // runs.
+    setTimeout(() => {
+      window.location.href = redirectUrl;
+      window.location.reload();
+    }, 400);
   }, []);
 
   const value = {
