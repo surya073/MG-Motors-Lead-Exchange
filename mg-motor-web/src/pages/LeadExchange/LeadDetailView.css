@@ -629,6 +629,23 @@
   font-weight: var(--fw-medium);
 }
 
+/* Flags a non-Australian/malformed mobile number for the operator to
+   review. Never blocks the lead or the dealer CRM push. */
+.lead-detail__mobile-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
 .lead-detail__infobar-divider {
   width: 1px;
 

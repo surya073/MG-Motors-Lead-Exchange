@@ -90,8 +90,10 @@ test('mandatory validation separates privacy and routing from invalid data', () 
     accept_privacy_policy: false,
     dealer_code: '',
   }));
+  // mobile_number is deliberately absent: an invalid mobile format is a
+  // UI-only warning, never a delivery-blocking issue.
   assert.deepEqual(invalid.issues.map((issue) => issue.field), [
-    'customer_name', 'mobile_number', 'email_address', 'postcode',
+    'customer_name', 'email_address', 'postcode',
   ]);
   assert.equal(invalid.privacyIssue.field, 'accept_privacy_policy');
   assert.equal(invalid.routingIssue.field, 'dealer_code');
@@ -117,30 +119,27 @@ test('Australian mobile validation accepts 04 and +61 formats', () => {
   });
 });
 
-test('mobile and email are each independently mandatory — a valid email does not excuse a non-Australian or malformed mobile number', () => {
+test('mobile format is a UI-only warning, never a delivery block — email is still mandatory', () => {
   // Both valid -> continue.
   assert.equal(policy.validateLeadForDelivery(validLead()).valid, true);
 
-  // Valid email, but a non-Australian/malformed mobile (e.g. an Indian
-  // number with no 04/+61 Australian format) -> rejected, not excused by
-  // the valid email.
-  const nonAuMobile = policy.validateLeadForDelivery(validLead({ mobile_number: '9743443342' }));
-  assert.equal(nonAuMobile.issues.some((i) => i.field === 'mobile_number'), true);
-  assert.equal(nonAuMobile.valid, false);
+  // Non-Australian/malformed mobile (e.g. an Indian number, or a bare
+  // 9-digit number), valid email -> still continues; the dealer CRM push
+  // must not be blocked by mobile format. isValidAustralianMobile still
+  // correctly reports it as invalid for the UI to highlight — it's just no
+  // longer part of the delivery gate.
+  [{ mobile_number: '9743443342' }, { mobile_number: '123456789' }, { mobile_number: '0000000000' }]
+    .forEach((overrides) => {
+      const result = policy.validateLeadForDelivery(validLead(overrides));
+      assert.equal(result.issues.some((i) => i.field === 'mobile_number'), false);
+      assert.equal(result.valid, true, `expected mobile "${overrides.mobile_number}" to not block delivery`);
+      assert.equal(policy.isValidAustralianMobile(overrides.mobile_number), false);
+    });
 
-  // Valid mobile, invalid email -> also rejected.
+  // Email is unaffected by this change — still mandatory on its own.
   const badEmail = policy.validateLeadForDelivery(validLead({ email_address: 'not-an-email' }));
   assert.equal(badEmail.issues.some((i) => i.field === 'email_address'), true);
   assert.equal(badEmail.valid, false);
-
-  // Both invalid -> both fields named.
-  const bothInvalid = policy.validateLeadForDelivery(validLead({
-    email_address: 'not-an-email',
-    mobile_number: '0000000000',
-  }));
-  assert.equal(bothInvalid.issues.some((i) => i.field === 'mobile_number'), true);
-  assert.equal(bothInvalid.issues.some((i) => i.field === 'email_address'), true);
-  assert.equal(bothInvalid.valid, false);
 });
 
 test('Happy 3 requires every duplicate key to match within 15 minutes', () => {

@@ -11,8 +11,10 @@ import {
   Calendar,
   Eye,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
+import { isValidAustralianMobile } from "../../utils/mobileValidation";
 import { syncLeadsService } from "../../services/api/syncService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
@@ -452,6 +454,18 @@ export default function LeadExchangePage() {
     </span>
   );
 
+  // UI-only flag: an invalid/non-Australian mobile number is never blocked
+  // from the dealer CRM push or the normal Happy Path — it's just
+  // highlighted here so an operator can follow up if needed.
+  const mobileWarning = (mobileNumber) =>
+    mobileNumber && !isValidAustralianMobile(mobileNumber) ? (
+      <AlertTriangle
+        size={13}
+        className="lead-exchange__mobile-warning"
+        title="Invalid Australian mobile number"
+      />
+    ) : null;
+
   const columnRenderers = {
     customer_name: (row) => dimmed(row, row.customer_name),
     dealer_name: (row) => dimmed(row, row.dealer_name),
@@ -468,13 +482,16 @@ export default function LeadExchangePage() {
       dimmed(
         row,
         row.mobile_number ? (
-          <a
-            href={`tel:${row.mobile_number}`}
-            className="lead-exchange__contact-link"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {row.mobile_number}
-          </a>
+          <span className="lead-exchange__contact-cell">
+            <a
+              href={`tel:${row.mobile_number}`}
+              className="lead-exchange__contact-link"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {row.mobile_number}
+            </a>
+            {mobileWarning(row.mobile_number)}
+          </span>
         ) : (
           "—"
         )
@@ -812,14 +829,17 @@ export default function LeadExchangePage() {
                         <div className="lead-card__row">
                           <Phone size={14} className="lead-card__row-icon" />
                           {row.mobile_number ? (
-                            <a
-                              href={`tel:${row.mobile_number}`}
-                              className="lead-card__row-value lead-card__row-value--link"
-                              title={row.mobile_number}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {row.mobile_number}
-                            </a>
+                            <>
+                              <a
+                                href={`tel:${row.mobile_number}`}
+                                className="lead-card__row-value lead-card__row-value--link"
+                                title={row.mobile_number}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {row.mobile_number}
+                              </a>
+                              {mobileWarning(row.mobile_number)}
+                            </>
                           ) : (
                             <span className="lead-card__row-value lead-card__row-value--muted">
                               No mobile on file

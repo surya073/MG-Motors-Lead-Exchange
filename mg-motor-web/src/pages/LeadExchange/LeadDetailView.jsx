@@ -15,6 +15,7 @@ import {
   PencilIcon,
 } from "../../ui/icons";
 import mgLogo from "../../assets/images/mg-logo-single.png";
+import { isValidAustralianMobile } from "../../utils/mobileValidation";
 import "./LeadDetailView.css";
 
 /* ----------------------------------------------------------------
@@ -823,6 +824,10 @@ export default function LeadDetailView({ lead, onBack }) {
 
   const mobile = val("mobile_number");
   const email = val("email_address");
+  // UI-only flag: an invalid/non-Australian mobile number is never blocked
+  // from the dealer CRM push or the normal Happy Path — it's just
+  // highlighted here so an operator can follow up if needed.
+  const mobileIsInvalid = mobile !== "—" && !isValidAustralianMobile(mobile);
 
   // FIX: was `lead.happy_unhappy_path_name ? {...} : classifyPath(lead)`,
   // which trusted a possibly-stale stored name over the lead's live
@@ -926,6 +931,11 @@ export default function LeadDetailView({ lead, onBack }) {
                 </button>
               )}
               {copied === "mobile" && <span className="lead-detail__copied-tag">Copied</span>}
+              {mobileIsInvalid && (
+                <span className="lead-detail__mobile-warning" title="Invalid Australian mobile number">
+                  <AlertCircleIcon /> Invalid Australian Mobile
+                </span>
+              )}
             </span>
             {mobile !== "—" && (
               <a href={`tel:${mobile}`} className="lead-detail__action-btn lead-detail__action-btn--call">

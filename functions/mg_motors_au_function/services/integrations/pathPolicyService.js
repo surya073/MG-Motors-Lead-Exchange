@@ -295,9 +295,10 @@ function validateLeadForDelivery(lead) {
   if (nameParts.length < 2) {
     issues.push(validationIssue('customer_name', 'Customer first and last name are required', lead.customer_name));
   }
-  if (!isValidAustralianMobile(lead.mobile_number)) {
-    issues.push(validationIssue('mobile_number', 'Must be a valid 10-digit Australian mobile number', lead.mobile_number));
-  }
+  // Mobile format is deliberately NOT a delivery-blocking check: a
+  // non-Australian or malformed mobile number must not hold the lead or
+  // stop the dealer CRM push. It is flagged to the operator in the Leads
+  // UI only (see mg-motor-web's isValidAustralianMobile helper).
   if (!isValidEmail(lead.email_address)) {
     issues.push(validationIssue('email_address', 'Must be a valid email address', lead.email_address));
   }

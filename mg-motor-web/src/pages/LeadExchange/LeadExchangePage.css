@@ -248,6 +248,19 @@
   opacity: 0.8;
 }
 
+.lead-exchange__contact-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Flags a non-Australian/malformed mobile number for the operator to
+   review. Never blocks the lead or the dealer CRM push. */
+.lead-exchange__mobile-warning {
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+
 .lead-exchange__pagination {
   display: flex;
   align-items: center;
