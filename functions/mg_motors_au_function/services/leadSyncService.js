@@ -78,7 +78,14 @@ function mapCrmRecordToLeadRow(crmRecord) {
   return {
     dealer_code: crmRecord.Dealer_Code || '',
     customer_name: [crmRecord.First_Name, crmRecord.Last_Name].filter(Boolean).join(' ') || '',
-    mobile_number: crmRecord.Mobile || '',
+    // Normalized once here, at the point the number enters the system, so
+    // every downstream consumer (dealer CRM push, UI display, duplicate
+    // fingerprint) sees the same canonical 04XXXXXXXX form regardless of
+    // whether the OEM CRM held it as "0412345678" or "+61412345678".
+    // isValidAustralianMobile() already normalizes internally for its own
+    // check, so this does not change validation behavior — it only stops
+    // the un-normalized raw value from being the one that gets stored.
+    mobile_number: pathPolicy.normalizePhone(crmRecord.Mobile) || '',
     email_address: crmRecord.Email || '',
     vehicle_model: crmRecord.Enquiry_Model || '',
     lead_source: crmRecord.Enquiry_Source || '',

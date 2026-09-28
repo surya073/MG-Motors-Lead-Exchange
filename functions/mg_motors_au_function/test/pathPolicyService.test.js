@@ -117,25 +117,23 @@ test('Australian mobile validation accepts 04 and +61 formats', () => {
   });
 });
 
-test('partial invalid contact data: one valid contact method (email or phone) is enough to continue', () => {
-  // Both valid -> continue, no contact-field issues.
-  const bothValid = policy.validateLeadForDelivery(validLead());
-  assert.equal(bothValid.issues.some((i) => i.field === 'mobile_number'), false);
-  assert.equal(bothValid.issues.some((i) => i.field === 'email_address'), false);
+test('mobile and email are each independently mandatory — a valid email does not excuse a non-Australian or malformed mobile number', () => {
+  // Both valid -> continue.
+  assert.equal(policy.validateLeadForDelivery(validLead()).valid, true);
 
-  // Invalid email, valid phone -> continue.
+  // Valid email, but a non-Australian/malformed mobile (e.g. an Indian
+  // number with no 04/+61 Australian format) -> rejected, not excused by
+  // the valid email.
+  const nonAuMobile = policy.validateLeadForDelivery(validLead({ mobile_number: '9743443342' }));
+  assert.equal(nonAuMobile.issues.some((i) => i.field === 'mobile_number'), true);
+  assert.equal(nonAuMobile.valid, false);
+
+  // Valid mobile, invalid email -> also rejected.
   const badEmail = policy.validateLeadForDelivery(validLead({ email_address: 'not-an-email' }));
-  assert.equal(badEmail.issues.some((i) => i.field === 'mobile_number'), false);
-  assert.equal(badEmail.issues.some((i) => i.field === 'email_address'), false);
-  assert.equal(badEmail.valid, true);
+  assert.equal(badEmail.issues.some((i) => i.field === 'email_address'), true);
+  assert.equal(badEmail.valid, false);
 
-  // Valid email, invalid phone -> continue.
-  const badPhone = policy.validateLeadForDelivery(validLead({ mobile_number: '0000000000' }));
-  assert.equal(badPhone.issues.some((i) => i.field === 'mobile_number'), false);
-  assert.equal(badPhone.issues.some((i) => i.field === 'email_address'), false);
-  assert.equal(badPhone.valid, true);
-
-  // Both invalid -> existing rejection/invalid-data flow, both fields named.
+  // Both invalid -> both fields named.
   const bothInvalid = policy.validateLeadForDelivery(validLead({
     email_address: 'not-an-email',
     mobile_number: '0000000000',
@@ -182,6 +180,22 @@ test('CRM Created_Time supplies duplicate timing without inventing Assigned_Date
     { ...mapped, assigned_date: '' },
     mapped
   ), true);
+});
+
+test('mobile number is normalized once at ingestion to a single canonical form', () => {
+  const local = leadSyncService._test.mapCrmRecordToLeadRow({ id: 'MG-11', Mobile: '0412345678' });
+  const international = leadSyncService._test.mapCrmRecordToLeadRow({ id: 'MG-12', Mobile: '+61412345678' });
+  assert.equal(local.mobile_number, '0412345678');
+  assert.equal(international.mobile_number, '0412345678');
+  assert.equal(local.mobile_number, international.mobile_number);
+  assert.equal(policy.isValidAustralianMobile(local.mobile_number), true);
+  assert.equal(policy.isValidAustralianMobile(international.mobile_number), true);
+
+  const invalid = leadSyncService._test.mapCrmRecordToLeadRow({ id: 'MG-13', Mobile: '123456789' });
+  assert.equal(policy.isValidAustralianMobile(invalid.mobile_number), false);
+
+  const missing = leadSyncService._test.mapCrmRecordToLeadRow({ id: 'MG-14' });
+  assert.equal(missing.mobile_number, '');
 });
 
 test('a matching original that failed delivery is never suppressed', () => {
