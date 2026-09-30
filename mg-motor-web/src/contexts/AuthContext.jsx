@@ -159,10 +159,19 @@ export function AuthProvider({ children }) {
     // never guaranteed to reset. Force a real reload as a fallback; if
     // the SDK's own redirect already unloaded the page first, this never
     // runs.
-    setTimeout(() => {
+    //
+    // Wait for signOut() to actually take effect first: reloading on a
+    // fixed delay instead can fire before the session is invalidated
+    // server-side, so the freshly-reloaded page's own session check sees
+    // a stale "still authenticated" response and bounces straight back
+    // into the app (isLoggingOut.current can't prevent this — it's an
+    // in-memory ref, and a reload wipes it along with the rest of the JS
+    // context). Only the FIRST click of Logout would hit this race;
+    // waiting for confirmation removes it instead of just narrowing it.
+    authService.waitForSignedOut().finally(() => {
       window.location.href = redirectUrl;
       window.location.reload();
-    }, 400);
+    });
   }, []);
 
   const value = {

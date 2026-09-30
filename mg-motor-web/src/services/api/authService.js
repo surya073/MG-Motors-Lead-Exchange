@@ -62,11 +62,41 @@ async function renderSignIn(elementId, config) {
 
 /**
  * Signs the current user out and redirects the browser to `redirectUrl`.
- * Does not return a promise (matches the underlying SDK method).
+ * Does not return a promise (matches the underlying SDK method), and
+ * Catalyst gives no signal for when the session is actually invalidated
+ * server-side - see waitForSignedOut() below for why that matters.
  */
 async function signOut(redirectUrl) {
   const catalyst = await waitForCatalystSdk();
   catalyst.auth.signOut(redirectUrl);
+}
+
+/**
+ * Polls isUserAuthenticated() until it reports no session, or gives up
+ * after timeoutMs. Call this after signOut() before forcing any reload
+ * of your own: signOut() doesn't confirm when the session is actually
+ * invalidated server-side, so reloading on a fixed delay can land before
+ * that happens - the fresh page's session check then sees a stale "still
+ * authenticated" result and bounces straight back into the app.
+ */
+async function waitForSignedOut({ intervalMs = 150, timeoutMs = 5000 } = {}) {
+  const catalyst = await waitForCatalystSdk();
+  const start = Date.now();
+
+  return new Promise((resolve) => {
+    (function poll() {
+      catalyst.auth
+        .isUserAuthenticated()
+        .then((result) => {
+          if (!result?.content || Date.now() - start > timeoutMs) {
+            resolve();
+            return;
+          }
+          setTimeout(poll, intervalMs);
+        })
+        .catch(() => resolve());
+    })();
+  });
 }
 
 /**
@@ -110,6 +140,7 @@ export const authService = {
   getCurrentSession,
   renderSignIn,
   signOut,
+  waitForSignedOut,
   getDealerContext,
   generateAuthToken,
   sendPasswordReset
