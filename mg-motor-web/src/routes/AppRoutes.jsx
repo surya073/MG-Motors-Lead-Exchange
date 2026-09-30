@@ -3,6 +3,7 @@ import MainLayout from "../layouts/MainLayout/MainLayout";
 import AuthLayout from "../layouts/AuthLayout/AuthLayout";
 import ProtectedRoute from "./ProtectedRoute";
 import RequireRole from "./RequireRole";
+import ScrollToTop from "./ScrollToTop";
 import ErrorPage from "../pages/ErrorPage/ErrorPage";
 import NotFoundPage from "../pages/NotFoundPage/NotFoundPage";
 import LoginPage from "../pages/Login/LoginPage";
@@ -23,6 +24,7 @@ import Overview from "../pages/Overview/Overview";
 const router = createHashRouter([
   {
     path: "/",
+    element: <ScrollToTop />,
     errorElement: <ErrorPage />,
     children: [
       { index: true, element: <Navigate to={ROUTES.DASHBOARD} replace /> },
