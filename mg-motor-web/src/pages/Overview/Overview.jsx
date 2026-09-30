@@ -8,7 +8,6 @@ import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
 import ProgressRing from "./components/ProgressRing";
 import ProcessPathCard from "./components/ProcessPathCard";
-import PathDetailsOffcanvas from "./components/PathDetailsOffcanvas";
 import MonitoringCard, { healthTone, bucketByDay } from "./components/MonitoringCard";
 import "./Overview.css";
 
@@ -1443,25 +1442,12 @@ function LeadExchangeHealthPanel({ openDrawer }) {
     setAppliedFilters({ fromDate: range.from, toDate: range.to, dealerCode: "" });
   }
 
-  // Opens the shared Drawer with the rich per-path content. shareOfCategory
-  // is computed identically to the card's own ring, so the offcanvas ring
-  // never disagrees with what the user just clicked.
+  // Clicking a path card jumps straight to the Lead Exchange page,
+  // pre-filtered to that exact scenario (e.g. "Unhappy 3") via a query
+  // param LeadExchangePage.jsx reads on mount — this is the actual list
+  // of leads on that path, not just a summary drawer.
   function openPathDetails(scenario) {
-    const categoryTotal = scenario.type === "happy"
-      ? health.exchangeHealth.successfulExchanges
-      : health.exchangeHealth.failedExchanges;
-    const shareOfCategory = categoryTotal > 0 ? (scenario.count / categoryTotal) * 100 : null;
-    openDrawer(
-      scenario.name,
-      scenario.type === "happy" ? "Happy path detail" : "Unhappy path detail",
-      <PathDetailsOffcanvas
-        scenario={scenario}
-        meta={SCENARIO_META[scenario.name]}
-        shareOfCategory={shareOfCategory}
-        dealersTotal={health.dealerHealth?.total}
-        filters={appliedFilters}
-      />
-    );
+    navigate(`${ROUTES.LEAD_EXCHANGE}?scenario=${encodeURIComponent(scenario.name)}`);
   }
 
   // Real derived values feeding the three monitoring cards below — every

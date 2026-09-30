@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   LayoutGrid,
   List,
@@ -127,6 +127,20 @@ const PATH_FILTER_OPTIONS = [
   { value: "unhappy", label: "Unhappy" },
 ];
 
+// Sorts "Happy 1".."Happy 5" then "Unhappy 1".."Unhappy 12" in scenario
+// number order — a plain alpha sort would put "Unhappy 10" before
+// "Unhappy 2", since it compares strings.
+function compareScenarioLabels(a, b) {
+  const parse = (label) => {
+    const match = /^(Happy|Unhappy)\s+(\d+)$/i.exec(label || "");
+    return match ? { type: match[1].toLowerCase(), num: Number(match[2]) } : { type: "zzz", num: 0 };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.type !== pb.type) return pa.type === "happy" ? -1 : 1;
+  return pa.num - pb.num;
+}
+
 const ALL_COLUMNS = [
   { key: "customer_name", label: "Customer", defaultVisible: true },
   { key: "dealer_name", label: "Dealer", defaultVisible: true },
@@ -212,6 +226,7 @@ export default function LeadExchangePage() {
   const { showAlert } = useAlerts();
   const { leadId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
   const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
@@ -232,6 +247,12 @@ export default function LeadExchangePage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [dealerFilter, setDealerFilter] = useState("");
   const [pathFilter, setPathFilter] = useState("all");
+  // Arriving from an Overview path card (?scenario=Unhappy%203) lands here
+  // already narrowed to that exact scenario, on top of the broader
+  // Happy/Unhappy toggle above.
+  const [scenarioFilter, setScenarioFilter] = useState(
+    () => new URLSearchParams(location.search).get("scenario") || ""
+  );
   const [showRemoved, setShowRemoved] = useState(true);
   const [sortBy, setSortBy] = useState("recent"); // "recent" | "alpha"
   const [pageIndex, setPageIndex] = useState(0);
@@ -346,6 +367,22 @@ export default function LeadExchangePage() {
     [dealerOptions]
   );
 
+  // Specific-scenario filter options, derived from whichever scenario
+  // labels actually appear among the loaded leads (same pattern as
+  // statusDropdownOptions/dealerDropdownOptions above) — never a
+  // hardcoded list, so it can't offer a scenario with zero matching leads.
+  const scenarioDropdownOptions = useMemo(() => {
+    const labels = new Set();
+    leads.forEach((l) => {
+      const label = classifyLeadWithDuplicate(l, leads).label;
+      if (label) labels.add(label);
+    });
+    return [
+      { value: "", label: "All paths" },
+      ...[...labels].sort(compareScenarioLabels).map((label) => ({ value: label, label })),
+    ];
+  }, [leads]);
+
   const sortDropdownOptions = useMemo(
     () => [
       { value: "recent", label: "Recently added / updated" },
@@ -382,10 +419,11 @@ export default function LeadExchangePage() {
       const matchesDealer = !dealerFilter || l.dealer_code === dealerFilter;
       const classification = classifyLeadWithDuplicate(l, leads);
       const matchesPath = pathFilter === "all" || classification.path === pathFilter;
+      const matchesScenario = !scenarioFilter || classification.label === scenarioFilter;
       const matchesRemoved = showRemoved || l.sync_status !== "Removed";
-      return matchesSearch && matchesStatus && matchesDealer && matchesPath && matchesRemoved;
+      return matchesSearch && matchesStatus && matchesDealer && matchesPath && matchesScenario && matchesRemoved;
     });
-  }, [leads, search, statusFilter, dealerFilter, pathFilter, showRemoved]);
+  }, [leads, search, statusFilter, dealerFilter, pathFilter, scenarioFilter, showRemoved]);
 
   // Applied after filtering, before pagination, so "recently added"
   // and "alphabetical" both operate on the same filtered set and the
@@ -436,6 +474,11 @@ export default function LeadExchangePage() {
 
   const handlePathFilterChange = (value) => {
     setPathFilter(value);
+    resetPage();
+  };
+
+  const handleScenarioFilterChange = (value) => {
+    setScenarioFilter(value);
     resetPage();
   };
 
@@ -655,6 +698,13 @@ export default function LeadExchangePage() {
               value={dealerFilter}
               onChange={handleDealerChange}
               options={dealerDropdownOptions}
+            />
+
+            <Dropdown
+              ariaLabel="Filter by Happy/Unhappy path"
+              value={scenarioFilter}
+              onChange={handleScenarioFilterChange}
+              options={scenarioDropdownOptions}
             />
 
             <Dropdown
