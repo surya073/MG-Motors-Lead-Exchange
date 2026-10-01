@@ -2,204 +2,40 @@
 
 const express = require('express');
 const multer = require('multer');
+const { normalizeRole, APP_ROLES } = require('../constants/roles.constants');
+const { getAiAssistantConfig } = require('../config/env');
+const aiTools = require('../services/aiAssistantToolService');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// Keep these in sync with functions/mg_motors_au_function/index.js
-const DEALERS_TABLE_ID = '37148000000425015';
-const LEADS_TABLE_ID = '37148000000442417';
-const LEAD_DELIVERY_LOGS_TABLE_ID = '37148000000425411';
-
-// TODO: fill in with the real admin_user_mapping table ID (see adminUserRoutes.js).
-// Left blank means the admin check below always falls through to "not admin".
-// const ADMIN_USER_MAPPING_TABLE_ID = '';
-const SUPER_ADMIN_ROLE_ID = '37148000000359008'; // App Administrator
-
-
-const GEMINI_MODEL = 'gemini-3.5-flash'; // current GA Flash model as of mid-2026
+const { geminiApiKey: GEMINI_API_KEY, geminiModel: GEMINI_MODEL, sarvamApiKey: SARVAM_API_KEY } = getAiAssistantConfig();
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-/* ------------------------------------------------------------------ */
-/* Datastore helpers                                                   */
-/* ------------------------------------------------------------------ */
-
-async function fetchAllRows(table) {
-  const rows = [];
-  let nextToken;
-  do {
-    const page = await table.getPagedRows({ nextToken, maxRows: 100 });
-    rows.push(...page.data);
-    nextToken = page.more_records ? page.next_token : undefined;
-  } while (nextToken);
-  return rows;
-}
-
 /**
- * ASSUMPTION: admin = present in admin_user_mapping by email; dealer =
- * a Dealers row whose Email matches the logged-in Catalyst user's email.
- * Replace with the real lookup used elsewhere in this codebase if it
- * resolves role differently.
+ * Admin/Super Admin/View User all get the same read-only "admin" tool
+ * scope here — matches the requireAdminOrViewRole convention used across
+ * the rest of this app (view access, not a mutation boundary). Dealer
+ * resolves its own dealer_code via the real session-bound lookup
+ * (leadAccessService.resolveDealerCodeForUser, the same mechanism
+ * dealerLeadRoutes.js uses) rather than an ad hoc email match.
  */
 async function resolveAiContext(catalystApp, currentUser) {
-  const roleId = currentUser?.role_details?.role_id;
-  if (roleId === SUPER_ADMIN_ROLE_ID) {
-    return { role: 'admin', dealerId: null, dealerName: null };
+  const role = normalizeRole(currentUser);
+
+  if (role === APP_ROLES.SUPER_ADMIN || role === APP_ROLES.ADMIN || role === APP_ROLES.VIEW_USER) {
+    return { role: 'admin', dealerCode: null, dealerName: null };
   }
 
-  const email = (currentUser?.email_id || currentUser?.email || '').toLowerCase();
-  const dealers = await fetchAllRows(catalystApp.datastore().table(DEALERS_TABLE_ID));
-  const dealer = dealers.find((d) => (d.Email || '').toLowerCase() === email);
-  if (dealer) {
-    return { role: 'dealer', dealerId: dealer.ROWID, dealerName: dealer.Name };
+  if (role === APP_ROLES.DEALER) {
+    const dealerCode = await aiTools.resolveDealerCodeForUser(catalystApp, currentUser.user_id);
+    if (!dealerCode) return { role: 'unknown', dealerCode: null, dealerName: null };
+    const { dealer } = await aiTools.resolveDealerByNameOrCode(catalystApp, dealerCode);
+    return { role: 'dealer', dealerCode, dealerName: dealer?.dealer_name || null };
   }
 
-  return { role: 'unknown', dealerId: null, dealerName: null };
-}
-
-async function findDealerByNameOrId(catalystApp, dealerNameOrId) {
-  const rows = await fetchAllRows(catalystApp.datastore().table(DEALERS_TABLE_ID));
-  const needle = (dealerNameOrId || '').trim().toLowerCase();
-  return rows.find((d) => d.ROWID === dealerNameOrId || (d.Name || '').toLowerCase().includes(needle));
-}
-
-async function getLeadsFor(catalystApp, dealerId, { status } = {}) {
-  const rows = await fetchAllRows(catalystApp.datastore().table(LEADS_TABLE_ID));
-  return rows
-    .filter((l) => l.DealerID === dealerId)
-    .filter((l) => !status || l.Status === status)
-    .map((l) => ({
-      leadId: l.ROWID,
-      customerName: l.CustomerName,
-      status: l.Status,
-      deliveryStatus: l.DeliveryStatus,
-      source: l.Source,
-      receivedAt: l.CREATEDTIME, // when the lead came in
-      lastUpdatedAt: l.MODIFIEDTIME, // when it was last touched/updated
-    }));
-}
-
-/* ------------------------------------------------------------------ */
-/* Tool implementations                                                */
-/* ------------------------------------------------------------------ */
-
-async function toolListDealers(catalystApp, { search = '' } = {}) {
-  const rows = await fetchAllRows(catalystApp.datastore().table(DEALERS_TABLE_ID));
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? rows.filter((d) => [d.Name, d.Region, d.Status].filter(Boolean).some((f) => f.toLowerCase().includes(q)))
-    : rows;
-  return {
-    dealers: filtered.slice(0, 25).map((d) => ({
-      dealerId: d.ROWID,
-      name: d.Name,
-      region: d.Region,
-      status: d.Status,
-      contactPerson: d.ContactPerson,
-      email: d.Email,
-      phone: d.Phone,
-    })),
-  };
-}
-
-async function toolDealerDetail(catalystApp, { dealerName } = {}) {
-  const dealer = await findDealerByNameOrId(catalystApp, dealerName);
-  if (!dealer) return { error: `No dealer found matching "${dealerName}".` };
-  const leads = await getLeadsFor(catalystApp, dealer.ROWID);
-  const delivered = leads.filter((l) => l.status === 'delivered').length;
-  return {
-    dealerId: dealer.ROWID,
-    name: dealer.Name,
-    region: dealer.Region,
-    status: dealer.Status,
-    contactPerson: dealer.ContactPerson,
-    email: dealer.Email,
-    totalLeads: leads.length,
-    delivered,
-    conversionRate: leads.length ? Math.round((delivered / leads.length) * 100) : 0,
-  };
-}
-
-async function toolDealerLeads(catalystApp, { dealerName, status } = {}) {
-  const dealer = await findDealerByNameOrId(catalystApp, dealerName);
-  if (!dealer) return { error: `No dealer found matching "${dealerName}".` };
-  const leads = await getLeadsFor(catalystApp, dealer.ROWID, { status });
-  return { dealerName: dealer.Name, count: leads.length, leads: leads.slice(0, 30) };
-}
-
-async function toolDealerPerformance(catalystApp, { dealerName } = {}) {
-  const dealer = await findDealerByNameOrId(catalystApp, dealerName);
-  if (!dealer) return { error: `No dealer found matching "${dealerName}".` };
-  const leads = await getLeadsFor(catalystApp, dealer.ROWID);
-  const byStatus = leads.reduce((acc, l) => {
-    acc[l.status || 'unknown'] = (acc[l.status || 'unknown'] || 0) + 1;
-    return acc;
-  }, {});
-  return { dealerName: dealer.Name, totalLeads: leads.length, byStatus };
-}
-
-async function toolLeadDetail(catalystApp, { leadIdOrCustomerName } = {}, allowedDealerId = null) {
-  const leadsTable = catalystApp.datastore().table(LEADS_TABLE_ID);
-  let lead = null;
-  try {
-    lead = await leadsTable.getRow(leadIdOrCustomerName);
-  } catch (_) {
-    // not a ROWID — fall back to a name search below
-  }
-  if (!lead) {
-    const rows = await fetchAllRows(leadsTable);
-    const needle = (leadIdOrCustomerName || '').toLowerCase();
-    lead = rows.find((l) => (l.CustomerName || '').toLowerCase().includes(needle));
-  }
-  if (!lead) return { error: `No lead found matching "${leadIdOrCustomerName}".` };
-  if (allowedDealerId && lead.DealerID !== allowedDealerId) {
-    return { error: 'That lead does not belong to your dealership.' };
-  }
-
-  let dealerName = 'Unassigned';
-  try {
-    const dealer = await catalystApp.datastore().table(DEALERS_TABLE_ID).getRow(lead.DealerID);
-    dealerName = dealer.Name;
-  } catch (_) {
-    // leave as Unassigned
-  }
-
-  const logs = (await fetchAllRows(catalystApp.datastore().table(LEAD_DELIVERY_LOGS_TABLE_ID)))
-    .filter((log) => log.LeadID === lead.ROWID);
-
-  return {
-    leadId: lead.ROWID,
-    customerName: lead.CustomerName,
-    dealerName,
-    status: lead.Status,
-    deliveryStatus: lead.DeliveryStatus,
-    source: lead.Source,
-    receivedAt: lead.CREATEDTIME,
-    lastUpdatedAt: lead.MODIFIEDTIME,
-    deliveryAttempts: logs.map((l) => ({ attempt: l.AttemptNumber, result: l.Results, message: l.Message })),
-  };
-}
-
-async function toolNetworkSummary(catalystApp) {
-  const [dealers, leads] = await Promise.all([
-    fetchAllRows(catalystApp.datastore().table(DEALERS_TABLE_ID)),
-    fetchAllRows(catalystApp.datastore().table(LEADS_TABLE_ID)),
-  ]);
-  const byStatus = leads.reduce((acc, l) => {
-    acc[l.Status || 'unknown'] = (acc[l.Status || 'unknown'] || 0) + 1;
-    return acc;
-  }, {});
-  return {
-    totalDealers: dealers.length,
-    activeDealers: dealers.filter((d) => d.Status === 'active').length,
-    totalLeads: leads.length,
-    leadsByStatus: byStatus,
-  };
-}
-
-async function toolMyLeads(catalystApp, dealerId, { status } = {}) {
-  const leads = await getLeadsFor(catalystApp, dealerId, { status });
-  return { count: leads.length, leads: leads.slice(0, 30) };
+  return { role: 'unknown', dealerCode: null, dealerName: null };
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,39 +43,67 @@ async function toolMyLeads(catalystApp, dealerId, { status } = {}) {
 /* ------------------------------------------------------------------ */
 
 const ADMIN_TOOLS = [
-  { name: 'list_dealers', description: 'Search/list dealers in the network.', parameters: { type: 'OBJECT', properties: { search: { type: 'STRING', description: 'Optional name/region/status filter.' } } } },
-  { name: 'get_dealer_detail', description: 'Profile and lead totals for one dealer.', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' } }, required: ['dealerName'] } },
-  { name: 'get_dealer_leads', description: "List a dealer's leads, optionally filtered by status.", parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, status: { type: 'STRING', description: 'new|contacted|test_drive|quotation|delivered|lost' } }, required: ['dealerName'] } },
-  { name: 'get_dealer_performance', description: 'Lead counts by status and conversion rate for one dealer.', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' } }, required: ['dealerName'] } },
-  { name: 'get_lead_detail', description: 'Look up a single lead by ID or customer name — includes when it came in, when it was last updated, and delivery attempts.', parameters: { type: 'OBJECT', properties: { leadIdOrCustomerName: { type: 'STRING' } }, required: ['leadIdOrCustomerName'] } },
-  { name: 'get_network_summary', description: 'Network-wide dealer and lead totals.', parameters: { type: 'OBJECT', properties: {} } },
+  { name: 'get_dashboard_summary', description: 'Network-wide dealer/lead totals and status breakdown — use for general "how are we doing" / "give me a summary" questions.', parameters: { type: 'OBJECT', properties: {} } },
+  { name: 'get_dealers', description: 'Search/list dealers in the network.', parameters: { type: 'OBJECT', properties: { search: { type: 'STRING', description: 'Optional name/region/status/code filter.' } } } },
+  { name: 'get_dealer_detail', description: 'Profile, lead count and status breakdown for one dealer (by name or code).', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' } }, required: ['dealerName'] } },
+  { name: 'get_dealer_leads', description: "List a dealer's leads (by name or code), optionally filtered by the real MG lead status.", parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, leadStatus: { type: 'STRING', description: 'A real Lead_Status value, e.g. "Not Qualified", "Contacted", "Follow-up 1".' } }, required: ['dealerName'] } },
+  { name: 'get_lead_detail', description: 'Look up a single lead network-wide by its ID or a customer-name match — includes status, dealer, and its full sync/integration timeline.', parameters: { type: 'OBJECT', properties: { leadIdOrCustomerName: { type: 'STRING' } }, required: ['leadIdOrCustomerName'] } },
+  { name: 'get_happy_unhappy_summary', description: 'Happy/Unhappy path breakdown (counts per scenario), duplicate-lead totals, SLA status, and dealer health. Optionally scope to one dealer, one date range or relative period ("today", "yesterday", "this week", a month name), or one specific scenario code ("Happy 3", "Unhappy 7").', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, when: { type: 'STRING', description: '"today" | "yesterday" | "this week" | a month name' }, fromDate: { type: 'STRING', description: 'YYYY-MM-DD, overrides `when` if given' }, toDate: { type: 'STRING', description: 'YYYY-MM-DD' }, scenarioCode: { type: 'STRING', description: 'e.g. "Happy 1".."Happy 5", "Unhappy 1".."Unhappy 12"' } } } },
+  { name: 'get_duplicate_leads', description: 'List recently detected duplicate leads (Happy 3), optionally scoped to a dealer or period.', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, when: { type: 'STRING' } } } },
+  { name: 'get_sla_breaches', description: 'SLA breach history plus leads CURRENTLY sitting in breach, optionally scoped to a dealer or period.', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, when: { type: 'STRING' } } } },
+  { name: 'get_out_of_order_events', description: 'Unhappy 7 — dealer updates that arrived before their enquiry existed in MG\'s system, held for replay.', parameters: { type: 'OBJECT', properties: {} } },
+  { name: 'get_integration_logs', description: 'Drill down into raw integration error/event logs, optionally filtered by dealer, date range, scenario code, or status (SUCCESS/FAILED).', parameters: { type: 'OBJECT', properties: { dealerName: { type: 'STRING' }, scenarioCode: { type: 'STRING' }, status: { type: 'STRING' }, fromDate: { type: 'STRING' }, toDate: { type: 'STRING' } } } },
 ];
 
 const DEALER_TOOLS = [
-  { name: 'get_my_leads', description: "List the current dealer's own leads, optionally filtered by status.", parameters: { type: 'OBJECT', properties: { status: { type: 'STRING' } } } },
-  { name: 'get_my_lead_detail', description: "Look up one of the current dealer's own leads by ID or customer name — includes when it came in and when it was last updated.", parameters: { type: 'OBJECT', properties: { leadIdOrCustomerName: { type: 'STRING' } }, required: ['leadIdOrCustomerName'] } },
+  { name: 'get_my_leads', description: "List the current dealer's own leads, optionally filtered by the real MG lead status.", parameters: { type: 'OBJECT', properties: { leadStatus: { type: 'STRING' } } } },
+  { name: 'get_my_lead_detail', description: "Look up one of the current dealer's own leads by ID or customer name — includes status and its sync timeline.", parameters: { type: 'OBJECT', properties: { leadIdOrCustomerName: { type: 'STRING' } }, required: ['leadIdOrCustomerName'] } },
+  { name: 'get_my_happy_unhappy_summary', description: "Happy/Unhappy path breakdown for the current dealer's own leads only, optionally scoped to a period or one scenario code.", parameters: { type: 'OBJECT', properties: { when: { type: 'STRING' }, scenarioCode: { type: 'STRING' } } } },
+  { name: 'get_my_sla_status', description: "SLA breach history and current breaches for the current dealer's own leads only.", parameters: { type: 'OBJECT', properties: { when: { type: 'STRING' } } } },
 ];
 
 async function runTool(catalystApp, ctx, name, args) {
-  if (ctx.role === 'admin') {
-    switch (name) {
-      case 'list_dealers': return toolListDealers(catalystApp, args);
-      case 'get_dealer_detail': return toolDealerDetail(catalystApp, args);
-      case 'get_dealer_leads': return toolDealerLeads(catalystApp, args);
-      case 'get_dealer_performance': return toolDealerPerformance(catalystApp, args);
-      case 'get_lead_detail': return toolLeadDetail(catalystApp, args, null);
-      case 'get_network_summary': return toolNetworkSummary(catalystApp);
-      default: return { error: `Unknown tool ${name}` };
+  try {
+    if (ctx.role === 'admin') {
+      switch (name) {
+        case 'get_dashboard_summary': return await aiTools.getDashboardSummary(catalystApp);
+        case 'get_dealers': return await aiTools.getDealers(catalystApp, args.search);
+        case 'get_dealer_detail': return await aiTools.getDealerDetail(catalystApp, args.dealerName);
+        case 'get_dealer_leads': return await aiTools.getDealerLeads(catalystApp, args.dealerName, { leadStatus: args.leadStatus });
+        case 'get_lead_detail': return await aiTools.getLeadDetailByIdentifier(catalystApp, args.leadIdOrCustomerName);
+        case 'get_happy_unhappy_summary': return await aiTools.getHappyUnhappySummary(catalystApp, args);
+        case 'get_duplicate_leads': return await aiTools.getDuplicateLeads(catalystApp, args);
+        case 'get_sla_breaches': return await aiTools.getSlaBreaches(catalystApp, args);
+        case 'get_out_of_order_events': {
+          const events = await aiTools.getOutOfOrderEvents(catalystApp);
+          return { count: events.length, events };
+        }
+        case 'get_integration_logs': {
+          let dealerCode;
+          if (args.dealerName) {
+            const { dealer } = await aiTools.resolveDealerByNameOrCode(catalystApp, args.dealerName);
+            if (!dealer) return { error: `No dealer found matching "${args.dealerName}".` };
+            dealerCode = dealer.dealer_code;
+          }
+          return await aiTools.getIntegrationLogs(catalystApp, { ...args, dealerCode });
+        }
+        default: return { error: `Unknown tool ${name}` };
+      }
     }
-  }
-  if (ctx.role === 'dealer') {
-    switch (name) {
-      case 'get_my_leads': return toolMyLeads(catalystApp, ctx.dealerId, args);
-      case 'get_my_lead_detail': return toolLeadDetail(catalystApp, args, ctx.dealerId);
-      default: return { error: `Unknown tool ${name}` };
+    if (ctx.role === 'dealer') {
+      switch (name) {
+        case 'get_my_leads': return await aiTools.getMyLeads(catalystApp, ctx.dealerCode, { leadStatus: args.leadStatus });
+        case 'get_my_lead_detail': return await aiTools.getLeadDetailByIdentifier(catalystApp, args.leadIdOrCustomerName, { dealerCodeScope: ctx.dealerCode });
+        case 'get_my_happy_unhappy_summary': return await aiTools.getHappyUnhappySummary(catalystApp, { ...args, dealerCode: ctx.dealerCode });
+        case 'get_my_sla_status': return await aiTools.getSlaBreaches(catalystApp, { ...args, dealerCode: ctx.dealerCode });
+        default: return { error: `Unknown tool ${name}` };
+      }
     }
+    return { error: "Could not confirm your account role, so live data lookups aren't available right now." };
+  } catch (err) {
+    logger.error('aiAssistantRoutes', `tool ${name} failed`, err);
+    return { error: "I couldn't retrieve that data right now." };
   }
-  return { error: "Could not confirm your account role, so live data lookups aren't available right now." };
 }
 
 function systemPromptFor(ctx) {
@@ -247,13 +111,25 @@ function systemPromptFor(ctx) {
     + 'Answer concisely and in plain language, using the tools to fetch real data instead of guessing. '
     + 'Dates from tools are timestamps in the platform\'s stored format — describe them in relative, human terms '
     + '(e.g. "3 days ago") when that helps. If a tool returns an error, say so plainly instead of inventing an answer. '
+    + 'If a request is genuinely ambiguous (e.g. "show me the leads" with no dealer or status given), ask one short '
+    + 'clarifying question instead of guessing — but if the conversation already makes the intent clear, just answer. '
+    + 'Each tool call is a real network + database round trip, so call only the tools you actually need: for a broad '
+    + '"summary" style question, one summary-shaped tool (get_dashboard_summary, or get_happy_unhappy_summary if the '
+    + "question is about paths/duplicates/SLA/today/this week) is normally enough — don't chain a second broad tool "
+    + 'just to pad the answer. Chain multiple tools only when the question genuinely needs data from more than one '
+    + '(e.g. a specific dealer\'s Happy/Unhappy breakdown needs a dealer lookup plus the path summary for that dealer). '
     + 'Never reveal internal IDs, table names, or API details.';
 
   if (ctx.role === 'admin') {
-    return `${base} You are talking to a network admin. They can ask about any dealer, a dealer's leads and performance, and individual lead timelines (when a lead came in, and when a dealer last updated it).`;
+    return `${base} You are talking to a network admin/view-only user. They can ask about any dealer, any dealer's `
+      + 'leads, individual lead detail and timelines, Happy/Unhappy path counts (there are 5 Happy and 12 Unhappy '
+      + 'scenarios, e.g. "Unhappy 10" is an SLA breach and "Happy 3" is a detected duplicate), integration health, '
+      + 'duplicate leads, SLA breaches, and out-of-order events.';
   }
   if (ctx.role === 'dealer') {
-    return `${base} You are talking to ${ctx.dealerName || 'a dealer'}. They can only see their own leads — never imply you can show another dealer's data. Also help with general questions about how the portal works (what lead statuses mean, how delivery/sync works, etc.).`;
+    return `${base} You are talking to ${ctx.dealerName || 'a dealer'}. They can only see their own leads — never `
+      + "imply you can show another dealer's data. They can ask about their own leads, lead statuses, Happy/Unhappy "
+      + 'path activity, and SLA status, plus general questions about how the portal works.';
   }
   return `${base} This user's role could not be confirmed, so data tools are unavailable — help only with general questions about how the portal works.`;
 }
@@ -262,8 +138,19 @@ function systemPromptFor(ctx) {
 /* Gemini call loop                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * NOTE: an earlier version of this function streamed via
+ * :streamGenerateContent?alt=sse for token-by-token rendering. That broke
+ * every query in production (every reply fell through to "I couldn't find
+ * an answer to that.", including plain greetings needing no tool call at
+ * all) in a way that couldn't be diagnosed without live server logs this
+ * environment doesn't have access to, so it was reverted back to this
+ * known-working one-shot call. Do not reintroduce streaming here without a
+ * way to verify the SSE parsing against Gemini's actual response shape
+ * first.
+ */
 async function callGemini({ systemPrompt, contents, tools }) {
-  const res = await fetch(`${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`, {
+  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -302,10 +189,16 @@ async function runAssistant(catalystApp, ctx, message, history) {
     }
 
     const { name, args } = functionCallPart.functionCall;
-    const result = await runTool(catalystApp, ctx, name, args || {});
+    const rawResult = await runTool(catalystApp, ctx, name, args || {});
+    // Gemini's function_response.response field must be a JSON object —
+    // it rejects a bare array with a 400 ("Proto field is not repeating,
+    // cannot start list"). Every tool above already returns an object,
+    // but this guard makes that a guarantee rather than a convention any
+    // future tool could silently break.
+    const result = Array.isArray(rawResult) ? { items: rawResult } : rawResult;
 
     // Push the model's turn back exactly as returned — Gemini 3 attaches
-    // a thoughtSignature to each functionCall part and rejects the nexttoolListDealers
+    // a thoughtSignature to each functionCall part and rejects the next
     // step if it isn't echoed back unchanged.
     contents.push({ role: 'model', parts });
     contents.push({ role: 'function', parts: [{ functionResponse: { name, response: result } }] });
@@ -326,7 +219,7 @@ async function transcribeSpeech(buffer, mimetype) {
 
   const res = await fetch('https://api.sarvam.ai/speech-to-text', {
     method: 'POST',
-    headers: { 'api-subscription-key': process.env.SARVAM_API_KEY },
+    headers: { 'api-subscription-key': SARVAM_API_KEY },
     body: form,
   });
   if (!res.ok) {
@@ -341,7 +234,7 @@ async function synthesizeSpeech(text) {
     const res = await fetch('https://api.sarvam.ai/text-to-speech', {
       method: 'POST',
       headers: {
-        'api-subscription-key': process.env.SARVAM_API_KEY,
+        'api-subscription-key': SARVAM_API_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -366,11 +259,11 @@ async function synthesizeSpeech(text) {
 /* Routes                                                              */
 /* ------------------------------------------------------------------ */
 
-// POST /ai-assistant/query  { message, history?, voice? }
+// POST /ai-assistant/query  { message, history? }
 router.post('/ai-assistant/query', async (req, res) => {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on this function.' });
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'gemini_api_key is not configured on this function.' });
     }
     const { message, history = [] } = req.body;
     if (!message || !message.trim()) {
@@ -381,8 +274,32 @@ router.post('/ai-assistant/query', async (req, res) => {
     const ctx = await resolveAiContext(catalystApp, res.locals.currentUser);
     const reply = await runAssistant(catalystApp, ctx, message.trim(), history);
 
-    const audio = process.env.SARVAM_API_KEY ? await synthesizeSpeech(reply) : null;
+    const audio = SARVAM_API_KEY ? await synthesizeSpeech(reply) : null;
     res.status(200).json({ reply, audio });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /ai-assistant/transcribe  multipart: audio (file)
+// Speech-to-text ONLY — no Gemini call, no TTS. Added so the frontend can
+// show the user's transcribed message immediately (ChatGPT-style: speak ->
+// see your own message right away -> thinking -> reply), then hand the
+// transcript to the existing, unchanged POST /ai-assistant/query for the
+// actual assistant turn (which already returns TTS audio when configured).
+// Reuses the same transcribeSpeech() helper /ai-assistant/voice already
+// used — that combined endpoint is left in place, untouched, for anything
+// still calling it.
+router.post('/ai-assistant/transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    if (!SARVAM_API_KEY) {
+      return res.status(500).json({ error: 'Sarvam_api_key is not configured on this function.' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'audio file is required' });
+    }
+    const transcript = await transcribeSpeech(req.file.buffer, req.file.mimetype);
+    res.status(200).json({ transcript: transcript.trim() });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -391,11 +308,11 @@ router.post('/ai-assistant/query', async (req, res) => {
 // POST /ai-assistant/voice  multipart: audio (file), history (JSON string, optional)
 router.post('/ai-assistant/voice', upload.single('audio'), async (req, res) => {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on this function.' });
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'gemini_api_key is not configured on this function.' });
     }
-    if (!process.env.SARVAM_API_KEY) {
-      return res.status(500).json({ error: 'SARVAM_API_KEY is not configured on this function.' });
+    if (!SARVAM_API_KEY) {
+      return res.status(500).json({ error: 'Sarvam_api_key is not configured on this function.' });
     }
     if (!req.file) {
       return res.status(400).json({ error: 'audio file is required' });
@@ -425,3 +342,5 @@ router.post('/ai-assistant/voice', upload.single('audio'), async (req, res) => {
 });
 
 module.exports = router;
+
+

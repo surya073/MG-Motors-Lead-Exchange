@@ -54,4 +54,23 @@ function getIntegrationCredentialsKey() {
   return key;
 }
 
-module.exports = { getZohoConfig, getIntegrationCredentialsKey };
+/**
+ * Not added to REQUIRED_VARS / not throwing when missing — the AI
+ * assistant routes already degrade gracefully (a clear "not configured"
+ * error response) when these are absent, unlike Zoho config which every
+ * sync call depends on.
+ *
+ * Names/casing here MUST match catalyst-config.json exactly
+ * (`gemini_api_key`, `Sarvam_api_key`) — process.env keys are
+ * case-sensitive, and a mismatch here previously made the AI assistant
+ * 500 on every request despite the keys being configured.
+ */
+function getAiAssistantConfig() {
+  return {
+    geminiApiKey: process.env.gemini_api_key,
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    sarvamApiKey: process.env.Sarvam_api_key,
+  };
+}
+
+module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig };

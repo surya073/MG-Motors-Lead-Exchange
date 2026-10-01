@@ -18,6 +18,7 @@ const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService'); // NEW
 const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
+const aiAssistantToolService = require('../services/aiAssistantToolService');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -74,49 +75,12 @@ const dealerDetailCache = new Map();
 router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = res.locals.catalystApp;
   try {
-    const rows = await catalystApp.zcql().executeZCQLQuery(
-      "SELECT * FROM integration_logs WHERE happy_unhappy_path_name = 'Unhappy 7' ORDER BY CREATEDTIME DESC LIMIT 0, 200"
-    );
-
-    const groups = new Map();
-    rows.forEach((wrapped) => {
-      const log = wrapped.integration_logs;
-      if (!log.external_lead_id) return;
-      const key = `${log.integration_id || log.dealer_code}:${log.external_lead_id}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          dealerCode: log.dealer_code,
-          integrationId: log.integration_id,
-          externalLeadId: log.external_lead_id,
-          zohoLeadId: log.zoho_lead_id || null,
-          logs: [],
-        });
-      }
-      groups.get(key).logs.push(log);
-    });
-
-    const events = [...groups.values()].map((group) => {
-      const statuses = group.logs.map((log) => log.status);
-      const held = group.logs.filter((log) => log.error_message === 'LEAD_MAPPING_NOT_FOUND');
-      const expiry = group.logs.find((log) => String(log.error_message || '').startsWith('OUT_OF_ORDER_EXPIRED'));
-      let state = 'HELD';
-      if (statuses.includes('RECOVERED')) state = 'RELEASED';
-      else if (expiry || statuses.includes('EXPIRED')) state = 'EXPIRED';
-      const heldSince = held.map((log) => log.CREATEDTIME).sort()[0] || group.logs[group.logs.length - 1].CREATEDTIME;
-      return {
-        dealerCode: group.dealerCode,
-        externalLeadId: group.externalLeadId,
-        zohoLeadId: group.zohoLeadId,
-        state,
-        heldSince,
-        expiredAt: expiry ? expiry.CREATEDTIME : null,
-        heldEvents: held.length,
-        reason: expiry
-          ? String(expiry.error_message).replace(/^OUT_OF_ORDER_EXPIRED:\s*/, '')
-          : 'Dealer update arrived before its MG enquiry was linked; held for replay.',
-        integrationId: group.integrationId,
-      };
-    });
+    // Core grouping/classification lives in aiAssistantToolService.js so
+    // the AI assistant's get_out_of_order_events tool and this route share
+    // one implementation — everything below this call is enrichment
+    // specific to this route (live dealer-CRM lookups), not duplicated
+    // logic.
+    const events = await aiAssistantToolService.getOutOfOrderEvents(catalystApp);
 
     // Live dealer-side context (name, status) for the most recent records.
     const integrations = new Map();

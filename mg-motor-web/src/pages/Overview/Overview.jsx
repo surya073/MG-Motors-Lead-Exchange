@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
@@ -184,6 +184,7 @@ const ICONS = {
   trophy: "M8 21h8M12 17v4M7 4h10v4a5 5 0 01-10 0V4zM7 5H4a3 3 0 003 3M17 5h3a3 3 0 01-3 3",
   mic: "M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v1a7 7 0 01-14 0v-1M12 18v4m-4 0h8",
   square: "M5 5h14v14H5z",
+  volume: "M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07",
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -1024,22 +1025,106 @@ function PipelineStageBar({ segments, total }) {
 }
 
 const ADMIN_AI_SUGGESTIONS = [
-  "Top performing dealer",
-  "Leads for [dealer name]",
-  "How is [dealer name] performing?",
-  "Details on lead [customer name]",
-  "Network lead summary",
-  "Dealers in [region]",
+  "Give me today's summary",
+  "Show integration issues",
+  "Show unhappy leads",
+  "Show duplicate leads",
+  "Check dealer health",
+  "Show SLA breaches",
 ];
 
 const DEALER_AI_SUGGESTIONS = [
   "Show my recent leads",
+  "Show my unhappy leads",
+  "Any SLA issues on my leads?",
   "Details on [customer name]",
-  "What does 'delivered' mean?",
-  "How often does data sync?",
   "My pending leads",
   "How is a lead marked lost?",
 ];
+
+// Minimal markdown-lite rendering for assistant replies — **bold**, "-"/"•"
+// bullet lines, "1." numbered lines, and blank-line paragraph breaks. Not a
+// general markdown parser (no tables/links/code blocks): the system prompt
+// only ever produces this small, predictable subset (short prose plus
+// simple metric lists), so a tiny hand-rolled pass avoids pulling in
+// react-markdown's whole remark/rehype dependency tree for a feature this
+// small. Pure function, defined once at module scope — never recreated per
+// render.
+function renderAssistantText(text) {
+  const lines = String(text || "").split("\n");
+  const blocks = [];
+  let currentList = null;
+
+  const flushList = () => {
+    if (currentList) {
+      blocks.push(currentList);
+      currentList = null;
+    }
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    const bulletMatch = /^[-•]\s+(.*)$/.exec(line);
+    const numberedMatch = /^\d+[.)]\s+(.*)$/.exec(line);
+
+    if (bulletMatch) {
+      if (!currentList || currentList.type !== "ul") {
+        flushList();
+        currentList = { type: "ul", items: [] };
+      }
+      currentList.items.push(bulletMatch[1]);
+    } else if (numberedMatch) {
+      if (!currentList || currentList.type !== "ol") {
+        flushList();
+        currentList = { type: "ol", items: [] };
+      }
+      currentList.items.push(numberedMatch[1]);
+    } else {
+      flushList();
+      blocks.push(line ? { type: "p", text: line } : { type: "br" });
+    }
+  });
+  flushList();
+
+  const renderInline = (str, key) =>
+    str
+      .split(/(\*\*[^*]+\*\*)/g)
+      .filter(Boolean)
+      .map((part, i) =>
+        part.startsWith("**") && part.endsWith("**") ? (
+          <strong key={`${key}-${i}`}>{part.slice(2, -2)}</strong>
+        ) : (
+          <span key={`${key}-${i}`}>{part}</span>
+        )
+      );
+
+  return blocks.map((block, i) => {
+    if (block.type === "ul") {
+      return (
+        <ul key={i} className="ai-msg__list">
+          {block.items.map((item, j) => (
+            <li key={j}>{renderInline(item, `ul-${i}-${j}`)}</li>
+          ))}
+        </ul>
+      );
+    }
+    if (block.type === "ol") {
+      return (
+        <ol key={i} className="ai-msg__list">
+          {block.items.map((item, j) => (
+            <li key={j}>{renderInline(item, `ol-${i}-${j}`)}</li>
+          ))}
+        </ol>
+      );
+    }
+    if (block.type === "br") return <br key={i} />;
+    return (
+      <p key={i} className="ai-msg__p">
+        {renderInline(block.text, `p-${i}`)}
+      </p>
+    );
+  });
+}
 
 function AIAssistantPanel({ isDealer }) {
   const [open, setOpen] = useState(false);
@@ -1048,43 +1133,83 @@ function AIAssistantPanel({ isDealer }) {
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [nearBottom, setNearBottom] = useState(true);
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const audioPlayerRef = useRef(null);
   const messagesEndRef = useRef(null);
-
+  const bodyRef = useRef(null);
 
   const busy = sending || recording || transcribing;
+  const suggestions = isDealer ? DEALER_AI_SUGGESTIONS : ADMIN_AI_SUGGESTIONS;
 
+  // Only auto-scroll while the user is already near the bottom — someone
+  // reading back up through history shouldn't get yanked down by a new
+  // chunk arriving. See handleScroll/scrollToLatest below for the other
+  // half of this (the "jump to latest" pill).
   useEffect(() => {
-  messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, sending, transcribing]);
+    if (nearBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [messages, nearBottom]);
 
-  function historyForApi() {
-    return messages.map((m) => ({ role: m.role, text: m.text }));
-  }
+  const handleScroll = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setNearBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  }, []);
 
-  async function handleSend(text) {
+  const scrollToLatest = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    setNearBottom(true);
+  }, []);
+
+  const historyForApi = useCallback(
+    () => messages.map((m) => ({ role: m.role, text: m.text })),
+    [messages]
+  );
+
+  const handleSend = useCallback(async (text) => {
     const prompt = (text ?? input).trim();
     if (!prompt || busy) return;
 
     const priorHistory = historyForApi();
-    setMessages((m) => [...m, { role: "user", text: prompt }]);
+    // Both bubbles land in one state update: the user's message, and an
+    // empty assistant placeholder (renders as the typing dots, replaced
+    // with the full reply once it arrives — see the note in
+    // aiAssistantService.js on why this isn't true token streaming).
+    setMessages((m) => [...m, { role: "user", text: prompt }, { role: "assistant", text: "" }]);
     setInput("");
     setSending(true);
+
     try {
-      const { reply } = await aiAssistantService.ask(prompt, priorHistory);
-      setMessages((m) => [...m, { role: "assistant", text: reply }]);
+      const { reply, audio } = await aiAssistantService.ask(prompt, priorHistory);
+      setMessages((m) => {
+        const next = [...m];
+        next[next.length - 1] = { role: "assistant", text: reply || next[next.length - 1].text };
+        return next;
+      });
+      if (audio && audioPlayerRef.current) {
+        audioPlayerRef.current.src = `data:audio/wav;base64,${audio}`;
+        audioPlayerRef.current.play().catch(() => {});
+      }
     } catch (err) {
-      setMessages((m) => [...m, {
-        role: "assistant",
-        text: err?.response?.data?.error || "Sorry, I couldn't reach the assistant just now.",
-      }]);
+      setMessages((m) => {
+        const next = [...m];
+        next[next.length - 1] = {
+          role: "assistant",
+          text: err?.response?.data?.error || "Sorry, I couldn't reach the assistant just now.",
+          failed: true,
+          retryPrompt: prompt,
+        };
+        return next;
+      });
     } finally {
       setSending(false);
     }
-  }
+  }, [input, busy, historyForApi]);
 
   async function startRecording() {
     try {
@@ -1120,24 +1245,55 @@ function AIAssistantPanel({ isDealer }) {
     setRecording(false);
   }
 
+  // Mic button behaves differently depending on current state:
+  //   idle      -> start recording
+  //   listening -> stop recording (sends what was captured)
+  //   speaking  -> interrupt TTS playback immediately, return to idle
+  //                (does NOT auto-start a new recording — a separate click
+  //                does that, matching the requested state table)
+  // Deliberately does nothing while "processing" (transcribing/sending) —
+  // there's no in-flight audio or recording to stop at that point.
+  const handleMicClick = useCallback(() => {
+    if (speaking) {
+      const el = audioPlayerRef.current;
+      if (el) {
+        el.pause();
+        el.currentTime = 0;
+      }
+      setSpeaking(false); // belt-and-suspenders: pause() already fires onPause above
+      return;
+    }
+    if (recording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [speaking, recording]);
+
   async function handleVoiceMessage(blob) {
-    const priorHistory = historyForApi();
     setTranscribing(true);
     try {
-      const { transcript, reply, audio } = await aiAssistantService.askByVoice(blob, priorHistory);
-      if (transcript) setMessages((m) => [...m, { role: "user", text: transcript }]);
-      setMessages((m) => [...m, { role: "assistant", text: reply }]);
-      if (audio && audioPlayerRef.current) {
-        audioPlayerRef.current.src = `data:audio/wav;base64,${audio}`;
-        audioPlayerRef.current.play().catch(() => {});
+      const { transcript } = await aiAssistantService.transcribe(blob);
+      setTranscribing(false);
+      if (!transcript || !transcript.trim()) {
+        setMessages((m) => [...m, {
+          role: "assistant",
+          text: "I couldn't make out what you said — could you try again?",
+        }]);
+        return;
       }
+      // From here on it's identical to a typed message: your words appear
+      // as a normal user bubble immediately, then handleSend pushes the
+      // thinking placeholder and calls the same /ai-assistant/query
+      // endpoint (with its existing TTS playback) that typed messages
+      // already use — voice only changes how the text got here.
+      await handleSend(transcript.trim());
     } catch (err) {
+      setTranscribing(false);
       setMessages((m) => [...m, {
         role: "assistant",
         text: err?.response?.data?.error || "Sorry, I couldn't process that recording.",
       }]);
-    } finally {
-      setTranscribing(false);
     }
   }
 
@@ -1166,63 +1322,109 @@ function AIAssistantPanel({ isDealer }) {
           </button>
         </div>
 
-        <div className="ai-panel__search">
-          <Icon name="search" size={15} />
-          <input
-            type="text"
-            placeholder={recording ? "Listening…" : "Ask about leads, dealers, syncs…"}
-            value={input}
-            disabled={recording || transcribing}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-          />
-          <button
-            type="button"
-            className={`ai-panel__mic${recording ? " ai-panel__mic--recording" : ""}`}
-            onClick={recording ? stopRecording : startRecording}
-            disabled={sending || transcribing}
-            aria-pressed={recording}
-            aria-label={recording ? "Stop recording" : "Ask by voice"}
-          >
-            <Icon name={recording ? "square" : "mic"} size={15} />
-          </button>
-          <button type="button" onClick={() => handleSend()} disabled={busy} aria-label="Send">
-            <Icon name="send" size={15} />
-          </button>
-        </div>
-
-        <div className="ai-panel__body">
+        <div className="ai-panel__body" ref={bodyRef} onScroll={handleScroll}>
           {messages.length === 0 ? (
             <div className="ai-panel__empty">
               <span className="ai-panel__empty-icon"><Icon name="zap" size={20} /></span>
-              <p>Ask me anything about your dashboard, or try a suggestion below.</p>
+              <h4>MG Motor Assistant</h4>
+              <p>Ask me anything about your dealers, leads, integrations or dashboard.</p>
+              <div className="ai-panel__suggestions">
+                {suggestions.map((s) => (
+                  <button type="button" key={s} className="ai-chip" onClick={() => handleSend(s)} disabled={busy}>
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="ai-panel__messages">
-              {messages.map((m, i) => (
-                <div key={i} className={`ai-msg ai-msg--${m.role}`}>{m.text}</div>
-              ))}
-              {(sending || transcribing) && (
-                <div className="ai-msg ai-msg--assistant ai-msg--typing">
-                  <span className="ai-typing-dot" />
-                  <span className="ai-typing-dot" />
-                  <span className="ai-typing-dot" />
-                </div>
-              )}
+              {messages.map((m, i) => {
+                const isEmptyAssistant = m.role === "assistant" && !m.text && !m.failed;
+                return (
+                  <div
+                    key={i}
+                    className={`ai-msg ai-msg--${m.role}${isEmptyAssistant ? " ai-msg--typing" : ""}${m.failed ? " ai-msg--error" : ""}`}
+                  >
+                    {m.role === "assistant" ? (
+                      // Keying on isEmptyAssistant gives the dots->text
+                      // swap a fresh mount, so it picks up
+                      // .ai-msg__content's fade-in instead of popping in.
+                      <span key={isEmptyAssistant ? "dots" : "text"} className="ai-msg__content">
+                        {isEmptyAssistant ? (
+                          <span className="ai-msg__dots">
+                            <span className="ai-typing-dot" />
+                            <span className="ai-typing-dot" />
+                            <span className="ai-typing-dot" />
+                            <span className="ai-msg__thinking-label">Thinking…</span>
+                          </span>
+                        ) : (
+                          renderAssistantText(m.text)
+                        )}
+                      </span>
+                    ) : (
+                      m.text
+                    )}
+                    {m.failed && (
+                      <button type="button" className="ai-msg__retry" onClick={() => handleSend(m.retryPrompt)}>
+                        Try again
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
           )}
         </div>
 
-        <div className="ai-panel__suggestions">
-          {(isDealer ? DEALER_AI_SUGGESTIONS : ADMIN_AI_SUGGESTIONS).map((s) => (
-            <button type="button" key={s} className="ai-chip" onClick={() => handleSend(s)} disabled={busy}>
-              {s}
-            </button>
-          ))}
+        {!nearBottom && messages.length > 0 && (
+          <button type="button" className="ai-panel__jump-latest" onClick={scrollToLatest}>
+            <Icon name="chevronDown" size={13} /> Jump to latest
+          </button>
+        )}
+
+        <div className="ai-panel__composer">
+          <textarea
+            rows={1}
+            placeholder={recording ? "Listening…" : "Ask about dealers, leads, integrations…"}
+            value={input}
+            disabled={busy}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className={`ai-panel__mic ai-panel__mic--${recording ? "listening" : transcribing ? "processing" : speaking ? "speaking" : "idle"}`}
+            onClick={handleMicClick}
+            disabled={sending || transcribing}
+            aria-pressed={recording}
+            aria-label={recording ? "Stop recording" : speaking ? "Stop speaking" : "Ask by voice"}
+          >
+            <Icon name={recording ? "square" : transcribing ? "refresh" : speaking ? "volume" : "mic"} size={15} />
+          </button>
+          <button
+            type="button"
+            className="ai-panel__send"
+            onClick={() => handleSend()}
+            disabled={busy || !input.trim()}
+            aria-label="Send"
+          >
+            <Icon name="send" size={15} />
+          </button>
         </div>
 
-        <audio ref={audioPlayerRef} hidden />
+        <audio
+          ref={audioPlayerRef}
+          hidden
+          onPlay={() => setSpeaking(true)}
+          onEnded={() => setSpeaking(false)}
+          onPause={() => setSpeaking(false)}
+        />
       </div>
     </>
   );

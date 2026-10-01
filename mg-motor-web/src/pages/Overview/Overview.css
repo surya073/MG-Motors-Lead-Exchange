@@ -1775,7 +1775,7 @@ ul{
   right: var(--space-4);
   bottom: 0;
   height: 1px;
-  background: linear-gradient(90deg, var(--color-primary) 0%, transparent 70%);
+ background: linear-gradient(184deg, var(--color-primary) 0, #d6bebebf 141%);
   opacity: 0.35;
 }
 
@@ -1808,36 +1808,64 @@ ul{
   box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
 }
 
-.ai-panel__search {
+/* Composer — pinned to the bottom of the panel's flex column (it's simply
+   last in DOM order inside a flex-direction:column parent, no position:
+   absolute needed). Replaces the old .ai-panel__search, which used to sit
+   just under the header with the message list below it. */
+.ai-panel__composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
-  margin: 0 var(--space-4);
-  padding: var(--space-2) var(--space-3);
+  flex-shrink: 0;
+  margin: 0 var(--space-4) var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background-color: var(--color-surface);
-  color: var(--color-text-muted);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.ai-panel__search:focus-within {
+.ai-panel__composer:focus-within {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
-.ai-panel__search input {
+.ai-panel__composer textarea {
   flex: 1;
   border: none;
   outline: none;
   background: none;
+  resize: none;
+  max-height: 96px;
+  padding: var(--space-2) 0;
+  font-family: inherit;
   font-size: var(--fs-sm);
+  line-height: 1.4;
   color: var(--color-text-primary);
 }
 
-.ai-panel__search button {
+.ai-panel__composer textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ai-panel__send {
   display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
   color: var(--color-primary);
+  transition: background-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.ai-panel__send:hover:not(:disabled) {
+  background-color: var(--color-primary-soft);
+}
+
+.ai-panel__send:disabled {
+  opacity: 0.4;
 }
 
 .ai-panel__body {
@@ -1863,10 +1891,22 @@ ul{
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: var(--space-3);
-  padding: var(--space-6, 40px) var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-5, 32px) var(--space-3) var(--space-3);
   color: var(--color-text-muted);
   font-size: var(--fs-sm);
+}
+
+.ai-panel__empty h4 {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.ai-panel__empty p {
+  margin: 0 0 var(--space-2);
+  max-width: 240px;
 }
 
 .ai-panel__empty-icon {
@@ -1916,19 +1956,22 @@ ul{
   border-bottom-left-radius: var(--space-1, 4px);
 }
 
+/* Compact chips, shown only in the empty state (see AIAssistantPanel JSX) —
+   wrap naturally at any panel width instead of a fixed 2-column grid. */
 .ai-panel__suggestions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
 }
 
 .ai-chip {
-  padding: var(--space-2) var(--space-3);
+  padding: 5px 10px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  font-size: var(--fs-xs);
-  text-align: left;
+  border-radius: var(--radius-full, 999px);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
   color: var(--color-text-secondary);
   background-color: var(--color-surface);
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
@@ -1956,10 +1999,6 @@ ul{
     width: auto;
     bottom: calc(var(--space-4) + 64px);
     max-height: 72vh;
-  }
-
-  .ai-panel__suggestions {
-    grid-template-columns: 1fr;
   }
 
   .ai-fab {
@@ -1998,10 +2037,33 @@ ul{
   opacity: 0.5;
 }
 
-.ai-panel__mic--recording {
+/* idle needs no extra rule — it's the button's default state above.
+   listening / processing / speaking are the three active voice states
+   (see the request's spec: 🔴 Listening / ◌ Processing / 🔊 Speaking). */
+.ai-panel__mic--listening {
   color: var(--color-white);
   background-color: var(--color-danger, #DC2626);
   animation: ai-mic-pulse 1.2s ease-in-out infinite;
+}
+
+.ai-panel__mic--processing svg {
+  animation: ai-mic-spin 0.9s linear infinite;
+}
+
+.ai-panel__mic--speaking {
+  color: var(--color-white);
+  background-color: var(--color-primary);
+  animation: ai-mic-pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes ai-mic-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ai-mic-pulse-soft {
+  0%, 100% { box-shadow: 0 0 0 0 var(--color-primary-soft); }
+  50% { box-shadow: 0 0 0 6px transparent; }
 }
 
 @keyframes ai-mic-pulse {
@@ -2009,11 +2071,65 @@ ul{
   50% { box-shadow: 0 0 0 8px rgba(220, 38, 38, 0); }
 }
 
+/* Gemini-style "thinking" bubble: a subtle animated gradient ring around
+   the bubble plus a soft pulsing glow, instead of a plain spinner. The ring
+   is a pseudo-element masked down to just its border (mask-composite:
+   exclude), so only an outline is visible, not a filled gradient block. */
 .ai-msg--typing {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: var(--space-3);
+  z-index: 0;
+  overflow: visible;
+  box-shadow: 0 0 0 1px var(--color-primary-soft), 0 0 14px 1px var(--color-primary-soft);
+  animation: ai-thinking-glow 2.4s ease-in-out infinite;
+}
+
+.ai-msg--typing::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(115deg, var(--color-primary), #a78bfa, var(--color-primary));
+  background-size: 220% 220%;
+  animation: ai-thinking-gradient 2.8s ease infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+@keyframes ai-thinking-gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes ai-thinking-glow {
+  0%, 100% { box-shadow: 0 0 0 1px var(--color-primary-soft), 0 0 10px 0px var(--color-primary-soft); }
+  50% { box-shadow: 0 0 0 1px var(--color-primary-soft), 0 0 16px 3px var(--color-primary-soft); }
+}
+
+.ai-msg__thinking-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 2px;
+}
+
+/* Fresh element on the dots->text swap (see the JSX key) picks this up as
+   a mount animation, giving a smooth fade instead of an abrupt pop. */
+.ai-msg__content {
+  display: block;
+  animation: ai-msg-content-in 0.22s ease-out;
+}
+
+@keyframes ai-msg-content-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .ai-typing-dot {
@@ -2030,6 +2146,83 @@ ul{
 @keyframes ai-typing-bounce {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
   30% { transform: translateY(-3px); opacity: 1; }
+}
+
+.ai-msg__dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Minimal markdown rendering inside assistant bubbles (renderAssistantText
+   in AIAssistantPanel) — bullet/numbered lists and paragraph spacing only;
+   see that function's own comment for why it's intentionally not a full
+   markdown parser. */
+.ai-msg__p {
+  margin: 0 0 var(--space-2);
+}
+
+.ai-msg__p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-msg__list {
+  margin: 0 0 var(--space-2);
+  padding-left: 1.1em;
+}
+
+.ai-msg__list:last-child {
+  margin-bottom: 0;
+}
+
+.ai-msg__list li {
+  margin-bottom: 2px;
+}
+
+.ai-msg--error {
+  border-color: var(--color-danger, #DC2626);
+}
+
+.ai-msg__retry {
+  display: block;
+  margin-top: var(--space-2);
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full, 999px);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-danger, #DC2626);
+  background: none;
+}
+
+.ai-msg__retry:hover {
+  background-color: rgba(220, 38, 38, 0.08);
+}
+
+/* Floating pill shown when new content has arrived while the user has
+   scrolled up away from the bottom (see handleScroll/scrollToLatest). */
+.ai-panel__jump-latest {
+  position: absolute;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full, 999px);
+  background-color: var(--color-surface-glass-strong, var(--color-surface));
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+  z-index: 1;
+}
+
+.ai-panel__jump-latest:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 /* ============================================================

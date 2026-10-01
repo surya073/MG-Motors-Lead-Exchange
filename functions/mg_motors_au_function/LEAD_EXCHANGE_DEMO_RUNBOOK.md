@@ -34,6 +34,8 @@ Configure these Catalyst environment variables before deployment:
 - `OUTBOUND_RETRY_INTERVAL_MINUTES=15` or omit it.
 - `DEALER_WRITABLE_FIELDS`: comma-separated, MG-approved ownership matrix. The conservative default is `lead_status,enquiry_outcome,purchase_classification`. Do not add `dealer_remarks` unless MG first approves a real destination field; `Dealer_Remarks` does not exist.
 - `ALLOW_INSECURE_WEBHOOKS` must be absent/false in production.
+- `gemini_api_key` (lowercase, exact casing matters — `process.env` is case-sensitive) and optionally `GEMINI_MODEL` (defaults to `gemini-3.5-flash`): power the Overview.jsx AI assistant's Gemini tool-calling (`routes/aiAssistantRoutes.js`) and the OnDemand Dashboard's chat (`services/onDemandAiService.js`). Both read the same var — get one key configured, not two.
+- `Sarvam_api_key` (exact casing) — optional; enables the AI assistant's voice input/output (speech-to-text + text-to-speech). Text-only chat works without it.
 
 For each external dealer, complete and test the connection, generate a webhook secret, map every mandatory field shown in the UI, map every dealer status MG has approved, then register the webhook. Do not map `Junk Lead` to `Not Qualified`; both live AU008 and MG picklists contain the exact value `Junk Lead`.
 
