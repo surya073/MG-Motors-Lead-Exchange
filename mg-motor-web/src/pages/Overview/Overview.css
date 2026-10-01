@@ -1685,6 +1685,9 @@ ul{
 /* AI Assistant panel                                                  */
 /* ------------------------------------------------------------------ */
 
+/* Same two-tone gradient as the Overview page's "View Integration" button
+   (.integration-cta__button in components/monitoring.css), plus a glowing
+   border blended from both of that gradient's colors. */
 .ai-fab {
   position: fixed;
   bottom: var(--space-5);
@@ -1695,11 +1698,30 @@ ul{
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+  background-image: linear-gradient(135deg, var(--color-info) 0%, var(--color-primary, var(--color-info)) 100%);
   color: var(--color-white);
-  box-shadow: var(--shadow-glow-primary);
+  box-shadow:
+    0 0 0 2px rgba(47, 111, 237, 0.35),
+    0 8px 22px rgba(208, 2, 27, 0.3),
+    0 0 18px 2px rgba(47, 111, 237, 0.25);
   z-index: var(--z-modal);
-  transition: transform var(--transition-fast);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  animation: ai-fab-glow 2.6s ease-in-out infinite;
+}
+
+@keyframes ai-fab-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px rgba(47, 111, 237, 0.35),
+      0 8px 22px rgba(208, 2, 27, 0.3),
+      0 0 18px 2px rgba(47, 111, 237, 0.25);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px rgba(47, 111, 237, 0.5),
+      0 8px 26px rgba(208, 2, 27, 0.4),
+      0 0 26px 5px rgba(47, 111, 237, 0.4);
+  }
 }
 
 .ai-fab::before {
@@ -1707,7 +1729,7 @@ ul{
   position: absolute;
   inset: -6px;
   border-radius: 50%;
-  border: 2px solid var(--color-primary);
+  border: 2px solid var(--color-info);
   opacity: 0;
   animation: ai-fab-pulse 2.8s ease-out infinite;
 }

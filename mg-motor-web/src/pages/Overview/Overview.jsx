@@ -1305,7 +1305,7 @@ function AIAssistantPanel({ isDealer }) {
         onClick={() => setOpen((o) => !o)}
         aria-label="Open AI Assistant"
       >
-        <Icon name="chat" size={22} />
+        <Icon name="spark" size={22} />
       </button>
 
       <div className={`ai-panel${open ? " ai-panel--open" : ""}`} role="dialog" aria-label="AI Assistant">
