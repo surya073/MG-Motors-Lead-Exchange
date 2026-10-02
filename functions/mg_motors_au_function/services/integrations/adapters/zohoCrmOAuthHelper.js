@@ -16,9 +16,21 @@ const logger = require('../../../utils/logger');
  * In-memory cache keyed by integration_id — access tokens are valid
  * ~1hr per Zoho's docs; refreshing every request would work but wastes
  * a call, so we cache with a safety margin and refresh proactively.
+ *
+ * Single-flight de-duplication (added alongside the 200+ dealer scale
+ * audit): if N concurrent requests for the SAME dealer's Zoho CRM all see
+ * an expired/missing token at once, only the first triggers a real
+ * refresh — the rest await that same in-flight promise. Mirrors
+ * fusionSdOAuthHelper.js's pattern exactly. This only de-dupes within one
+ * warm Catalyst function instance, not across concurrently-invoked
+ * instances — an acceptable mitigation here since Zoho's refresh-token
+ * grant is not single-use/rotating, so the worst case of two instances
+ * both refreshing at once is a wasted extra OAuth call, never lockout or
+ * a corrupted token.
  */
 
 const tokenCache = new Map(); // integrationId -> { accessToken, expiresAt }
+const inFlightRefreshes = new Map(); // integrationId -> Promise<string> (single-flight)
 const SAFETY_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
 
 async function getAccessTokenForDealerZoho(catalystApp, integration) {
@@ -27,6 +39,20 @@ async function getAccessTokenForDealerZoho(catalystApp, integration) {
     return cached.accessToken;
   }
 
+  const existingRefresh = inFlightRefreshes.get(integration.ROWID);
+  if (existingRefresh) {
+    return existingRefresh;
+  }
+
+  const refreshPromise = refreshDealerZohoToken(catalystApp, integration).finally(() => {
+    inFlightRefreshes.delete(integration.ROWID);
+  });
+  inFlightRefreshes.set(integration.ROWID, refreshPromise);
+
+  return refreshPromise;
+}
+
+async function refreshDealerZohoToken(catalystApp, integration) {
   const [clientId, clientSecret, refreshToken] = await Promise.all([
     integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, 'OAUTH2_CLIENT_ID'),
     integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, 'OAUTH2_CLIENT_SECRET'),
@@ -79,4 +105,10 @@ async function getAccessTokenForDealerZoho(catalystApp, integration) {
   return access_token;
 }
 
-module.exports = { getAccessTokenForDealerZoho };
+/** Test-only: clears module-level caches between test runs. */
+function _resetForTests() {
+  tokenCache.clear();
+  inFlightRefreshes.clear();
+}
+
+module.exports = { getAccessTokenForDealerZoho, _resetForTests };

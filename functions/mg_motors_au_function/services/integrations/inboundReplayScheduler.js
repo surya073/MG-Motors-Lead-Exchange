@@ -2,6 +2,7 @@
 
 const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
+const { guardSweep } = require('./sweepOverlapGuard');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -9,6 +10,19 @@ const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const STATUS_MAPPINGS_TABLE = 'integration_status_mappings';
 const MAX_ROWS_TO_SCAN = 200;
 const MAX_REPLAYS_PER_SWEEP = 20;
+
+// Added for the 200+ dealer concurrency audit: MAX_REPLAYS_PER_SWEEP alone
+// is a GLOBAL budget shared across every dealer, in CREATEDTIME order — a
+// single dealer with a large backlog of old failed rows could occupy the
+// entire sweep's budget, starving every other dealer's replay that sweep.
+// This caps how many of those global replay slots any one dealer
+// (integration_id) can consume per sweep; dealers beyond their own cap are
+// simply deferred to the next sweep, not failed or expired.
+const DEFAULT_MAX_REPLAYS_PER_DEALER_PER_SWEEP = 5;
+const configuredMaxPerDealer = Number(process.env.MAX_REPLAYS_PER_DEALER_PER_SWEEP);
+const MAX_REPLAYS_PER_DEALER_PER_SWEEP = Number.isFinite(configuredMaxPerDealer) && configuredMaxPerDealer > 0
+  ? configuredMaxPerDealer
+  : DEFAULT_MAX_REPLAYS_PER_DEALER_PER_SWEEP;
 
 // Unhappy 7 retention: how long an out-of-order dealer update may wait for
 // its MG enquiry before it is expired with a final alert. Default 24h;
@@ -127,7 +141,7 @@ function latest(values) {
  *   - a replay that is still failing is silent (no new log, no new alert);
  *     the original Unhappy 4 stays the single open record.
  */
-async function runInboundReplaySweep(catalystApp) {
+async function runInboundReplaySweepInternal(catalystApp) {
   const queuedRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${INTEGRATION_LOGS_TABLE} WHERE happy_unhappy_path_name IN ('Unhappy 4', 'Unhappy 7', 'Unhappy 9') AND status = 'FAILED' ORDER BY CREATEDTIME ASC LIMIT 0, ${MAX_ROWS_TO_SCAN}`
   );
@@ -142,6 +156,7 @@ async function runInboundReplaySweep(catalystApp) {
     backedOff: 0,
     expired: 0,
     failed: 0,
+    dealerBudgetExhausted: 0,
   };
 
   // One group per dealer record, oldest first.
@@ -181,9 +196,16 @@ async function runInboundReplaySweep(catalystApp) {
     return statusMapChangedAt.get(integrationId);
   }
 
+  const replaysByDealer = new Map(); // integration_id -> replays attempted so far this sweep
+
   for (const logRows of groups.values()) {
     if (results.attempted >= MAX_REPLAYS_PER_SWEEP) break;
     const { integration_id: integrationId, external_lead_id: externalLeadId } = logRows[0];
+
+    if ((replaysByDealer.get(integrationId) || 0) >= MAX_REPLAYS_PER_DEALER_PER_SWEEP) {
+      results.dealerBudgetExhausted += 1;
+      continue;
+    }
 
     // Unhappy 7 expiry applies only when EVERY held row for this dealer
     // record is an out-of-order hold; rows are oldest first, so logRows[0]
@@ -239,6 +261,7 @@ async function runInboundReplaySweep(catalystApp) {
       }
 
       results.attempted += 1;
+      replaysByDealer.set(integrationId, (replaysByDealer.get(integrationId) || 0) + 1);
       const replay = await crmIntegrationService.replayInboundLead(
         catalystApp,
         integration,
@@ -294,5 +317,9 @@ async function runInboundReplaySweep(catalystApp) {
   logger.info('inboundReplayScheduler', `Sweep complete: ${JSON.stringify(results)}`);
   return results;
 }
+
+// Guarded against re-entrant overlap on the same warm instance — see
+// sweepOverlapGuard.js. Exported name/signature unchanged.
+const runInboundReplaySweep = guardSweep('inboundReplaySweep', runInboundReplaySweepInternal);
 
 module.exports = { runInboundReplaySweep };

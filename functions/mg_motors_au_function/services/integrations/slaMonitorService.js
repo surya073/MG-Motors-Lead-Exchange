@@ -5,6 +5,7 @@ const { toCatalystDateTime } = require('../../utils/dateFormat');
 const oemCrmService = require('../zohoCrmService');
 const crmIntegrationService = require('./crmIntegrationService');
 const pathPolicy = require('./pathPolicyService');
+const { guardSweep } = require('./sweepOverlapGuard');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -34,7 +35,7 @@ function isIntegrationHealthy(integration) {
   return integration && !['error', 'disabled', 'not configured', 'configuring'].includes(status);
 }
 
-async function runSlaSweep(catalystApp, now = new Date()) {
+async function runSlaSweepInternal(catalystApp, now = new Date()) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status = 'SYNCED'${
       SLA_DEALER_CODES.length
@@ -137,5 +138,9 @@ async function runSlaSweep(catalystApp, now = new Date()) {
   logger.info('slaMonitorService', `Sweep complete: ${JSON.stringify(results)}`);
   return results;
 }
+
+// Guarded against re-entrant overlap on the same warm instance — see
+// sweepOverlapGuard.js. Exported name/signature unchanged.
+const runSlaSweep = guardSweep('slaSweep', runSlaSweepInternal);
 
 module.exports = { runSlaSweep, SLA_MINUTES, _test: { isIntegrationHealthy } };

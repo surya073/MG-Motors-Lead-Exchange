@@ -3,6 +3,7 @@
 const express = require('express');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
+const { requireSuperAdminRole } = require('../middleware/requireSuperAdminRole');
 const {
   getAllDealersWithLeadCounts,
   getAllLeads,
@@ -13,6 +14,7 @@ const {
   getDealerInvitationStatus,
   getIntegrationLogs, // NEW
   getLeadExchangeHealth, // NEW
+  findDuplicateLeadMappings, // NEW
 } = require('../services/adminDashboardService');
 const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
@@ -276,6 +278,22 @@ router.delete('/admin/dealers/:dealerCode', requireAdminRole, async (req, res) =
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'DELETE /admin/dealers/:dealerCode failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * Read-only diagnostic for the 200+ dealer concurrency work — see
+ * adminDashboardService.findDuplicateLeadMappings for exactly what this
+ * checks and why. Super Admin only: this surfaces internal row IDs and
+ * sync bookkeeping, not something every Admin needs for daily work.
+ */
+router.get('/admin/diagnostics/duplicate-lead-mappings', requireSuperAdminRole, async (req, res) => {
+  try {
+    const result = await findDuplicateLeadMappings(res.locals.catalystApp);
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', 'GET /admin/diagnostics/duplicate-lead-mappings failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
 });

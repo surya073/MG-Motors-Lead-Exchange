@@ -18,10 +18,23 @@ const logger = require('../utils/logger');
  * time, at which point this simply refreshes again. That's acceptable;
  * access tokens are cheap to regenerate and this avoids adding a second
  * moving part for what is a non-problem at this scale.
+ *
+ * Single-flight: if several concurrent calls all see a stale/missing
+ * token at once (routine once there are enough dealers generating
+ * concurrent MG-CRM calls), only the first triggers a real refresh;
+ * the rest await that same in-flight promise instead of each firing
+ * their own request against Zoho's token endpoint. Zoho's refresh-token
+ * grant is not single-use/rotating, so a race here was never able to
+ * invalidate a sibling call's token — this fix is about avoiding wasted
+ * OAuth calls, not a correctness bug. Mirrors the per-dealer pattern in
+ * zohoCrmOAuthHelper.js / fusionSdOAuthHelper.js, collapsed to a single
+ * in-flight slot since there is only one OEM org/token here, not one per
+ * dealer.
  */
 
 let cachedToken = null;
 let cachedTokenExpiryMs = 0;
+let inFlightRefresh = null;
 
 // Refresh a little early (60s buffer) rather than exactly at expiry, to
 // avoid a race where a CRM call starts just as the token turns invalid.
@@ -34,6 +47,17 @@ async function getAccessToken() {
     return cachedToken;
   }
 
+  if (inFlightRefresh) {
+    return inFlightRefresh;
+  }
+
+  inFlightRefresh = refreshAccessToken().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
+async function refreshAccessToken() {
   const { clientId, clientSecret, refreshToken, accountsDomain } = getZohoConfig();
 
   let response;
@@ -62,16 +86,23 @@ async function getAccessToken() {
   if (!access_token) {
     logger.error('zohoAuthService', 'OAuth response missing access_token', response.data);
     throw new Error(
-      `Zoho OAuth response did not include an access_token. Response: ${JSON.stringify(response.data)}`
+      `Zoho OAuth response did not include an access_token (fields present: ${Object.keys(response.data || {}).join(', ') || 'none'})`
     );
   }
 
   cachedToken = access_token;
-  cachedTokenExpiryMs = now + (Number(expires_in || 3600) * 1000);
+  cachedTokenExpiryMs = Date.now() + (Number(expires_in || 3600) * 1000);
 
   logger.info('zohoAuthService', 'Refreshed Zoho access token', { expiresInSec: expires_in });
 
   return cachedToken;
 }
 
-module.exports = { getAccessToken };
+/** Test-only: clears module-level cache/in-flight state between test runs. */
+function _resetForTests() {
+  cachedToken = null;
+  cachedTokenExpiryMs = 0;
+  inFlightRefresh = null;
+}
+
+module.exports = { getAccessToken, _resetForTests };

@@ -4,6 +4,7 @@ const logger = require('../../utils/logger');
 const { toCatalystDateTime } = require('../../utils/dateFormat');
 const crmIntegrationService = require('./crmIntegrationService');
 const crmAdapterFactory = require('./crmAdapterFactory');
+const { guardSweep } = require('./sweepOverlapGuard');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -92,7 +93,7 @@ const HELD_MAPPING_STATES = new Set(['HELD', 'CONSENT_HOLD']);
  *   reprocessing it. Used by the frequent fast-recovery pass; the daily
  *   /cron/reconcile-dealer-leads run keeps full reprocessing.
  */
-async function runDealerReconciliation(catalystApp, { heldExistenceOnly = false } = {}) {
+async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly = false } = {}) {
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE}${
       RECONCILE_DEALER_CODES.length ? ` WHERE${dealerScopeClause('dealer_code')}` : ''
@@ -511,5 +512,9 @@ async function reportMissingDealerRecord(catalystApp, integration, mapping, resu
 
   await resendForReconciliation(catalystApp, integration, leadRow, results, 'created then deleted');
 }
+
+// Guarded against re-entrant overlap on the same warm instance — see
+// sweepOverlapGuard.js. Exported name/signature unchanged.
+const runDealerReconciliation = guardSweep('dealerReconciliation', runDealerReconciliationInternal);
 
 module.exports = { runDealerReconciliation };

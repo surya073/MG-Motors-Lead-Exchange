@@ -9,6 +9,7 @@ const leadFingerprintService = require('./leadFingerprintService');
 const pathPolicy = require('./pathPolicyService');
 const integrationAlertService = require('./integrationAlertService');
 const oemCrmService = require('../zohoCrmService');
+const outboundSyncClaimService = require('./outboundSyncClaimService');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -596,6 +597,25 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     });
   }
 
+  // Claimed for the duration of this whole attempt (the dealer-CRM call
+  // plus every bookkeeping write below) so no concurrent sync for this
+  // SAME (integration, lead) — another Catalyst instance's retry sweep,
+  // reconciliation pass, or a webhook-triggered sync racing the same
+  // lead — can run in parallel and create/update the dealer record
+  // twice. sweepOverlapGuard.js only protects re-entrancy on one warm
+  // instance; this is the cross-instance half, backed by a DB-enforced
+  // unique constraint (see outboundSyncClaimService.js for the exact
+  // mechanism and its one required Catalyst Console migration step).
+  return outboundSyncClaimService.withOutboundSyncClaim(
+    catalystApp,
+    integration.ROWID,
+    zohoLeadId,
+    requestReference,
+    () => attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference)
+  );
+}
+
+async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference) {
   let operation = 'CREATE_LEAD';
   let existingMapping = null;
   let attemptStartedAt = null;
@@ -808,8 +828,17 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       'INVALID_CRM_CONFIGURATION',
     ].includes(err.code);
     const isNonRetryableMappingError = isInvalidLead || isInvalidConfiguration;
+    // DEALER_ACK_MISSING_ID (dealer accepted the create but returned no
+    // record ID) used to be excluded here. That left a brand-new lead
+    // with NO lead_integrations row at all on its first occurrence (this
+    // is the only place that ever creates one on failure), making it
+    // invisible to outboundRetryScheduler.js forever, and on a repeat
+    // occurrence left retry_count/next_retry_at/failure_streak_started_at
+    // frozen — no backoff, and the Unhappy 3 escalation window could
+    // never trip. Treated like any other retryable failure now, exactly
+    // as ZOHO_ACK_UPDATE_FAILED already is below.
     let escalation = { escalate: false, firstFailure: true, newEscalation: false };
-    if (!isNonRetryableMappingError && err.code !== 'DEALER_ACK_MISSING_ID') {
+    if (!isNonRetryableMappingError) {
       try {
         escalation = await recordOutboundFailureAndCheckEscalation(
           catalystApp,
@@ -1728,8 +1757,21 @@ async function processResolvedInboundLead(
 
   const zohoApiFields = toZohoApiFields(internalUpdate);
 
+  // Tracked separately from the try/catch below: MG's live Zoho record is
+  // the system of record, and once updateOemLead() resolves, that write
+  // genuinely happened. A failure in either of the two LOCAL bookkeeping
+  // writes that follow (the leads-table mirror, or the lead_integrations
+  // mapping row) must never be reported as "MG CRM could not be updated"
+  // — that was a real bug: the single catch below used to treat every
+  // exception from this whole block identically, so a transient local
+  // datastore blip right after a successful MG write produced a false
+  // Unhappy 4 "Transport failure" alert and left the record queued for
+  // replay under a factually wrong reason.
+  let mgWriteSucceeded = false;
+
   try {
     await zohoCrmService.updateOemLead(mapping.zoho_lead_id, zohoApiFields);
+    mgWriteSucceeded = true;
 
     const localLeadRows = await catalystApp.zcql().executeZCQLQuery(
       `SELECT ROWID FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
@@ -1795,7 +1837,19 @@ async function processResolvedInboundLead(
     // Transport (MG unreachable, token, rate limit, 5xx) is retried by
     // the replay sweep; validation (MG refused the values) is held for
     // correction. The register requires the reason to say which.
-    const category = err.writeBackCategory === 'VALIDATION' ? 'VALIDATION' : 'TRANSPORT';
+    //
+    // mgWriteSucceeded distinguishes a THIRD case this single catch used
+    // to conflate with the other two: updateOemLead() already succeeded
+    // (MG's live record is correct) and the exception came from the
+    // local leads-table mirror or lead_integrations bookkeeping instead.
+    // That must never be logged/alerted as "MG CRM could not be updated"
+    // — it wasn't. Still safe to let it flow through the same retry path
+    // below: replayInboundLead re-fetches the dealer's CURRENT record
+    // rather than resending this payload, and re-applying the same
+    // already-correct values to MG again is a no-op, not a risk.
+    const category = mgWriteSucceeded
+      ? 'LOCAL_BOOKKEEPING'
+      : (err.writeBackCategory === 'VALIDATION' ? 'VALIDATION' : 'TRANSPORT');
     const failureKey = `MG_WRITE_BACK_FAILED:${category}`;
     if (!replay) {
       const dealerValues = Object.entries(internalUpdate)
@@ -1816,10 +1870,14 @@ async function processResolvedInboundLead(
         scenarioCode: 'Unhappy 4',
         scenarioMessage: category === 'VALIDATION'
           ? 'Validation failure at MG — dealer update refused by MG CRM; held for correction'
+          : category === 'LOCAL_BOOKKEEPING'
+          ? 'MG CRM was updated successfully, but the local Lead Exchange record failed to sync afterward; retrying automatically'
           : 'Transport failure — MG CRM could not be updated; retrying automatically',
         notify: mapping.last_error !== failureKey,
         leadRow: existingLeadRow,
-        reason: `${category === 'VALIDATION' ? 'Validation' : 'Transport'} failure writing dealer update to MG (${dealerValues}): ${err.message || 'MG CRM write-back failed.'}`,
+        reason: category === 'LOCAL_BOOKKEEPING'
+          ? `MG CRM was updated successfully (${dealerValues}), but recording that locally failed: ${err.message || 'local bookkeeping write failed.'}`
+          : `${category === 'VALIDATION' ? 'Validation' : 'Transport'} failure writing dealer update to MG (${dealerValues}): ${err.message || 'MG CRM write-back failed.'}`,
       });
       try {
         await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
@@ -1937,5 +1995,6 @@ module.exports = {
     toZohoApiFields,
     validateIntegrationConfiguration,
     extractAffectedFieldNames,
+    processResolvedInboundLead,
   },
 };

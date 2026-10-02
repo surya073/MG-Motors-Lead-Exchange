@@ -3,6 +3,7 @@
 const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
 const pathPolicy = require('./pathPolicyService');
+const { guardSweep } = require('./sweepOverlapGuard');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const LEADS_TABLE = 'leads';
@@ -52,7 +53,7 @@ function safeQuoteForZcql(value) {
  *   should go out, not sit until their individual back-off expires. Default
  *   is false, so existing callers behave exactly as before.
  */
-async function runOutboundRetrySweep(catalystApp, options) {
+async function runOutboundRetrySweepInternal(catalystApp, options) {
   const ignoreSchedule = Boolean(options && options.ignoreSchedule);
   const now = new Date();
 
@@ -208,5 +209,11 @@ async function reprocessRoutingHolds(catalystApp) {
   }
   return summary;
 }
+
+// Guarded against re-entrant overlap on the same warm instance — see
+// sweepOverlapGuard.js for exactly what this does and does not protect
+// against. Exported name/signature unchanged for every existing caller
+// (cronRoutes.js).
+const runOutboundRetrySweep = guardSweep('outboundRetrySweep', runOutboundRetrySweepInternal);
 
 module.exports = { runOutboundRetrySweep };

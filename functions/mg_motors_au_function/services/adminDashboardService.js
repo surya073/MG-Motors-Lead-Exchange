@@ -52,6 +52,7 @@ async function getAllRows(catalystApp, tableName) {
 }
 
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
+const LEAD_INTEGRATIONS_TABLE = 'lead_integrations'; // NEW — used by findDuplicateLeadMappings below
 
 async function getAllDealersWithLeadCounts(catalystApp) {
   const dealers = await getAllRows(catalystApp, DEALERS_TABLE);
@@ -753,6 +754,64 @@ async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode
   };
 }
 
+/**
+ * Read-only diagnostic for the 200+ dealer concurrency audit: finds every
+ * (integration_id, zoho_lead_id) pair with more than one lead_integrations
+ * row. This is the exact "check whether existing records contain
+ * duplicates" step required before anyone decides whether a DB-level
+ * unique constraint could ever be safely added directly to that table —
+ * it does NOT modify any data, and the cross-instance duplicate-creation
+ * fix shipped alongside this (outboundSyncClaimService.js) does not
+ * itself depend on the answer, since it uses a separate claims table
+ * rather than a constraint on lead_integrations. This is purely
+ * diagnostic visibility into whatever damage past races may have already
+ * caused (e.g. an orphaned second lead on a dealer's CRM with no matching
+ * row here, or exactly the two-rows-same-pair signature this detects).
+ *
+ * Walks the whole table via getIterableRows() (paginates internally)
+ * rather than a single ZCQL SELECT — lead_integrations is not expected to
+ * be enormous at current scale, and this is a one-off manual check, not a
+ * hot path.
+ */
+async function findDuplicateLeadMappings(catalystApp) {
+  const groups = new Map(); // "integrationId:zohoLeadId" -> rows[]
+  const table = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
+
+  let totalRows = 0;
+  for await (const row of table.getIterableRows()) {
+    totalRows += 1;
+    const key = `${row.integration_id}:${row.zoho_lead_id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+
+  const duplicates = [];
+  for (const rows of groups.values()) {
+    if (rows.length > 1) {
+      duplicates.push({
+        integrationId: rows[0].integration_id,
+        zohoLeadId: rows[0].zoho_lead_id,
+        count: rows.length,
+        rows: rows.map((r) => ({
+          ROWID: r.ROWID,
+          externalCrmLeadId: r.external_crm_lead_id || null,
+          syncStatus: r.sync_status,
+          lastSyncedAt: r.last_synced_at || null,
+          lastAttemptedAt: r.last_attempted_at || null,
+          createdTime: r.CREATEDTIME,
+        })),
+      });
+    }
+  }
+
+  return {
+    totalMappingRows: totalRows,
+    totalUniqueLeadIntegrationPairs: groups.size,
+    duplicateGroupCount: duplicates.length,
+    duplicates,
+  };
+}
+
 module.exports = {
   getAllDealersWithLeadCounts,
   getAllLeads,
@@ -767,4 +826,5 @@ module.exports = {
   getDealerInvitationStatus,
   getIntegrationLogs, // NEW
   getLeadExchangeHealth, // NEW
+  findDuplicateLeadMappings, // NEW
 };
