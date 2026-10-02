@@ -1,6 +1,7 @@
 'use strict';
 
 const genericRestAdapter = require('./adapters/genericRestAdapter');
+const fusionSdAdapter = require('./adapters/fusionSdAdapter');
 
 /**
  * crmAdapterFactory.js
@@ -11,14 +12,18 @@ const genericRestAdapter = require('./adapters/genericRestAdapter');
  *   getLead(catalystApp, integration, externalLeadId)
  *   testConnection(catalystApp, integration)
  *
- * V1 supports GENERIC_REST only. Adding Salesforce/HubSpot later means
- * adding a new file under ./adapters and one line here — no changes to
- * crmIntegrationService.
+ * Adding a new CRM means adding a new file under ./adapters and one line
+ * here — no changes to crmIntegrationService, leadSyncService, the retry
+ * scheduler, or reconciliation, since they only ever go through
+ * getAdapter(). FUSION_SD (added for the Fusion SD integration) is the
+ * first adapter after the original GENERIC_REST/ZOHO_CRM pair, confirming
+ * that pattern actually holds.
  */
 
 const ADAPTERS = {
   GENERIC_REST: genericRestAdapter,
-  ZOHO_CRM: genericRestAdapter, 
+  ZOHO_CRM: genericRestAdapter,
+  FUSION_SD: fusionSdAdapter,
 };
 
 function getAdapter(crmType) {

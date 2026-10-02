@@ -1,0 +1,172 @@
+'use strict';
+
+const axios = require('axios');
+const logger = require('../../../utils/logger');
+const { assertSafeUrl } = require('./genericRestAdapter');
+const { getAccessTokenForFusionSd } = require('./fusionSdOAuthHelper');
+
+/**
+ * fusionSdAdapter.js
+ * -----------------------------------------------------------------------
+ * Dedicated adapter for dealers whose external CRM is Fusion SD
+ * (crm_type = 'FUSION_SD'). Implements the same adapter contract every
+ * other adapter implements (createLead/updateLead/getLead/testConnection),
+ * resolved via crmAdapterFactory.getAdapter('FUSION_SD') — nothing in
+ * crmIntegrationService, leadSyncService, the retry scheduler, or
+ * reconciliation needed to change to support this; they only ever call
+ * through the factory.
+ *
+ * Reuses genericRestAdapter's assertSafeUrl (SSRF guard: HTTPS-only,
+ * rejects private/loopback/link-local resolved addresses) rather than
+ * duplicating it — everything else here is Fusion-specific and lives only
+ * in this file, per the "keep provider logic inside adapters" requirement.
+ *
+ * capabilities is new (no other adapter exposes this yet) — a plain,
+ * static description of what this integration can actually do, so callers
+ * can check `fusionSdAdapter.capabilities.updateLead` instead of finding
+ * out by calling it and getting an UNSUPPORTED_OPERATION error. Nothing
+ * reads this yet (it's additive), but it's the natural place to record
+ * capability as adapters for less REST-standard CRMs get added.
+ *
+ * ================================================================
+ * STATUS (2026-10-02) — token auth confirmed; lead payload still unknown
+ * ================================================================
+ * Token exchange (fusionSdOAuthHelper.js) is CONFIRMED against Fusion's
+ * real QA endpoint — see that file's header comment.
+ *
+ * The create-lead request/response body is still NOT documented by Fusion
+ * and is still a best-effort guess, not a confirmed fact:
+ *   - Request body: the MG-side mapped lead fields sent as a flat JSON
+ *     object (no wrapper envelope like Zoho's `{ data: [...] }`). Live
+ *     testing against Fusion's QA create-lead endpoint confirms it
+ *     validates contact fields server-side (RFC7807 `problem+json`,
+ *     `missing_contact` error: "A lead needs a first or last name, and a
+ *     phone number or an email address.") but every flat/nested,
+ *     snake_case/camelCase field-name combination tried was rejected as
+ *     still missing a usable contact — the actual expected field names
+ *     remain unknown. This is NOT a code defect: this adapter deliberately
+ *     does not hardcode Fusion field names — it forwards whatever payload
+ *     crmIntegrationService builds from that dealer's configured Field
+ *     Mappings (Dealer CRM Config UI), so once Fusion confirms the real
+ *     field names, fixing this is a field-mapping config change, not an
+ *     adapter code change.
+ *   - Success response: the created record's ID is assumed to be at
+ *     response.data.id, response.data.lead_id, or response.data.data.id —
+ *     checked in that order, falling back to undefined (which surfaces as
+ *     a DEALER_ACK_MISSING_ID error upstream in crmIntegrationService,
+ *     the same existing handling a misbehaving generic REST CRM gets).
+ *     Not yet verified against a successful (2xx) create-lead response
+ *     since no payload has succeeded yet.
+ *   - Error response: confirmed RFC7807 `problem+json` shape
+ *     (`{type, title, status, detail, correlation_id}`) on validation
+ *     failures, but errors are still classified by HTTP status only
+ *     (401/403 -> AUTHENTICATION_FAILED, 400/422 -> FIELD_MAPPING_INVALID,
+ *     404 -> NOT_FOUND, 429/5xx -> EXTERNAL_CRM_ERROR, treated as
+ *     retryable the same way any other transient external error is). The
+ *     `detail`/`correlation_id` fields are not yet surfaced in thrown
+ *     errors or logs — worth adding once the payload shape is confirmed,
+ *     to give admins/Fusion support a concrete correlation_id to trace.
+ */
+
+const capabilities = Object.freeze({
+  createLead: true,
+  updateLead: false, // not confirmed supported by Fusion's documented API surface
+  getLead: false,
+  statusUpdate: false,
+  webhook: false,
+  duplicateSearch: false,
+});
+
+function unsupported(operation) {
+  const err = new Error(`Fusion SD adapter does not support ${operation} (capability not confirmed by Fusion's API docs)`);
+  err.code = 'UNSUPPORTED_OPERATION';
+  throw err;
+}
+
+function classifyFusionError(err) {
+  const status = err.response?.status;
+  if (status === 401 || status === 403) return 'AUTHENTICATION_FAILED';
+  if (status === 400 || status === 422) return 'FIELD_MAPPING_INVALID';
+  if (status === 404) return 'NOT_FOUND';
+  if (!err.response) return 'EXTERNAL_CRM_ERROR'; // network/timeout — retryable, same as genericRestAdapter's isRetryableError
+  return 'EXTERNAL_CRM_ERROR';
+}
+
+/**
+ * Never includes the request/response body in logs or thrown error
+ * messages — lead data and the access token must not reach logs per the
+ * project's existing "no PII, no secrets in logs" rule.
+ */
+function wrapFusionError(err, contextMessage) {
+  const code = classifyFusionError(err);
+  const wrapped = new Error(`${contextMessage} (HTTP ${err.response?.status || 'network error'})`);
+  wrapped.code = code;
+  wrapped.response = err.response ? { status: err.response.status } : undefined;
+  return wrapped;
+}
+
+async function createLead(catalystApp, integration, payload) {
+  const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
+  const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
+
+  let response;
+  try {
+    response = await axios.request({
+      method: integration.http_method || 'POST',
+      url: url.toString(),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      data: payload,
+      timeout: 10000,
+    });
+  } catch (err) {
+    logger.error(
+      'fusionSdAdapter',
+      `createLead failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
+    );
+    throw wrapFusionError(err, 'Fusion SD rejected the lead create request');
+  }
+
+  const externalLeadId = response.data?.id || response.data?.lead_id || response.data?.data?.id;
+  return { externalLeadId, httpStatus: response.status, raw: response.data };
+}
+
+async function updateLead() {
+  unsupported('updateLead');
+}
+
+async function getLead() {
+  unsupported('getLead');
+}
+
+/**
+ * No dedicated health-check endpoint is documented. Obtaining a fresh
+ * access token is used as the connectivity/credential check instead of
+ * guessing a GET path on base_url — this at least confirms the Access
+ * Key/Secret Key pair is valid and the token endpoint is reachable,
+ * without requiring a real lead-list/read endpoint we don't know exists.
+ */
+async function testConnection(catalystApp, integration) {
+  const start = Date.now();
+  try {
+    await getAccessTokenForFusionSd(catalystApp, integration);
+    return { httpStatus: 200, responseTimeMs: Date.now() - start, ok: true };
+  } catch (err) {
+    return {
+      httpStatus: err.response?.status || 0,
+      responseTimeMs: Date.now() - start,
+      ok: false,
+    };
+  }
+}
+
+module.exports = {
+  createLead,
+  updateLead,
+  getLead,
+  testConnection,
+  capabilities,
+  _test: { classifyFusionError },
+};

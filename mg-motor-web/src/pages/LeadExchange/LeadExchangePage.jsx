@@ -5,6 +5,7 @@ import {
   List,
   Store,
   Car,
+  CarFront,
   Megaphone,
   Phone,
   Mail,
@@ -49,6 +50,34 @@ const STATUS_TONES = {
   "Dealer Unavailable": "danger",
   "Unattended Alert": "danger",
 };
+
+// Lead-card grid view only: a distinct color per real MG lead status (not
+// just the ~5 tone buckets STATUS_TONES above groups them into, which is
+// still used everywhere else — the table view, filters, etc.). Drives both
+// the card's top status banner and its bottom accent border, so the two
+// stay visually tied to the same status.
+const STATUS_BANNER_COLORS = {
+  "Not Contacted": "#64748B",
+  "Update Pending": "#F59E0B",
+  "Follow-up 1": "#2F6FED",
+  "Follow-up 2": "#6366F1",
+  Contacted: "#06B6D4",
+  "Attempted to Contact": "#14B8A6",
+  "Contact in Future": "#8B5CF6",
+  "Pre-Qualified": "#10B981",
+  "Not Qualified": "#DC2626",
+  Dropped: "#EA580C",
+  Lost: "#B91C1C",
+  "Lost Lead": "#991B1B",
+  "Dealer Unavailable": "#D97706",
+  "Unattended Alert": "#DB2777",
+  "Junk Lead": "#4B5563",
+  "In Progress": "#3B82F6",
+  Converted: "#16A34A",
+  Rejected: "#EF4444",
+};
+const STATUS_BANNER_REMOVED_COLOR = "#991B1B";
+const STATUS_BANNER_DEFAULT_COLOR = "#9CA3AF";
 
 // Commercial outcomes such as Lost / Dropped / Not Qualified are valid
 // Happy 2 status synchronisations. Only integration holds/failures and
@@ -612,26 +641,54 @@ export default function LeadExchangePage() {
       ) : (
         <div className="lead-exchange__panel" key="list">
           <div className="lead-exchange__header">
-            <button
-              className={`lead-exchange__refresh-btn ${loading ? "lead-exchange__refresh-btn--spinning" : ""}`}
-              onClick={loadLeads}
-              disabled={loading || syncing}
-              aria-label="Refresh leads"
-              title="Reload the lead list — recently added or updated leads show first"
-            >
-              <RefreshCw size={16} strokeWidth={2} />
-              Refresh
-            </button>
-            <button
-              className={`lead-exchange__refresh-btn ${syncing ? "lead-exchange__refresh-btn--spinning" : ""}`}
-              onClick={handleSync}
-              disabled={syncing || isViewUser}
-              aria-label="Sync leads"
-              title={viewOnlyTitle || "Pull the latest leads from the CRM, then refresh the list"}
-            >
-              <RefreshCw size={16} strokeWidth={2} />
-              {syncing ? "Syncing…" : "Sync now"}
-            </button>
+            <div className="lead-exchange__path-toggle" role="tablist" aria-label="Filter by outcome">
+              {PATH_FILTER_OPTIONS.map((option) => {
+                const count =
+                  option.value === "happy"
+                    ? pathCounts.happy
+                    : option.value === "unhappy"
+                      ? pathCounts.unhappy
+                      : leads.length;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={pathFilter === option.value}
+                    className={`lead-exchange__path-pill lead-exchange__path-pill--${option.value} ${
+                      pathFilter === option.value ? "lead-exchange__path-pill--active" : ""
+                    }`}
+                    onClick={() => handlePathFilterChange(option.value)}
+                  >
+                    {option.label}
+                    <span className="lead-exchange__path-pill-count">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="lead-exchange__header-actions">
+              <button
+                className={`lead-exchange__refresh-btn ${loading ? "lead-exchange__refresh-btn--spinning" : ""}`}
+                onClick={loadLeads}
+                disabled={loading || syncing}
+                aria-label="Refresh leads"
+                title="Reload the lead list — recently added or updated leads show first"
+              >
+                <RefreshCw size={16} strokeWidth={2} />
+                Refresh
+              </button>
+              <button
+                className={`lead-exchange__refresh-btn ${syncing ? "lead-exchange__refresh-btn--spinning" : ""}`}
+                onClick={handleSync}
+                disabled={syncing || isViewUser}
+                aria-label="Sync leads"
+                title={viewOnlyTitle || "Pull the latest leads from the CRM, then refresh the list"}
+              >
+                <RefreshCw size={16} strokeWidth={2} />
+                {syncing ? "Syncing…" : "Sync now"}
+              </button>
+            </div>
           </div>
 
           {loadError && (
@@ -648,137 +705,115 @@ export default function LeadExchangePage() {
             </div>
           )}
 
-          <div className="lead-exchange__path-toggle" role="tablist" aria-label="Filter by outcome">
-            {PATH_FILTER_OPTIONS.map((option) => {
-              const count =
-                option.value === "happy"
-                  ? pathCounts.happy
-                  : option.value === "unhappy"
-                    ? pathCounts.unhappy
-                    : leads.length;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={pathFilter === option.value}
-                  className={`lead-exchange__path-pill lead-exchange__path-pill--${option.value} ${
-                    pathFilter === option.value ? "lead-exchange__path-pill--active" : ""
-                  }`}
-                  onClick={() => handlePathFilterChange(option.value)}
-                >
-                  {option.label}
-                  <span className="lead-exchange__path-pill-count">{count}</span>
-                </button>
-              );
-            })}
-          </div>
-
           <div className="lead-exchange__filters">
-            <div className="lead-exchange__search">
-              <input
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  resetPage();
-                }}
-                placeholder="Search by customer, email, mobile, dealer, or vehicle…"
+            <div className="lead-exchange__filters-row">
+              <Dropdown
+                ariaLabel="Filter by status"
+                value={statusFilter}
+                onChange={handleStatusChange}
+                options={statusDropdownOptions}
               />
+
+              <Dropdown
+                ariaLabel="Filter by dealer"
+                value={dealerFilter}
+                onChange={handleDealerChange}
+                options={dealerDropdownOptions}
+              />
+
+              <Dropdown
+                ariaLabel="Filter by Happy/Unhappy path"
+                value={scenarioFilter}
+                onChange={handleScenarioFilterChange}
+                options={scenarioDropdownOptions}
+              />
+
+              <Dropdown
+                ariaLabel="Sort leads"
+                value={sortBy}
+                onChange={handleSortChange}
+                options={sortDropdownOptions}
+              />
+
+              <label className="lead-exchange__switch">
+                <input
+                  type="checkbox"
+                  checked={showRemoved}
+                  onChange={(event) => {
+                    setShowRemoved(event.target.checked);
+                    resetPage();
+                  }}
+                />
+                <span className="lead-exchange__switch-track">
+                  <span className="lead-exchange__switch-thumb" />
+                </span>
+                Show removed
+              </label>
+
+              <div className="lead-exchange__view-toggle" role="group" aria-label="Switch view">
+                <button
+                  type="button"
+                  className={view === "grid" ? "lead-exchange__view-btn--active" : ""}
+                  onClick={() => changeView("grid")}
+                  aria-label="Grid view"
+                  aria-pressed={view === "grid"}
+                  title="Grid view"
+                >
+                  <LayoutGrid size={16} strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  className={view === "list" ? "lead-exchange__view-btn--active" : ""}
+                  onClick={() => changeView("list")}
+                  aria-label="List view"
+                  aria-pressed={view === "list"}
+                  title="List view"
+                >
+                  <List size={16} strokeWidth={2} />
+                </button>
+              </div>
             </div>
 
-            <Dropdown
-              ariaLabel="Filter by status"
-              value={statusFilter}
-              onChange={handleStatusChange}
-              options={statusDropdownOptions}
-            />
-
-            <Dropdown
-              ariaLabel="Filter by dealer"
-              value={dealerFilter}
-              onChange={handleDealerChange}
-              options={dealerDropdownOptions}
-            />
-
-            <Dropdown
-              ariaLabel="Filter by Happy/Unhappy path"
-              value={scenarioFilter}
-              onChange={handleScenarioFilterChange}
-              options={scenarioDropdownOptions}
-            />
-
-            <Dropdown
-              ariaLabel="Sort leads"
-              value={sortBy}
-              onChange={handleSortChange}
-              options={sortDropdownOptions}
-            />
-
-            <label className="lead-exchange__switch">
-              <input
-                type="checkbox"
-                checked={showRemoved}
-                onChange={(event) => {
-                  setShowRemoved(event.target.checked);
-                  resetPage();
-                }}
-              />
-              <span className="lead-exchange__switch-track">
-                <span className="lead-exchange__switch-thumb" />
-              </span>
-              Show removed
-            </label>
-
-            {/* Column visibility only applies to the list/table view —
-                the grid view's cards show a fixed field set, so this
-                control would do nothing there. */}
-            {view === "list" && (
-              <div className="lead-exchange__column-menu" ref={columnMenuRef}>
-                <button
-                  type="button"
-                  className="lead-exchange__column-toggle"
-                  onClick={() => setColumnMenuOpen((open) => !open)}
-                >
-                  Columns
-                </button>
-                {columnMenuOpen && (
-                  <div className="lead-exchange__column-dropdown">
-                    {ALL_COLUMNS.map((c) => (
-                      <label key={c.key} className="lead-exchange__checkbox">
-                        <input
-                          type="checkbox"
-                          checked={visibleColumns[c.key]}
-                          onChange={() => toggleColumn(c.key)}
-                        />
-                        {c.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
+            <div className="lead-exchange__filters-row lead-exchange__filters-row--end">
+              <div className="lead-exchange__search">
+                <input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    resetPage();
+                  }}
+                  placeholder="Search by customer, email, mobile, dealer, or vehicle…"
+                />
               </div>
-            )}
 
-            <div className="lead-exchange__view-toggle" role="group" aria-label="Switch view">
-              <button
-                type="button"
-                className={view === "grid" ? "lead-exchange__view-btn--active" : ""}
-                onClick={() => changeView("grid")}
-                aria-label="Grid view"
-                aria-pressed={view === "grid"}
-                title="Grid view"
-              >
-                <LayoutGrid size={16} strokeWidth={2} />
-              </button>
-              <button
-                type="button"
-                className={view === "list" ? "lead-exchange__view-btn--active" : ""}
-                onClick={() => changeView("list")}
-                aria-label="List view"
-                aria-pressed={view === "list"}
-                title="List view"
-              >
-                <List size={16} strokeWidth={2} />
-              </button>
+              {/* Column visibility only applies to the list/table view —
+                  the grid view's cards show a fixed field set, so this
+                  control would do nothing there. */}
+              {view === "list" && (
+                <div className="lead-exchange__column-menu" ref={columnMenuRef}>
+                  <button
+                    type="button"
+                    className="lead-exchange__column-toggle"
+                    onClick={() => setColumnMenuOpen((open) => !open)}
+                  >
+                    Columns
+                  </button>
+                  {columnMenuOpen && (
+                    <div className="lead-exchange__column-dropdown">
+                      {ALL_COLUMNS.map((c) => (
+                        <label key={c.key} className="lead-exchange__checkbox">
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns[c.key]}
+                            onChange={() => toggleColumn(c.key)}
+                          />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -813,6 +848,9 @@ export default function LeadExchangePage() {
                   const isNew = row.lead_status === "Not Contacted" && !removed;
                   const lastActivityLabel = cellText(row.last_status_update || row.assigned_date);
                   const dealerTitle = [row.dealer_name, row.dealer_code].filter(Boolean).join(" · ");
+                  const statusColor = removed
+                    ? STATUS_BANNER_REMOVED_COLOR
+                    : STATUS_BANNER_COLORS[row.lead_status] || STATUS_BANNER_DEFAULT_COLOR;
 
                   return (
                     <div
@@ -820,6 +858,7 @@ export default function LeadExchangePage() {
                       className={`lead-card lead-card--tone-${tone} ${removed ? "lead-card--removed" : ""} ${
                         isDuplicate ? "lead-card--duplicate" : ""
                       }`}
+                      style={{ borderBottomColor: statusColor }}
                       onClick={() => openDetail(row)}
                       role="button"
                       tabIndex={0}
@@ -830,6 +869,18 @@ export default function LeadExchangePage() {
                         }
                       }}
                     >
+                      {/* ---- Status banner: full-width, centered, colored per status — replaces the badge that used to sit in the header ---- */}
+                      {/* Color is passed as a CSS custom property, not backgroundColor —
+                          the banner's own box stays transparent; ::before (in CSS) is
+                          what's actually colored, since an inline `style` prop can't
+                          reach a pseudo-element directly. */}
+                      <div className="lead-card__status-banner" style={{ "--lead-status-color": statusColor }}>
+                        {removed ? "Removed" : row.lead_status || "—"}
+                      </div>
+
+                      <CarFront className="lead-card__watermark lead-card__watermark--front" aria-hidden="true" />
+                      <Car className="lead-card__watermark lead-card__watermark--side" aria-hidden="true" />
+
                       {/* ---- Identity: who this lead is, at a glance ---- */}
                       <div className="lead-card__header">
                         <span className="lead-card__avatar" aria-hidden="true">
@@ -845,13 +896,6 @@ export default function LeadExchangePage() {
                             <span>{lastActivityLabel}</span>
                           </div>
                         </div>
-                        {removed ? (
-                          <Badge tone="danger">Removed</Badge>
-                        ) : (
-                          <Badge tone={STATUS_TONES[row.lead_status] || "neutral"}>
-                            {row.lead_status || "—"}
-                          </Badge>
-                        )}
                       </div>
 
                       {/* ---- Chips: origin + integration path, scannable at a glance ---- */}

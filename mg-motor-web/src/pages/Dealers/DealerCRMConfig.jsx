@@ -522,6 +522,8 @@ export default function DealerCRMConfig() {
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [oauthRefreshToken, setOauthRefreshToken] = useState("");
+  const [fusionAccessKey, setFusionAccessKey] = useState("");
+  const [fusionSecretKey, setFusionSecretKey] = useState("");
 
    const savedConfigSnapshotRef = useRef(EMPTY_CONFIG);
 
@@ -532,9 +534,11 @@ export default function DealerCRMConfig() {
       Boolean(credentialValue) ||
       Boolean(oauthClientId) ||
       Boolean(oauthClientSecret) ||
-      Boolean(oauthRefreshToken)
+      Boolean(oauthRefreshToken) ||
+      Boolean(fusionAccessKey) ||
+      Boolean(fusionSecretKey)
     );
-  }, [config, credentialValue, oauthClientId, oauthClientSecret, oauthRefreshToken]);
+  }, [config, credentialValue, oauthClientId, oauthClientSecret, oauthRefreshToken, fusionAccessKey, fusionSecretKey]);
 
   const [expandedDealers, setExpandedDealers] = useState(() => new Set());
   const [dealerPage, setDealerPage] = useState(1);
@@ -617,6 +621,8 @@ export default function DealerCRMConfig() {
     setOauthClientId("");
     setOauthClientSecret("");
     setOauthRefreshToken("");
+    setFusionAccessKey("");
+    setFusionSecretKey("");
     setEditingCredentials(false);
   };
 
@@ -785,6 +791,8 @@ export default function DealerCRMConfig() {
         oauth_client_id: oauthClientId || undefined,
         oauth_client_secret: oauthClientSecret || undefined,
         oauth_refresh_token: oauthRefreshToken || undefined,
+        fusion_access_key: fusionAccessKey || undefined,
+        fusion_secret_key: fusionSecretKey || undefined,
       });
 
       showAlert("success", `Saved connection settings for ${selectedDealer.dealer_name}.`, {
@@ -994,6 +1002,7 @@ export default function DealerCRMConfig() {
 
   const isExternalCrm = config.integration_type === "EXTERNAL_CRM";
   const isZohoCrm = config.crm_type === "ZOHO_CRM";
+  const isFusionSd = config.crm_type === "FUSION_SD";
   const isConnectionVerified = isExternalCrm && CONNECTED_STATUSES.includes(config.status);
   const mappingsLocked = isExternalCrm && !isConnectionVerified;
   const isTopConnected = CONNECTED_STATUSES.includes(config.status);
@@ -1285,6 +1294,7 @@ export default function DealerCRMConfig() {
                               options={[
                                 { value: "GENERIC_REST", label: "Generic REST API" },
                                 { value: "ZOHO_CRM", label: "Zoho CRM (dealer's own account)" },
+                                { value: "FUSION_SD", label: "Fusion SD" },
                               ]}
                             />
                           </div>
@@ -1303,15 +1313,16 @@ export default function DealerCRMConfig() {
                             <input
                               value={config.base_url}
                               onChange={(e) => handleConfigChange("base_url", e.target.value)}
-                              placeholder="https://dealer-crm.example.com"
+                              placeholder={isFusionSd ? "https://qa.fusionamspro.com/api/leadapi" : "https://dealer-crm.example.com"}
                             />
                             <span className="dealer-crm-config__field-hint">
-                              The web address of the dealer's CRM's API — they can provide this, or it's shown in
-                              their CRM's developer/API settings.
+                              {isFusionSd
+                                ? "Fusion SD's QA environment base URL shown above — replace with their production URL when Fusion provides one."
+                                : "The web address of the dealer's CRM's API — they can provide this, or it's shown in their CRM's developer/API settings."}
                             </span>
                           </div>
 
-                          {!isZohoCrm && (
+                          {!isZohoCrm && !isFusionSd && (
                             <div className="dealer-crm-config__field-row">
                               <label>Authentication method</label>
                               <Dropdown
@@ -1414,6 +1425,69 @@ export default function DealerCRMConfig() {
                                 </>
                               )}
                             </>
+                          ) : isFusionSd ? (
+                            <>
+                              {showMaskedCredentials ? (
+                                <>
+                                  <div className="dealer-crm-config__credentials-grid">
+                                    <div className="dealer-crm-config__field-row">
+                                      <label>Access Key</label>
+                                      <input type="password" value={MASKED_CREDENTIAL_PLACEHOLDER} disabled readOnly />
+                                    </div>
+                                    <div className="dealer-crm-config__field-row">
+                                      <label>Secret Key</label>
+                                      <input type="password" value={MASKED_CREDENTIAL_PLACEHOLDER} disabled readOnly />
+                                    </div>
+                                  </div>
+                                  <span className="dealer-crm-config__field-hint">
+                                    Credentials are saved and encrypted.{" "}
+                                    <button
+                                      type="button"
+                                      className="dealer-crm-config__link-button"
+                                      onClick={() => setEditingCredentials(true)}
+                                      disabled={isViewUser}
+                                      title={viewOnlyTitle}
+                                    >
+                                      Edit credentials
+                                    </button>
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="dealer-crm-config__credentials-grid">
+                                    <div className="dealer-crm-config__field-row">
+                                      <label>Access Key</label>
+                                      <input
+                                        type="password"
+                                        value={fusionAccessKey}
+                                        onChange={(e) => setFusionAccessKey(e.target.value)}
+                                        placeholder="Enter Access Key"
+                                        autoComplete="new-password"
+                                      />
+                                    </div>
+                                    <div className="dealer-crm-config__field-row">
+                                      <label>Secret Key</label>
+                                      <input
+                                        type="password"
+                                        value={fusionSecretKey}
+                                        onChange={(e) => setFusionSecretKey(e.target.value)}
+                                        placeholder="Enter Secret Key"
+                                        autoComplete="new-password"
+                                      />
+                                    </div>
+                                  </div>
+                                  {hasStoredCredential && (
+                                    <button
+                                      type="button"
+                                      className="dealer-crm-config__link-button"
+                                      onClick={resetCredentialInputs}
+                                    >
+                                      Cancel
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </>
                           ) : showMaskedCredentials ? (
                             <div className="dealer-crm-config__field-row">
                               <label>{genericCredentialLabel()}</label>
@@ -1461,7 +1535,7 @@ export default function DealerCRMConfig() {
                               <input
                                 value={config.create_lead_endpoint}
                                 onChange={(e) => handleConfigChange("create_lead_endpoint", e.target.value)}
-                                placeholder={isZohoCrm ? "/crm/v8/Leads" : "/api/leads"}
+                                placeholder={isZohoCrm ? "/crm/v8/Leads" : isFusionSd ? "/v1/leads" : "/api/leads"}
                               />
                             </div>
                             <div>

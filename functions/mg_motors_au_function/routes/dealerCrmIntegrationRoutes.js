@@ -95,6 +95,12 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
         integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'OAUTH2_REFRESH_TOKEN'),
       ]);
       hasCredential = hasClientId && hasClientSecret && hasRefreshToken;
+    } else if (integration.crm_type === 'FUSION_SD') {
+      const [hasAccessKey, hasSecretKey] = await Promise.all([
+        integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'FUSION_ACCESS_KEY'),
+        integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'FUSION_SECRET_KEY'),
+      ]);
+      hasCredential = hasAccessKey && hasSecretKey;
     } else {
       const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[integration.auth_type];
       hasCredential = credType ? await integrationAuthService.hasCredential(catalystApp, integration.ROWID, credType) : false;
@@ -117,6 +123,7 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
     const isZohoCrm = body.crm_type === 'ZOHO_CRM';
+    const isFusionSd = body.crm_type === 'FUSION_SD';
     if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM' && !body.oauth_accounts_domain) {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
@@ -128,7 +135,10 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       crm_type: body.crm_type || 'GENERIC_REST',
       crm_name: body.crm_name || null,
       base_url: body.base_url || null,
-      auth_type: isZohoCrm ? null : (body.auth_type || null),
+      // Zoho and Fusion SD both authenticate via their own crm_type-specific
+      // OAuth flow (see genericRestAdapter.js / fusionSdAdapter.js), not the
+      // generic single-credential auth_type system every other CRM uses.
+      auth_type: (isZohoCrm || isFusionSd) ? null : (body.auth_type || null),
       create_lead_endpoint: body.create_lead_endpoint || null,
       update_lead_endpoint: body.update_lead_endpoint || null,
       http_method: body.http_method || 'POST',
@@ -150,6 +160,18 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
         ['oauth_client_id', 'OAUTH2_CLIENT_ID'],
         ['oauth_client_secret', 'OAUTH2_CLIENT_SECRET'],
         ['oauth_refresh_token', 'OAUTH2_REFRESH_TOKEN'],
+      ];
+      await Promise.all(
+        credentialWrites
+          .filter(([bodyKey]) => body[bodyKey])
+          .map(([bodyKey, credType]) =>
+            integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body[bodyKey])
+          )
+      );
+    } else if (isFusionSd) {
+      const credentialWrites = [
+        ['fusion_access_key', 'FUSION_ACCESS_KEY'],
+        ['fusion_secret_key', 'FUSION_SECRET_KEY'],
       ];
       await Promise.all(
         credentialWrites

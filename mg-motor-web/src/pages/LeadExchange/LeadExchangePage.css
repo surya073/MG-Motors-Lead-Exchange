@@ -30,9 +30,17 @@
 
 .lead-exchange__header {
   display: flex;
-  align-items: flex-start;
-  justify-content: end;
-  gap: var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.lead-exchange__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 
 .lead-exchange__header p {
@@ -77,7 +85,7 @@
 
 .lead-exchange__path-toggle {
   display: inline-flex;
-  align-self: flex-start;
+  align-self: center;
   gap: 2px;
   padding: 3px;
   border-radius: var(--radius-full);
@@ -154,7 +162,17 @@
   }
 }
 
+/* Two rows: dropdowns/toggles on row 1, search + column picker on row 2
+   (right-aligned) — kept as two separate flex rows instead of one wrapping
+   row so the search/columns group has a predictable, intentional position
+   instead of landing wherever it happens to wrap to. */
 .lead-exchange__filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.lead-exchange__filters-row {
   display: flex;
   gap: var(--space-3);
   flex-wrap: wrap;
@@ -162,7 +180,16 @@
   justify-content: space-between;
 }
 
+.lead-exchange__filters-row--end {
+  justify-content: space-between;
+}
+
+.lead-exchange__search {
+  flex: 0 1 280px;
+}
+
 .lead-exchange__search input {
+  width: 100%;
   height: 40px;
   min-width: 280px;
   padding-inline: var(--space-3);
@@ -521,10 +548,12 @@
 }
 
 .lead-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  height: 336px;
+  min-height: 376px;
   background-color: var(--color-bg-elevated);
+  background-image: linear-gradient(165deg, var(--color-primary-soft, rgba(208, 2, 27, 0.04)) 0%, transparent 55%);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -546,6 +575,90 @@
   outline-offset: 2px;
 }
 
+/* Large, light background watermark — a car glyph, since every card here
+   is a vehicle-buyer lead. Purely decorative (aria-hidden), sits behind
+   all card content and never intercepts clicks. */
+.lead-card__watermark {
+  position: absolute;
+  color: var(--color-text-muted); /* neutral gray, already redefined under [data-theme="dark"] */
+  opacity: 0.14;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.lead-card__watermark--front {
+  top: -22px;
+  right: -22px;
+  width: 140px;
+  height: 140px;
+  transform: rotate(-8deg);
+}
+
+.lead-card__watermark--side {
+  bottom: -18px;
+  left: -18px;
+  width: 100px;
+  height: 100px;
+  opacity: 0.1;
+  transform: rotate(10deg);
+}
+
+.lead-card__header,
+.lead-card__chips,
+.lead-card__section,
+.lead-card__footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* Status tab, flush with the top of the card, centered — with smooth
+   concave "notch" curves on both ends where it merges into the card's flat
+   top edge, instead of a pill/rectangle/angled-cut tag. Positioned
+   absolutely (floats above the header, which gets top padding below to
+   leave room for it) rather than taking up its own row.
+
+   The banner element itself only positions the TEXT — its own background
+   stays transparent. ::before is the colored shape: the status color
+   (passed in as the --lead-status-color custom property, since an inline
+   `style` prop can't target a pseudo-element directly) fills the box, and
+   two radial-gradient "patches" — card-bg colored, 12px radius, centered
+   exactly on the box's own bottom corners — punch the concave notches into
+   that fill in the same single layer. ::before sits at z-index -1 *within*
+   the banner's own stacking context (the banner is position:absolute, so
+   it has one), so it renders behind the status text but never behind the
+   rest of the card. */
+.lead-card__status-banner {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  padding: 6px 26px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: var(--fw-bold, 700);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #fff;
+  white-space: nowrap;
+  max-width: calc(100% - var(--space-6, 48px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lead-card__status-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: var(--lead-status-color);
+  background-image:
+    radial-gradient(circle 12px at 0 100%, var(--color-bg-elevated) 99%, transparent 100%),
+    radial-gradient(circle 12px at 100% 100%, var(--color-bg-elevated) 99%, transparent 100%);
+  background-repeat: no-repeat;
+}
+
 .lead-card--removed {
   opacity: 0.6;
 }
@@ -560,7 +673,9 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-4) var(--space-3);
+  /* Extra top padding clears the absolutely-positioned status banner
+     floating above it (see .lead-card__status-banner). */
+  padding: 34px var(--space-4) var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -740,8 +855,11 @@
   color: var(--color-text-muted);
 }
 
+/* Distinct from the card's brand-red accents (badges, chips, the watermark)
+   so contact details read as their own, tappable kind of thing. */
 .lead-card__row-value--link {
-  color: var(--color-primary, #1d4ed8);
+  color: var(--color-info, #2F6FED);
+  font-weight: var(--fw-semibold);
 }
 
 .lead-card__row-value--link:hover {
@@ -755,7 +873,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4) var(--space-5);
   margin-top: auto;
   border-top: 1px solid var(--color-border-subtle);
 }
@@ -882,7 +1000,7 @@
   }
 
   .lead-card__header {
-    padding: var(--space-3);
+    padding: 30px var(--space-3) var(--space-3);
   }
 
   .lead-card__avatar {
