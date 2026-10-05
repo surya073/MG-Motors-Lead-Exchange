@@ -1,0 +1,204 @@
+/* =========================================================
+   PAGE SKELETONS — composed loading layouts
+   Each block mirrors the footprint of the real content it stands in
+   for (same card radius, padding and min-heights), so nothing jumps
+   when data arrives. Everything is built from the shared .skeleton
+   shimmer; these classes only handle layout.
+   ========================================================= */
+
+.pg-skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+  animation: pg-skel-in 0.25s var(--ease-premium, ease) both;
+}
+
+@keyframes pg-skel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.pg-skel__hero {
+  min-height: 220px;
+  padding: var(--space-6, 24px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-3, 12px);
+}
+
+.pg-skel__hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3, 12px);
+  margin-top: var(--space-2, 8px);
+}
+
+.pg-skel__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4, 16px);
+}
+
+.pg-skel__kpi {
+  min-height: 116px;
+  padding: var(--space-4, 16px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.pg-skel__kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pg-skel__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 16px);
+  padding: var(--space-5, 20px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  min-width: 0;
+}
+
+.pg-skel__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+}
+
+.pg-skel__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.pg-skel__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  min-height: 44px;
+}
+
+.pg-skel__row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pg-skel__split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5, 20px);
+}
+
+.pg-skel__split > .pg-skel__panel {
+  min-height: 320px;
+}
+
+.pg-skel__chart {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2, 8px);
+  height: 180px;
+}
+
+.pg-skel__chart > .skeleton {
+  flex: 1;
+}
+
+.pg-skel__donut-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5, 20px);
+  flex-wrap: wrap;
+}
+
+.pg-skel__detail-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: var(--space-5, 20px);
+}
+
+.pg-skel__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4, 16px);
+}
+
+.pg-skel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pg-skel .skeleton {
+  max-width: 100%;
+}
+
+/* Compact variants for small surfaces (dropdown panels, timelines) */
+.pg-skel--compact {
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+}
+
+@media (max-width: 900px) {
+  .pg-skel__split,
+  .pg-skel__detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pg-skel__split > .pg-skel__panel {
+    min-height: 0;
+  }
+
+  .pg-skel__hero {
+    min-height: 180px;
+  }
+}
+
+@media (max-width: 640px) {
+  .pg-skel {
+    gap: var(--space-4, 16px);
+  }
+
+  .pg-skel__kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3, 12px);
+  }
+
+  .pg-skel__panel {
+    padding: var(--space-4, 16px);
+  }
+
+  .pg-skel__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .pg-skel__chart {
+    height: 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-skel {
+    animation: none;
+  }
+}

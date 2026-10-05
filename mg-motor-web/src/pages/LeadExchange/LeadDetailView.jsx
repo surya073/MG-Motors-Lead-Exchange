@@ -16,6 +16,7 @@ import {
 } from "../../ui/icons";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
+import { CompactListSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import "./LeadDetailView.css";
 
 /* ----------------------------------------------------------------
@@ -366,7 +367,11 @@ function getDistinctPaths(timeline) {
 
 function ActivityTimeline({ timeline, loading }) {
   if (loading) {
-    return <li className="lead-detail__timeline-empty">Loading activity…</li>;
+    return (
+      <li className="lead-detail__timeline-empty" aria-busy="true" style={{ listStyle: "none", padding: 0 }}>
+        <CompactListSkeleton rows={3} />
+      </li>
+    );
   }
   if (!timeline || timeline.length === 0) {
     return <li className="lead-detail__timeline-empty">No activity recorded yet.</li>;

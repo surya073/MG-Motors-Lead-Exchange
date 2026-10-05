@@ -1,5 +1,9 @@
 /* =========================================================
    SKELETON — shared shimmer primitive
+   One soft, token-driven sweep used by every loading state in the
+   app, so light and dark themes both stay subtle. The highlight is
+   a translucent band (not a hard border color) so it never looks
+   like a flashing stripe.
    ========================================================= */
 
 .skeleton {
@@ -7,6 +11,7 @@
   position: relative;
   overflow: hidden;
   background-color: var(--color-surface-alt);
+  vertical-align: middle;
 }
 
 .skeleton::after {
@@ -14,13 +19,14 @@
   position: absolute;
   inset: 0;
   background: linear-gradient(
-    90deg,
+    100deg,
     transparent 0%,
-    var(--color-border-strong) 50%,
+    color-mix(in srgb, var(--color-border-strong) 55%, transparent) 50%,
     transparent 100%
   );
   transform: translateX(-100%);
   animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  will-change: transform;
 }
 
 @keyframes skeleton-shimmer {

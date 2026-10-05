@@ -17,7 +17,8 @@
  */
 .dealer-crm-config {
   --dcc-header-h: 92px;
-  --dcc-chrome-h: 30px; /* page padding + breathing room below the fold */
+  /* page padding + breathing room below the fold + the back-button row */
+  --dcc-chrome-h: 70px;
   --dcc-panel-h: calc(100vh - var(--dcc-header-h) - var(--dcc-chrome-h));
 }
 
@@ -30,7 +31,7 @@
 @media (max-width: 1100px) {
   .dealer-crm-config {
     --dcc-header-h: 84px;
-    --dcc-chrome-h: 72px;
+    --dcc-chrome-h: 112px;
   }
 }
 
@@ -40,6 +41,33 @@
   .dealer-crm-config {
     --dcc-panel-h: auto;
   }
+}
+
+.dealer-crm-config__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin-bottom: var(--space-1);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__back:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__back:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .dealer-crm-config__layout {

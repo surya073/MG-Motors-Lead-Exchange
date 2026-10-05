@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { UserPlus, RefreshCw, LayoutGrid, List, Pencil, Check, X as XIcon } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { UserPlus, RefreshCw, LayoutGrid, List, Pencil, Check, X as XIcon, ArrowLeft } from "lucide-react";
+import { ROUTES } from "../../constants/routes.constants";
 import { adminUserService, ADMIN_ROLE_OPTIONS } from "../../services/api/adminUserService";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
@@ -45,6 +47,7 @@ function statusBadge(status) {
 }
 
 export default function UserManagementPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { showAlert } = useAlerts();
   const isSuperAdmin = user?.appRole === APP_ROLES.SUPER_ADMIN;
@@ -357,6 +360,10 @@ export default function UserManagementPage() {
 
   return (
     <div className="user-mgmt">
+      <button type="button" className="user-mgmt__back" onClick={() => navigate(ROUTES.SETTINGS)}>
+        <ArrowLeft size={15} />
+        Back to Settings
+      </button>
       <div className="user-mgmt__self-card">
         <div className="user-mgmt__self-avatar">
           {currentDisplayName.charAt(0).toUpperCase()}

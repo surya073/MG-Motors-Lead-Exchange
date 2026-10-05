@@ -8,6 +8,32 @@
   gap: var(--space-5);
 }
 
+.user-mgmt__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-secondary);
+  background-color: transparent;
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.user-mgmt__back:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.user-mgmt__back:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .user-mgmt--denied {
   padding: var(--space-6);
   text-align: center;

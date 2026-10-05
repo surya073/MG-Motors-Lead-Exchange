@@ -6,6 +6,16 @@
   justify-content: center;
   gap: var(--space-4);
   background-color: var(--color-bg);
+  animation: loading-page-in 0.3s var(--ease-premium) both;
+}
+
+@keyframes loading-page-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .loading-page__logo {
@@ -65,4 +75,13 @@
 
 [data-theme="dark"] .loading-page__logo {
   filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-page {
+    animation: none;
+  }
+
+  .loading-page__bar {
+    animation-duration: 2.4s;
+  }
 }

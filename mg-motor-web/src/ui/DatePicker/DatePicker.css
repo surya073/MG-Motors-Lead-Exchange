@@ -177,3 +177,8 @@
   background-color: var(--color-surface-alt);
   color: var(--color-text-primary);
 }
+@media (max-width: 400px) {
+  .datepicker__panel {
+    max-width: calc(100vw - 24px);
+  }
+}
