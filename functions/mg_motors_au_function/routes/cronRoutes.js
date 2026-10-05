@@ -54,6 +54,24 @@ function isReconciliationDue(now = new Date()) {
   return minutes % RECONCILE_EVERY_MINUTES < 2;
 }
 
+// Same formula/pattern as dealerReconciliationService.js's
+// RECONCILE_CONCURRENCY and outboundRetryScheduler.js's
+// OUTBOUND_RETRY_CONCURRENCY: each dealer webhook renewal costs a real
+// Zoho API round trip (deregister + register), and /cron/renew-dealer-webhooks
+// previously processed every ZOHO_CRM dealer fully serially — the same
+// unbounded-execution-time risk those two schedulers were already fixed
+// for, at a comparable (or larger) record count once there are 200+
+// dealers. No record cap is added here — only concurrency — since,
+// unlike a retry/reconciliation sweep where a leftover candidate is
+// safely picked up next sweep, skipping a dealer's renewal here could
+// mean its webhook channel silently expires with nothing left to retry
+// it; every matching dealer must still be renewed on every run, just
+// bounded in how many run at once.
+const DEALER_WEBHOOK_RENEWAL_CONCURRENCY = (() => {
+  const configured = Number(process.env.DEALER_WEBHOOK_RENEWAL_CONCURRENCY);
+  return Number.isFinite(configured) && configured >= 1 ? Math.min(configured, 10) : 6;
+})();
+
 const router = express.Router();
 
 // Protected by a shared secret (Catalyst env var CRON_SECRET), NOT user auth —
@@ -90,13 +108,25 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
     const integrations = rows.map((r) => r.dealer_integrations);
 
     const results = [];
-    for (const integration of integrations) {
+    const renewOne = async (integration) => {
       try {
         results.push(await registerDealerWatchChannel(catalystApp, integration));
       } catch (err) {
         logger.error('cronRoutes', `Dealer watch renewal failed for ${integration.dealer_code}`, err);
         results.push({ dealerCode: integration.dealer_code, error: err.message });
       }
+    };
+
+    // Bounded concurrency, same chunked-Promise.all shape already used by
+    // dealerReconciliationService.js/outboundRetryScheduler.js: dealers
+    // within one batch renew in parallel, the next batch only starts once
+    // the current one fully settles — one slow/failing dealer can block
+    // at most DEALER_WEBHOOK_RENEWAL_CONCURRENCY dealers, never the whole
+    // run, and every dealer in `integrations` is still processed exactly
+    // as before (same selection, same per-dealer logic, same error
+    // handling) — only the execution shape changed.
+    for (let index = 0; index < integrations.length; index += DEALER_WEBHOOK_RENEWAL_CONCURRENCY) {
+      await Promise.all(integrations.slice(index, index + DEALER_WEBHOOK_RENEWAL_CONCURRENCY).map(renewOne));
     }
 
     res.status(200).json({ success: true, results });

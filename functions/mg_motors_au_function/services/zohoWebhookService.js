@@ -7,6 +7,7 @@ const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const integrationAuthService = require('./integrations/integrationAuthService');
 const { deriveZohoWatchToken } = require('./integrations/webhookVerificationService');
+const { guardSweep } = require('./integrations/sweepOverlapGuard');
 
 const ZOHO_REQUEST_TIMEOUT_MS = 10000;
 
@@ -29,9 +30,19 @@ function buildNotifyUrl() {
   return `${baseUrl}/webhooks/crm-notify`;
 }
 
-async function registerWatchChannels(catalystApp) {
+async function registerWatchChannelsInternal(catalystApp) {
   const { apiDomain, webhookToken } = getZohoConfig();
   const accessToken = await getAccessToken();
+
+  // FIX: deregister the previous OEM channel before creating a new one —
+  // same reasoning, and now the same helper, as registerDealerWatchChannel's
+  // existing fix below: Zoho's watch API always ADDS a channel on POST
+  // rather than replacing an existing one, so without this every OEM
+  // renewal (manual or cron) piled up another duplicate channel, and
+  // Zoho would eventually send multiple notifications per Dealer_Master/
+  // Leads change. `null` scopes this to the shared OEM channel, never a
+  // dealer's.
+  await deregisterExistingChannel(catalystApp, null, accessToken, apiDomain);
 
   const channelId = Date.now();
   const expiryDate = new Date(Date.now() + 23 * 60 * 60 * 1000);
@@ -88,6 +99,15 @@ async function registerWatchChannels(catalystApp) {
   return { channelId, expiresAt: channelExpiryStr };
 }
 
+// Guarded against two overlapping OEM renewal runs (e.g. a manual trigger
+// racing a scheduled one) — same sweepOverlapGuard.js mechanism already
+// used by outboundRetryScheduler.js/inboundReplayScheduler.js/
+// dealerReconciliationService.js/slaMonitorService.js. A single static
+// key is correct here: there is exactly one OEM channel, so this function
+// is never legitimately expected to run more than once at a time.
+// Exported name/signature unchanged for cronRoutes.js.
+const registerWatchChannels = guardSweep('oemWebhookRenewal', registerWatchChannelsInternal);
+
 const { getAccessTokenForDealerZoho } = require('./integrations/adapters/zohoCrmOAuthHelper');
 
 function buildDealerNotifyUrl(dealerCode) {
@@ -99,24 +119,39 @@ function buildDealerNotifyUrl(dealerCode) {
 }
 
 /**
- * Deregisters this dealer's most recently registered watch channel (per
- * our own webhook_channels record of it) before a new one is created.
- * Zoho's watch API always creates an ADDITIONAL channel on POST — it
- * does not replace an existing one for the same module/notify_url — so
- * without this, every renewal (manual or cron-driven) leaves the
+ * Deregisters the most recently registered watch channel for the given
+ * scope (per our own webhook_channels record of it) before a new one is
+ * created. Zoho's watch API always creates an ADDITIONAL channel on POST
+ * — it does not replace an existing one for the same module/notify_url —
+ * so without this, every renewal (manual or cron-driven) leaves the
  * previous channel active, and Zoho ends up sending duplicate
  * notifications for every future update. Safe to no-op if there's no
  * prior record, or if the old channel already expired naturally on
  * Zoho's side (DELETE on an already-gone channel_id just fails
  * harmlessly and is logged, not thrown).
+ *
+ * `dealerCode`: a dealer's code to scope to that dealer's own channel
+ * (identical behavior to before this was generalized), or null/undefined
+ * for the single shared OEM channel. OEM rows are matched via
+ * module_name = 'Dealer_Master,Leads' — the fixed value only
+ * registerWatchChannels ever writes — rather than an empty/absent
+ * dealer_code, since every dealer row's module_name is always the
+ * different fixed value 'Leads' (written only by
+ * registerDealerWatchChannel). This can never accidentally match a
+ * dealer channel, keeping the OEM and dealer scopes correctly separated
+ * regardless of how an unset dealer_code column happens to be stored.
  */
-async function deregisterExistingChannel(catalystApp, integration, accessToken, apiDomain) {
+async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, apiDomain) {
+  const whereClause = dealerCode
+    ? `dealer_code = '${dealerCode}'`
+    : `module_name = 'Dealer_Master,Leads'`;
   const existing = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM webhook_channels WHERE dealer_code = '${integration.dealer_code}' ORDER BY CREATEDTIME DESC LIMIT 1`
+    `SELECT * FROM webhook_channels WHERE ${whereClause} ORDER BY CREATEDTIME DESC LIMIT 1`
   );
   if (existing.length === 0) return;
 
   const oldChannelId = existing[0].webhook_channels.channel_id;
+  const scopeLabel = dealerCode || 'OEM';
   try {
     await axios.delete(`${apiDomain}/crm/v8/actions/watch`, {
       headers: {
@@ -125,11 +160,11 @@ async function deregisterExistingChannel(catalystApp, integration, accessToken, 
       params: { channel_ids: String(oldChannelId) },
       timeout: ZOHO_REQUEST_TIMEOUT_MS,
     });
-    logger.info('zohoWebhookService', `Deregistered old channel ${oldChannelId} for ${integration.dealer_code}`);
+    logger.info('zohoWebhookService', `Deregistered old channel ${oldChannelId} for ${scopeLabel}`);
   } catch (err) {
     logger.error(
       'zohoWebhookService',
-      `Failed to deregister old channel ${oldChannelId} for ${integration.dealer_code} (may have already expired)`,
+      `Failed to deregister old channel ${oldChannelId} for ${scopeLabel} (may have already expired)`,
       err.response?.data || err.message
     );
   }
@@ -142,7 +177,7 @@ async function deregisterExistingChannel(catalystApp, integration, accessToken, 
  * Mirrors registerWatchChannels() above but scoped to one dealer's
  * credentials, one dealer's notify URL, and its own webhook_channels row.
  */
-async function registerDealerWatchChannel(catalystApp, integration) {
+async function registerDealerWatchChannelInternal(catalystApp, integration) {
   logger.info('zohoWebhookService', `Starting dealer watch registration for ${integration.dealer_code}`);
 
   const accessToken = await getAccessTokenForDealerZoho(catalystApp, integration);
@@ -176,7 +211,7 @@ async function registerDealerWatchChannel(catalystApp, integration) {
   // than replacing an existing one, so without this every renewal
   // (manual or cron) piles up another duplicate channel, and Zoho starts
   // sending multiple notifications per lead update.
-  await deregisterExistingChannel(catalystApp, integration, accessToken, apiDomain);
+  await deregisterExistingChannel(catalystApp, integration.dealer_code, accessToken, apiDomain);
 
   const channelId = Date.now();
   const expiryDate = new Date(Date.now() + 23 * 60 * 60 * 1000);
@@ -237,6 +272,28 @@ async function registerDealerWatchChannel(catalystApp, integration) {
 
   logger.info('zohoWebhookService', `Registered dealer watch channel ${channelId} for ${integration.dealer_code}, expires ${channelExpiryStr}`);
   return { dealerCode: integration.dealer_code, channelId, expiresAt: channelExpiryStr };
+}
+
+/**
+ * Guarded per-dealer against two overlapping renewal runs for the SAME
+ * dealer (e.g. two /cron/renew-dealer-webhooks invocations overlapping,
+ * or a manual retry racing the cron). Deliberately NOT one shared key
+ * for every dealer: routes/cronRoutes.js now renews up to
+ * DEALER_WEBHOOK_RENEWAL_CONCURRENCY dealers concurrently in the same
+ * sweep (unchanged by this fix) — a single shared guard key would treat
+ * every dealer after the first concurrent call as "already running" and
+ * skip it, silently collapsing that concurrency down to 1. guardSweep()
+ * is called fresh per call with a dealer-specific key
+ * (`dealerWebhookRenewal:<dealer_code>`) rather than once at module load
+ * like the single-key schedulers — this is still the exact same
+ * sweepOverlapGuard.js mechanism and its one shared tracking map, just
+ * keyed dynamically; different dealers' keys never collide, so they stay
+ * fully concurrent, while the SAME dealer's key is correctly exclusive
+ * across overlapping invocations. Exported name/signature unchanged for
+ * cronRoutes.js.
+ */
+async function registerDealerWatchChannel(catalystApp, integration) {
+  return guardSweep(`dealerWebhookRenewal:${integration.dealer_code}`, registerDealerWatchChannelInternal)(catalystApp, integration);
 }
 
 module.exports = { registerWatchChannels, registerDealerWatchChannel };
