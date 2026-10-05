@@ -10,7 +10,11 @@ const DEALERS_TABLE = 'dealers';
 function mapCrmRecordToDealerRow(crmRecord) {
   return {
     dealer_code: crmRecord.Dealer_Code,
-    dealer_name: crmRecord.Dealer_Name || '',
+    // Name (the record's standard title field) is what actually changes
+    // when a dealer is renamed in Zoho — Dealer_Name is a separate custom
+    // field kept only as a fallback. See zohoCrmService.js's
+    // DEALER_MASTER_FIELDS comment for the full explanation.
+    dealer_name: crmRecord.Name || crmRecord.Dealer_Name || '',
     phone_number: crmRecord.Phone_Number || '',
     email_address: crmRecord.Email_Address || '',
     region: crmRecord.Region || '',
@@ -131,4 +135,4 @@ async function syncDealers(catalystApp, { trigger = 'Manual', triggeredBy = 'Sys
   return { status, totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated, recordsFailed: failed, recordsRemoved: removed, errors };
 }
 
-module.exports = { syncDealers };
+module.exports = { syncDealers, _test: { mapCrmRecordToDealerRow, hasChanges } };

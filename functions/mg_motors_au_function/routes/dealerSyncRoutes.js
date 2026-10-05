@@ -18,7 +18,10 @@ function mapCrmDealerToResponse(crmRecord) {
   return {
     crm_id: crmRecord.id,
     dealer_code: crmRecord.Dealer_Code,
-    dealer_name: crmRecord.Dealer_Name,
+    // Name is the record's standard title field — the one that actually
+    // changes on a rename. See zohoCrmService.js's DEALER_MASTER_FIELDS
+    // comment.
+    dealer_name: crmRecord.Name || crmRecord.Dealer_Name,
     phone: crmRecord.Phone_Number || '',
     email: crmRecord.Email_Address || '',
     region: crmRecord.Region || '',

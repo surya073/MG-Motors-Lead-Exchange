@@ -12,6 +12,17 @@ const logger = require('../utils/logger');
  */
 
 const DEALER_MASTER_FIELDS = [
+  // Confirmed from Zoho Setup > Dealer_Master field list (2026-10-05):
+  // "Name" (label "Dealer Master Name") is the module's standard
+  // record-title field — the one actually edited when someone renames a
+  // dealer in the Zoho UI. "Dealer_Name" is a SEPARATE custom field that
+  // is not kept in sync with it (apparently only ever set once, at
+  // record creation) — reading only Dealer_Name is why dealer renames in
+  // Zoho silently never reached this app. Both are fetched; Name is
+  // preferred, Dealer_Name kept as a fallback for any historical record
+  // where Name is somehow blank. See dealerSyncService.js/
+  // dealerSyncRoutes.js/dealerInviteService.js for where this matters.
+  'Name',
   'Dealer_Name',
   'Dealer_Code',
   'Phone_Number',

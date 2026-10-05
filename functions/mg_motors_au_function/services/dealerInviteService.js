@@ -30,7 +30,12 @@ async function findMappingByDealerCode(catalystApp, dealerCode) {
 }
 
 async function inviteDealerUser(catalystApp, crmDealerRecord) {
-  const { Dealer_Code, Dealer_Name, Email_Address, id: crmRecordId } = crmDealerRecord;
+  const { Dealer_Code, Name, Dealer_Name, Email_Address, id: crmRecordId } = crmDealerRecord;
+  // Name is Dealer_Master's standard record-title field — the one that
+  // actually changes on a rename in Zoho; Dealer_Name is a separate
+  // custom field kept only as a fallback. See zohoCrmService.js's
+  // DEALER_MASTER_FIELDS comment.
+  const dealerName = Name || Dealer_Name;
 
   if (!Dealer_Code || !Email_Address) {
     throw new Error('CRM dealer record is missing Dealer_Code or Email_Address');
@@ -48,7 +53,7 @@ async function inviteDealerUser(catalystApp, crmDealerRecord) {
   };
 
   const userDetails = {
-    first_name: Dealer_Name || Dealer_Code,
+    first_name: dealerName || Dealer_Code,
     email_id: Email_Address,
     role_id: DEALER_ROLE_ID,
   };
@@ -72,7 +77,7 @@ async function inviteDealerUser(catalystApp, crmDealerRecord) {
     catalyst_user_id: catalystUserId,
     crm_record_id: crmRecordId || '',
     dealer_code: Dealer_Code,
-    dealer_name: Dealer_Name || '',
+    dealer_name: dealerName || '',
     dealer_email: Email_Address,
     invited_at: toCatalystDateTime(),
     invite_status: 'Invited',
