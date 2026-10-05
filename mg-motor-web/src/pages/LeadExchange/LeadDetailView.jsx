@@ -289,6 +289,15 @@ function timelineDetailText(entry) {
 
   const deliveryTiming = changes.find((c) => c.field === "delivery_timing");
   if (deliveryTiming) {
+    // A FAILED attempt's timing alone never says why it failed — e.g.
+    // DEALER_ACK_MISSING_ID carries a diagnostic naming the dealer
+    // response's actual field names, which is far more actionable than a
+    // duration number. A successful attempt (acknowledged_at set) has no
+    // error detail anyway, so it keeps showing timing as before.
+    if (deliveryTiming.failed_at) {
+      const detail = errorDetailText(entry);
+      if (detail) return detail;
+    }
     const resultTime = deliveryTiming.acknowledged_at || deliveryTiming.failed_at || "—";
     return `Sent ${deliveryTiming.sent_at || "—"} · result ${resultTime} · ${deliveryTiming.duration_ms ?? "—"} ms`;
   }

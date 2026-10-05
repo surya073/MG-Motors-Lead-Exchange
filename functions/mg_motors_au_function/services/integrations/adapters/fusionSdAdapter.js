@@ -129,8 +129,60 @@ async function createLead(catalystApp, integration, payload) {
     throw wrapFusionError(err, 'Fusion SD rejected the lead create request');
   }
 
-  const externalLeadId = response.data?.id || response.data?.lead_id || response.data?.data?.id;
+  const externalLeadId = extractExternalLeadId(response);
   return { externalLeadId, httpStatus: response.status, raw: response.data };
+}
+
+/**
+ * Live production evidence (AU004/QA, 2026-10-05): Fusion's create-lead
+ * response body comes back empty/non-JSON — none of the guessed body
+ * field names (id/lead_id/data.id) were ever going to match, because
+ * there's no body to match against. Rather than guess more body field
+ * names, this checks the one place a created resource's ID is
+ * UNIVERSALLY expected to live on a REST API when the body doesn't carry
+ * it: the standard HTTP `Location` response header for a 201 Created
+ * (RFC 7231 §7.1.2) — e.g. `Location: /v1/leads/abc-123` -> `abc-123`.
+ * This is a documented HTTP convention, not a Fusion-specific guess.
+ * Also defensively parses a string body as JSON, in case Fusion sends a
+ * correct JSON payload under the wrong Content-Type (axios then leaves
+ * response.data as an unparsed string instead of an object).
+ */
+function extractExternalLeadId(response) {
+  let body = response.data;
+  let bareStringCandidate = null;
+  if (typeof body === 'string' && body.trim()) {
+    const trimmed = body.trim();
+    try {
+      body = JSON.parse(trimmed);
+    } catch (_) {
+      // Not JSON. A short, plain-text response with no braces/brackets/
+      // markup is a known (if less common) lightweight-API convention:
+      // the bare created-record ID as the ENTIRE response body. Guarded
+      // narrowly (short, no markup, no multi-space prose) so an HTML
+      // error page or informational text with a 2xx status is never
+      // mistaken for an ID. Held as a last-resort candidate rather than
+      // returned immediately — a body.id-style match or a Location
+      // header, if either is also present, is more explicit evidence and
+      // takes priority.
+      const looksLikeBareId = trimmed.length > 0 && trimmed.length <= 128
+        && !/^[<{[]/.test(trimmed) && !/\s{2,}/.test(trimmed);
+      if (looksLikeBareId) bareStringCandidate = trimmed;
+      body = null;
+    }
+  }
+  if (body && typeof body === 'object') {
+    const fromBody = body.id || body.lead_id || body.data?.id || body.record?.id || body.record?.uuid;
+    if (fromBody) return fromBody;
+  }
+
+  const location = response.headers?.location || response.headers?.Location;
+  if (typeof location === 'string' && location.trim()) {
+    const segments = location.split('/').filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment) return decodeURIComponent(lastSegment);
+  }
+
+  return bareStringCandidate || undefined;
 }
 
 async function updateLead() {

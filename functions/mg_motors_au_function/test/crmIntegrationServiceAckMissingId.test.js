@@ -69,6 +69,7 @@ function buildLeadRow(overrides = {}) {
  */
 function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
   const leadIntegrationsById = new Map();
+  const integrationLogs = [];
   let nextRowId = 1;
 
   const findMapping = (integrationId, zohoLeadId) => {
@@ -115,6 +116,14 @@ function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
             },
           };
         }
+        if (tableName === 'integration_logs') {
+          return {
+            insertRow: async (fields) => {
+              integrationLogs.push(fields);
+              return { ROWID: `log-${integrationLogs.length}`, ...fields };
+            },
+          };
+        }
         return {
           insertRow: async (fields) => ({ ROWID: 'generic-row', ...fields }),
           updateRow: async (fields) => ({ ...fields }),
@@ -123,6 +132,7 @@ function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
       },
     }),
     _leadIntegrationsById: leadIntegrationsById,
+    _integrationLogs: integrationLogs,
   };
 }
 
@@ -175,4 +185,70 @@ test('syncLeadToExternalCrm: a repeat DEALER_ACK_MISSING_ID failure advances ret
   assert.equal(catalystApp._leadIntegrationsById.size, 1, 'the second attempt must update the SAME row, not create a duplicate');
   const row = [...catalystApp._leadIntegrationsById.values()][0];
   assert.equal(row.retry_count, '2', 'retry_count must advance on a repeat failure instead of staying frozen');
+});
+
+// Regression test for a live production case (Fusion SD / AU004, 2026-10-05):
+// the dealer accepted the create (connection + field mapping both correct),
+// but Fusion's actual success-response shape doesn't match any of the
+// adapter's guessed id-field names, so result.externalLeadId came back
+// undefined. Rather than guess more field names blindly (explicitly against
+// this project's own instructions), the thrown error now carries a PII-safe
+// summary of the response's actual field paths — surfaced directly in the
+// Activity Log's error_message, since that's what operators actually look
+// at (not Catalyst Console function logs or the escalation email).
+test('syncLeadToExternalCrm: DEALER_ACK_MISSING_ID surfaces the dealer response\'s actual field paths (PII-safe) in the Activity Log', async (t) => {
+  const fakeAdapter = {
+    createLead: async () => ({
+      externalLeadId: undefined,
+      httpStatus: 201,
+      // Simulates a real-world dealer response using field names the
+      // adapter doesn't recognize, nested under a wrapper object — the
+      // exact class of shape that caused the live AU004/Fusion SD case.
+      raw: { status: 'ok', data: { record: { uuid: 'secret-id-should-not-matter', customer_name: 'Jane Doe' } } },
+    }),
+    updateLead: async () => { throw new Error('not expected'); },
+  };
+  t.mock.method(crmAdapterFactory, 'getAdapter', () => fakeAdapter);
+  t.mock.method(oemCrmService, 'updateOemLead', async () => ({}));
+
+  const integration = buildIntegration({ ROWID: '603' });
+  const leadRow = buildLeadRow({ crm_record_id: 'ZOHO-LEAD-ACK-3', ROWID: '9103' });
+  const catalystApp = buildStatefulFakeCatalystApp({
+    fieldMappings: buildFieldMappings(),
+    dealerRow: { dealer_code: 'AU888', sync_status: 'Active' },
+  });
+
+  await assert.rejects(
+    () => crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow),
+    (err) => {
+      assert.equal(err.code, 'DEALER_ACK_MISSING_ID');
+      assert.match(err.message, /data\.record\.uuid/, 'the exact field PATH must be surfaced');
+      assert.doesNotMatch(err.message, /Jane Doe|secret-id-should-not-matter/, 'actual field VALUES (potential PII) must never be surfaced');
+      return true;
+    }
+  );
+
+  assert.equal(catalystApp._integrationLogs.length, 1);
+  const logged = catalystApp._integrationLogs[0];
+  assert.match(logged.error_message, /DEALER_ACK_MISSING_ID/, 'the plain code prefix is preserved for existing filtering/classification');
+  assert.match(logged.error_message, /data\.record\.uuid/, 'the operator-visible Activity Log row must show the actual response shape');
+  assert.doesNotMatch(logged.error_message, /Jane Doe|secret-id-should-not-matter/, 'the persisted log must never contain PII values');
+});
+
+// Live production evidence (AU004/Fusion SD, 2026-10-05): a non-empty,
+// non-JSON string response body was indistinguishable from a truly empty
+// one ("empty/unreadable body" either way), hiding a real clue — whether
+// Fusion returned nothing at all, or a bare-string body worth investigating
+// as a possible bare ID. summarizeResponseShape now disambiguates the two.
+test('summarizeResponseShape: distinguishes a truly empty body from a non-empty non-JSON string body', () => {
+  const { summarizeResponseShape } = crmIntegrationService._test;
+
+  assert.deepEqual(summarizeResponseShape(undefined), []);
+  assert.deepEqual(summarizeResponseShape(null), []);
+  assert.deepEqual(summarizeResponseShape(''), ['(root): "" (empty string)']);
+
+  const nonJsonShape = summarizeResponseShape('fusion-bare-id-789');
+  assert.equal(nonJsonShape.length, 1);
+  assert.match(nonJsonShape[0], /string\(len=18\)/);
+  assert.match(nonJsonShape[0], /fusion-bare-id-789/);
 });

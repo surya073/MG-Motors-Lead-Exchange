@@ -121,6 +121,62 @@ function extractAffectedFieldNames(externalPayload, externalLeadId) {
   return flattened.length > 0 ? flattened : null;
 }
 
+/**
+ * Produces a PII-safe shape summary of a dealer CRM's response — key
+ * PATHS only ("data.record.uuid"), never values — so a DEALER_ACK_
+ * MISSING_ID failure (the adapter got a successful response but no field
+ * our code recognizes as the created record's ID) can tell an operator
+ * exactly what the dealer's response actually looked like, directly in
+ * the Activity Log's error message, without guessing at or logging the
+ * customer data the response may echo back. Added after the Fusion SD
+ * integration hit this in production: the adapter was built without
+ * documentation of Fusion's real success-response shape (see
+ * fusionSdAdapter.js's header comment), and blindly adding more guessed
+ * field names would repeat the exact mistake that caused this.
+ */
+function summarizeResponseShape(value, depth = 4, prefix = '') {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) {
+    return value.length === 0
+      ? [`${prefix || '(root)'}: []`]
+      : summarizeResponseShape(value[0], depth, `${prefix}[0]`);
+  }
+  // PII safety: a leaf VALUE is only ever shown for the ROOT of the
+  // response (prefix === '', i.e. the entire body IS that primitive —
+  // the "bare ID as the whole body" case). Any NESTED leaf (prefix set)
+  // shows only its key PATH, exactly like every other field here — an
+  // earlier version of this function leaked nested string leaf VALUES
+  // (e.g. a customer's name sitting next to an unrecognized ID field)
+  // into this error message before this was caught by its own test.
+  if (typeof value === 'string') {
+    if (prefix !== '') return [prefix];
+    const trimmed = value.trim();
+    if (!trimmed) return ['(root): "" (empty string)'];
+    // A non-empty, non-JSON string body is a real (if less common) REST
+    // convention worth distinguishing from a genuinely empty body — some
+    // lightweight APIs return just the bare created-record ID as plain
+    // text. Truncated defensively in case it's actually a long error page
+    // or similar, not because it's expected to contain customer data
+    // (this is the dealer CRM's OWN response, not an echo of the request).
+    const preview = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+    return [`(root): string(len=${trimmed.length}) "${preview}"`];
+  }
+  if (typeof value !== 'object') return prefix ? [prefix] : [`(root): ${typeof value}(${value})`];
+  const keys = Object.keys(value);
+  if (keys.length === 0) return [`${prefix || '(root)'}: {}`];
+  // Fully expands dotted paths (e.g. "data.record.uuid") rather than
+  // collapsing once the depth limit is hit — an operator reading this in
+  // the Activity Log needs the exact field name, not a truncated hint.
+  // depth=4 just bounds recursion on a pathological/circular response;
+  // real CRM payloads are rarely nested deeper than 2-3 levels.
+  if (depth <= 0) return [prefix || '(root)'];
+  return keys.flatMap((key) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const nested = summarizeResponseShape(value[key], depth - 1, path);
+    return nested.length > 0 ? nested : [path];
+  });
+}
+
 async function findDealerByCode(catalystApp, dealerCode) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${DEALERS_TABLE} WHERE dealer_code = '${safeQuoteForZcql(dealerCode)}' LIMIT 1`
@@ -272,7 +328,10 @@ async function describeEscalation(catalystApp, integration, escalation, err, rea
   const retryCount = (parseInt(mapping.retry_count, 10) || 0) + 1;
   const apiError = err.response?.status
     ? `HTTP ${err.response.status} ${reason}`
-    : `${reason}${err.message && err.message !== reason ? ` (${err.message})` : ''}`;
+    // DEALER_ACK_MISSING_ID's `reason` already embeds err.message (see
+    // its construction in the caller) — guard against appending it a
+    // second time here.
+    : `${reason}${err.message && err.message !== reason && !reason.includes(err.message) ? ` (${err.message})` : ''}`;
 
   let affected = [];
   try {
@@ -679,7 +738,10 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
         }
       );
       if (!result.externalLeadId) {
-        const acknowledgementError = new Error('Dealer accepted the request but returned no record ID');
+        const responseShape = summarizeResponseShape(result.raw).join(', ').slice(0, 300) || 'empty/unreadable body';
+        const acknowledgementError = new Error(
+          `Dealer accepted the request (HTTP ${result.httpStatus ?? 'unknown'}) but returned no recognized record-ID field (response fields seen: ${responseShape})`
+        );
         acknowledgementError.code = 'DEALER_ACK_MISSING_ID';
         throw acknowledgementError;
       }
@@ -884,7 +946,16 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       await setLeadSyncState(catalystApp, leadRow, 'DELIVERY_FAILED');
     }
 
-    const reason = (err.code || err.message || 'EXTERNAL_CRM_ERROR').slice(0, 500);
+    // Every other code keeps the existing plain-code convention (other
+    // logic and dashboards rely on error_message/last_error being a
+    // short, stable value) — DEALER_ACK_MISSING_ID is the one exception,
+    // since err.message carries the PII-safe response-shape diagnostic
+    // built above, which is exactly what an operator needs to see here.
+    const reason = (
+      err.code === 'DEALER_ACK_MISSING_ID' && err.message
+        ? `${err.code}: ${err.message}`
+        : (err.code || err.message || 'EXTERNAL_CRM_ERROR')
+    ).slice(0, 500);
     // The Unhappy 3 critical alert must carry the whole outage picture,
     // not just this one lead: dealer, failure start, duration, affected
     // lead count and IDs, retry count and last API error. Only the alert
@@ -1996,5 +2067,6 @@ module.exports = {
     validateIntegrationConfiguration,
     extractAffectedFieldNames,
     processResolvedInboundLead,
+    summarizeResponseShape,
   },
 };

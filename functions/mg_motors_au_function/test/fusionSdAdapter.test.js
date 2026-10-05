@@ -159,6 +159,111 @@ test('createLead: extracts the external record ID from the response', async (t) 
   assert.equal(result.httpStatus, 201);
 });
 
+// Live production evidence (AU004/QA, 2026-10-05): Fusion's real create-lead
+// response body comes back empty, so none of the body-based guesses could
+// ever match. Falls back to the standard HTTP Location header for a 201
+// Created (RFC 7231 §7.1.2) — a documented REST convention, not a
+// Fusion-specific guess.
+test('createLead: falls back to the Location header when the response body has no usable ID (real Fusion QA behavior)', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({
+    status: 201,
+    data: '',
+    headers: { location: '/v1/leads/fusion-abc-123' },
+  }));
+
+  const integration = fakeIntegration({ ROWID: '4002' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, 'fusion-abc-123');
+});
+
+test('createLead: parses a JSON body sent as a raw string (wrong Content-Type) before falling back to the Location header', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({
+    status: 201,
+    data: '{"id":"FUSION-STRING-BODY-1"}',
+    headers: { location: '/v1/leads/should-not-be-used' },
+  }));
+
+  const integration = fakeIntegration({ ROWID: '4003' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, 'FUSION-STRING-BODY-1', 'a parseable JSON string body takes priority over the Location header');
+});
+
+test('createLead: a bare plain-text ID body with no Location header is used as a last-resort candidate', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({ status: 200, data: 'fusion-bare-id-789', headers: {} }));
+
+  const integration = fakeIntegration({ ROWID: '4005' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, 'fusion-bare-id-789');
+});
+
+test('createLead: an HTML error page accidentally returned with a 2xx status is never mistaken for a bare ID', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({
+    status: 200,
+    data: '<html><body>Not Found</body></html>',
+    headers: {},
+  }));
+
+  const integration = fakeIntegration({ ROWID: '4006' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, undefined, 'markup must never be treated as a bare record ID');
+});
+
+test('createLead: a Location header takes priority over a bare-string body candidate', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({
+    status: 201,
+    data: 'fusion-bare-id-should-lose',
+    headers: { location: '/v1/leads/from-location-header' },
+  }));
+
+  const integration = fakeIntegration({ ROWID: '4007' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, 'from-location-header');
+});
+
+test('createLead: truly empty body and no Location header still surfaces as no ID found (not a crash)', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
+    credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
+  );
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
+  t.mock.method(axios, 'request', async () => ({ status: 201, data: '', headers: {} }));
+
+  const integration = fakeIntegration({ ROWID: '4004' });
+  const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
+
+  assert.equal(result.externalLeadId, undefined);
+});
+
 test('createLead: a 401 from Fusion is classified AUTHENTICATION_FAILED and the thrown error carries no credential data', async (t) => {
   fusionSdOAuthHelper._resetForTests();
   t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
