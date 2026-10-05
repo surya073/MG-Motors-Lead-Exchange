@@ -6,6 +6,8 @@ import { ROUTES } from "../../constants/routes.constants";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
+import Skeleton from "../../ui/Skeleton/Skeleton";
+import { DashboardSkeleton, KpiRowSkeleton, PanelSkeleton, ChartSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import ProgressRing from "./components/ProgressRing";
 import ProcessPathCard from "./components/ProcessPathCard";
 import MonitoringCard, { healthTone, bucketByDay } from "./components/MonitoringCard";
@@ -109,10 +111,17 @@ export default function Overview() {
 
   return (
     <>
+      <OverviewUiStyles />
       {loading ? (
         <OverviewSkeleton isDealer={isDealer} />
       ) : error ? (
-        <div className="overview__state overview__state--error">{error}</div>
+        <div className="panel-card">
+          <EmptyPlaceholder
+            icon="alert"
+            title="Couldn't load the dashboard"
+            hint={error}
+          />
+        </div>
       ) : (
         <>
           {isDealer ? (
@@ -136,20 +145,7 @@ export default function Overview() {
 /* ------------------------------------------------------------------ */
 
 function OverviewSkeleton({ isDealer }) {
-  const kpiCount = isDealer ? 7 : 4;
-  return (
-    <div className="overview">
-      <div className="overview__kpis">
-        {Array.from({ length: kpiCount }).map((_, i) => (
-          <div className="kpi-card kpi-card--skeleton" key={i}>
-            <div className="skeleton-line skeleton-line--sm" />
-            <div className="skeleton-line skeleton-line--lg" />
-          </div>
-        ))}
-      </div>
-      <div className="skeleton-block" />
-    </div>
-  );
+  return <DashboardSkeleton kpiCount={isDealer ? 7 : 4} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -205,6 +201,101 @@ function Icon({ name, size = 18, className = "" }) {
       <path d={d} />
     </svg>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* EmptyPlaceholder — shared empty state so no card ever renders as a  */
+/* bare line of text. Purely presentational.                           */
+/* ------------------------------------------------------------------ */
+
+function EmptyPlaceholder({ icon = "spark", title, hint, compact = false }) {
+  return (
+    <div className={`ov-empty${compact ? " ov-empty--compact" : ""}`} role="status">
+      <span className="ov-empty__icon"><Icon name={icon} size={compact ? 18 : 22} /></span>
+      <p className="ov-empty__title">{title}</p>
+      {hint && <p className="ov-empty__hint">{hint}</p>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout polish for this page — scoped to .overview / .health-panel   */
+/* and rendered inline so the improvements live entirely in this file. */
+/* Uses the app's existing design tokens only.                         */
+/* ------------------------------------------------------------------ */
+
+const OVERVIEW_UI_CSS = `
+.overview, .health-panel { display: flex; flex-direction: column; gap: var(--space-5, 20px); }
+.health-panel { min-width: 0; }
+
+/* Equal-height, aligned card rows */
+.overview .overview__mid,
+.health-panel .monitoring-grid { align-items: stretch; }
+.overview .overview__mid > .panel-card,
+.health-panel .monitoring-grid > * { display: flex; flex-direction: column; height: 100%; min-height: 320px; }
+.overview .overview__mid > .panel-card > .panel-card__header { flex: 0 0 auto; }
+.health-panel .process-path-card-grid { grid-auto-rows: 1fr; align-items: stretch; }
+.health-panel .process-path-card-grid > * { height: 100%; }
+.overview .overview__kpis { grid-auto-rows: 1fr; align-items: stretch; }
+.overview .overview__kpis > .kpi-card { height: 100%; }
+
+/* Card headers */
+.overview .panel-card__header,
+.health-panel .panel-card__header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-3, 12px); flex-wrap: wrap; margin-bottom: var(--space-4, 16px);
+}
+.overview .panel-card__header h3,
+.health-panel .panel-card__header h3 { margin: 0; line-height: 1.3; letter-spacing: -0.01em; }
+.overview .panel-card__meta,
+.health-panel .panel-card__meta { font-size: var(--fs-xs, 12px); color: var(--color-text-muted); }
+
+/* Empty + loading states */
+.ov-empty {
+  flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 6px; min-height: 180px; padding: var(--space-5, 20px) var(--space-4, 16px);
+  border: 1px dashed var(--color-border, #E5E7EB); border-radius: var(--radius-md, 10px);
+  background: var(--color-surface, transparent);
+}
+.ov-empty--compact { min-height: 120px; padding: var(--space-4, 16px); }
+.ov-empty__icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  border-radius: 50%; background: var(--color-surface-alt, #F3F4F6); color: var(--color-text-muted, #9CA3AF);
+}
+.ov-empty--compact .ov-empty__icon { width: 36px; height: 36px; }
+.ov-empty__title { margin: 4px 0 0; font-size: var(--fs-sm, 14px); font-weight: 600; color: var(--color-text-secondary, #4B5563); }
+.ov-empty__hint { margin: 0; max-width: 34ch; font-size: var(--fs-xs, 12px); color: var(--color-text-muted, #9CA3AF); line-height: 1.5; }
+.ov-card-skeleton { display: flex; flex-direction: column; gap: 12px; padding: var(--space-2, 8px) 0; flex: 1 1 auto; }
+.ov-state-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--color-danger, #DC2626); border-radius: var(--radius-md, 10px); }
+
+/* Tables scroll instead of squashing */
+.overview .overview__table table { width: 100%; min-width: 640px; }
+.overview .overview__table td, .overview .overview__table th { white-space: nowrap; }
+
+/* Lists: consistent row rhythm */
+.overview .dealer-list__item, .overview .task-list__item, .overview .notif-list__item { min-height: 48px; }
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .overview .overview__mid > .panel-card,
+  .health-panel .monitoring-grid > * { min-height: 280px; }
+}
+@media (max-width: 900px) {
+  .overview .overview__mid { grid-template-columns: 1fr; }
+  .overview .overview__mid > .panel-card { min-height: 0; }
+}
+@media (max-width: 640px) {
+  .overview, .health-panel { gap: var(--space-4, 16px); }
+  .overview .panel-card, .health-panel .panel-card { padding: var(--space-4, 16px); }
+  .overview .overview__kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3, 12px); }
+  .health-panel .process-path-card-grid { grid-template-columns: 1fr; }
+  .health-panel .monitoring-grid { grid-template-columns: 1fr; }
+  .ov-empty { min-height: 150px; }
+}
+`;
+
+function OverviewUiStyles() {
+  return <style data-overview-ui>{OVERVIEW_UI_CSS}</style>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -485,6 +576,9 @@ function DrawerStat({ label, value }) {
 /* ------------------------------------------------------------------ */
 
 function ActivityTimeline({ items }) {
+  if (!items || items.length === 0) {
+    return <EmptyPlaceholder compact icon="clock" title="No recent activity" hint="Updates on your leads will show up here." />;
+  }
   return (
     <ul className="timeline">
       {items.map((item, i) => (
@@ -741,7 +835,13 @@ function SyncTrendChart({ logs }) {
   }, [logs, runsLimit]);
 
   if (points.length === 0) {
-    return <p className="overview__empty-note">No sync runs recorded yet.</p>;
+    return (
+      <EmptyPlaceholder
+        icon="trending"
+        title="No sync runs recorded yet"
+        hint="Sync volume and success rate will appear here after the first run."
+      />
+    );
   }
 
   const totalRuns = points.length;
@@ -997,7 +1097,14 @@ const PIPELINE_TERMINAL_KEYS = new Set(["not_qualified", "lost", "junk", "needs_
 function PipelineStageBar({ segments, total }) {
   const stages = segments.filter((s) => !PIPELINE_TERMINAL_KEYS.has(s.key));
   if (stages.length === 0) {
-    return <p className="overview__empty-note">No leads currently in progress.</p>;
+    return (
+      <EmptyPlaceholder
+        compact
+        icon="trending"
+        title="No leads currently in progress"
+        hint="Open pipeline stages will show up here as leads are worked."
+      />
+    );
   }
   return (
     <div className="stage-bar">
@@ -1705,15 +1812,24 @@ function LeadExchangeHealthPanel({ openDrawer }) {
       </div>
 
       {loading ? (
-        <div className="skeleton-block" style={{ height: 200 }} />
+        <>
+          <KpiRowSkeleton count={8} />
+          <PanelSkeleton variant="lines" rows={4} minHeight={200} />
+        </>
       ) : error ? (
-        <div className="overview__state overview__state--error">
-          {error}
-          <button type="button" className="health-filterbar__apply" style={{ marginLeft: 12 }} onClick={handleApply}>
-            Retry
-          </button>
+        <div className="panel-card">
+          <EmptyPlaceholder icon="alert" title="Couldn't load Lead Exchange health" hint={error} />
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+            <button type="button" className="health-filterbar__apply" onClick={handleApply}>
+              Retry
+            </button>
+          </div>
         </div>
-      ) : !health ? null : (
+      ) : !health ? (
+        <div className="panel-card">
+          <EmptyPlaceholder icon="trending" title="No health data yet" hint="Apply a date range to load Lead Exchange health." />
+        </div>
+      ) : (
         <>
           <div className="overview__kpis">
             <KpiCard icon="car" label="Total Leads" value={health.leadStatusSummary.total} tone="info" meta="In selected range" />
@@ -1745,9 +1861,12 @@ function LeadExchangeHealthPanel({ openDrawer }) {
           </div>
 
           {health.truncated && (
-            <p className="overview__empty-note">
-              This range has more integration events than a single fetch covers — narrow the date range for a complete count.
-            </p>
+            <EmptyPlaceholder
+              compact
+              icon="alert"
+              title="Results truncated"
+              hint="This range has more integration events than a single fetch covers — narrow the date range for a complete count."
+            />
           )}
 
           {/* Exchange health hero — same exchangeHealth numbers as the KPI
@@ -1802,7 +1921,12 @@ function LeadExchangeHealthPanel({ openDrawer }) {
               <span className="panel-card__meta">{health.exchangeHealth.successfulExchanges.toLocaleString()} successful exchanges</span>
             </div>
             {health.happyPaths.length === 0 ? (
-              <p className="overview__empty-note">No successful integration flows in this range.</p>
+              <EmptyPlaceholder
+                compact
+                icon="check"
+                title="No successful integration flows"
+                hint="Try widening the date range or selecting a different dealer."
+              />
             ) : (
               <div className="process-path-card-grid">
                 {health.happyPaths.map((s) => (
@@ -1829,7 +1953,12 @@ function LeadExchangeHealthPanel({ openDrawer }) {
               <span className="panel-card__meta">{health.exchangeHealth.failedExchanges.toLocaleString()} failed exchanges</span>
             </div>
             {health.unhappyPaths.length === 0 ? (
-              <p className="overview__empty-note">No integration failures in this range.</p>
+              <EmptyPlaceholder
+                compact
+                icon="check"
+                title="No integration failures"
+                hint="Everything in this range exchanged cleanly."
+              />
             ) : (
               <div className="process-path-card-grid">
                 {health.unhappyPaths.map((s) => (
@@ -1893,7 +2022,9 @@ function LeadExchangeHealthPanel({ openDrawer }) {
               trendPoints={slaTrendPoints}
               trendCaption="Breaches per day"
             >
-              {health.sla.recentBreaches.length > 0 && (
+              {health.sla.recentBreaches.length === 0 ? (
+                <EmptyPlaceholder compact icon="clock" title="No SLA breaches" hint="Dealers are responding within the SLA window." />
+              ) : (
                 <ul className="task-list">
                   {health.sla.recentBreaches.slice(0, 5).map((b, i) => (
                     <li className="task-list__item" key={i}>
@@ -1916,7 +2047,9 @@ function LeadExchangeHealthPanel({ openDrawer }) {
               trendPoints={duplicateTrendPoints}
               trendCaption="Duplicates per day"
             >
-              {health.duplicates.recent.length > 0 && (
+              {health.duplicates.recent.length === 0 ? (
+                <EmptyPlaceholder compact icon="refresh" title="No duplicate leads" hint="Duplicate enquiries linked in this range will be listed here." />
+              ) : (
                 <ul className="task-list">
                   {health.duplicates.recent.slice(0, 5).map((d, i) => (
                     <li className="task-list__item" key={i}>
@@ -2027,8 +2160,14 @@ function DealerOverview({ summary, openDrawer }) {
           <h3>Your pipeline</h3>
           <span className="panel-card__meta">{conversionPct}% delivered</span>
         </div>
-        <PipelineFunnelBar segments={segments} total={summary.total} />
-        <DonutLegend segments={segments} total={summary.total} onSelect={openStatusDetail} />
+        {!(summary.total > 0) ? (
+          <EmptyPlaceholder icon="car" title="No leads in your pipeline yet" hint="New leads assigned to your dealership will appear here." />
+        ) : (
+          <>
+            <PipelineFunnelBar segments={segments} total={summary.total} />
+            <DonutLegend segments={segments} total={summary.total} onSelect={openStatusDetail} />
+          </>
+        )}
       </div>
 
       <div className="overview__mid">
@@ -2037,6 +2176,9 @@ function DealerOverview({ summary, openDrawer }) {
             <h3>Upcoming tasks</h3>
             <span className="panel-card__meta panel-card__meta--dummy">Sample data</span>
           </div>
+          {DUMMY_TASKS.length === 0 && (
+            <EmptyPlaceholder compact icon="calendar" title="No upcoming tasks" hint="Callbacks and test drives will be listed here." />
+          )}
           <ul className="task-list">
             {DUMMY_TASKS.map((t, i) => (
               <li className="task-list__item" key={i}>
@@ -2050,6 +2192,9 @@ function DealerOverview({ summary, openDrawer }) {
             <h3>Notifications</h3>
             <span className="panel-card__meta panel-card__meta--dummy">Sample data</span>
           </div>
+          {DUMMY_NOTIFICATIONS.length === 0 && (
+            <EmptyPlaceholder compact icon="bell" title="You're all caught up" hint="No new notifications." />
+          )}
           <ul className="notif-list">
             {DUMMY_NOTIFICATIONS.map((n, i) => (
               <li className={`notif-list__item notif-list__item--${n.tone}`} key={i}>
@@ -2240,7 +2385,7 @@ function AdminOverview({ data, openDrawer }) {
           <span className="panel-card__meta">{totalActiveLeads.toLocaleString()} active leads</span>
         </div>
         {segments.length === 0 ? (
-          <p className="overview__empty-note">No active leads yet.</p>
+          <EmptyPlaceholder icon="car" title="No active leads yet" hint="Status distribution will appear once leads enter the network." />
         ) : (
           <div className="overview__donut-row">
             <DonutChart segments={segments} />
@@ -2251,7 +2396,10 @@ function AdminOverview({ data, openDrawer }) {
 
       <div className="panel-card">
         {trendLoading ? (
-          <div className="skeleton-block" style={{ height: 280 }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, minHeight: 280 }} aria-busy="true">
+            <Skeleton width="30%" height={16} />
+            <ChartSkeleton />
+          </div>
         ) : (
           <SyncTrendChart logs={trendLogs} />
         )}
@@ -2265,7 +2413,7 @@ function AdminOverview({ data, openDrawer }) {
             <span className="panel-card__meta">By lead volume</span>
           </div>
           {dealerComparison.length === 0 ? (
-            <p className="overview__empty-note">No dealers with leads yet.</p>
+            <EmptyPlaceholder icon="trophy" title="No dealers with leads yet" hint="Dealers will be ranked here once they receive leads." />
           ) : (
             <DealerRankList dealers={dealerComparison} />
           )}
@@ -2288,7 +2436,7 @@ function AdminOverview({ data, openDrawer }) {
             <span className="panel-card__meta">By lead volume</span>
           </div>
           {(topDealers || []).length === 0 ? (
-            <p className="overview__empty-note">No dealers with leads yet.</p>
+            <EmptyPlaceholder icon="building" title="No dealers with leads yet" hint="Top performers by lead volume will be listed here." />
           ) : (
             <ul className="dealer-list">
               {topDealers.map((d) => (
@@ -2307,9 +2455,12 @@ function AdminOverview({ data, openDrawer }) {
         </div>
 
         <div className="panel-card">
-          <div className="panel-card__header"><h3>Recently synced dealers</h3></div>
+          <div className="panel-card__header">
+            <h3>Recently synced dealers</h3>
+            <span className="panel-card__meta">Latest dealer sync runs</span>
+          </div>
           {recentlySyncedDealers.length === 0 ? (
-            <p className="overview__empty-note">No dealer sync runs recorded yet.</p>
+            <EmptyPlaceholder icon="refresh" title="No dealer sync runs yet" hint="Recent dealer syncs and their status will appear here." />
           ) : (
             <ul className="dealer-list">
               {recentlySyncedDealers.map((log) => (
@@ -2336,7 +2487,11 @@ function AdminOverview({ data, openDrawer }) {
       <div className="panel-card overview__table">
         <div className="panel-card__header">
           <h3>Recent sync activity</h3>
+          <span className="panel-card__meta">Latest {recentSyncLogs.length} runs</span>
         </div>
+        {recentSyncLogs.length === 0 ? (
+          <EmptyPlaceholder compact icon="clock" title="No sync activity yet" hint="Sync runs will be listed here as they happen." />
+        ) : (
         <table>
           <thead>
             <tr>
@@ -2389,6 +2544,7 @@ function AdminOverview({ data, openDrawer }) {
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

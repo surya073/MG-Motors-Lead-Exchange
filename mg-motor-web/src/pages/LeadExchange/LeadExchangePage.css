@@ -535,8 +535,8 @@
 
 .lead-exchange__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
 }
 
 .lead-exchange__grid-loading {
@@ -551,7 +551,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 376px;
+  min-height: 284px;
   background-color: var(--color-bg-elevated);
   background-image: linear-gradient(165deg, var(--color-primary-soft, rgba(208, 2, 27, 0.04)) 0%, transparent 55%);
   border: 1px solid var(--color-border);
@@ -675,7 +675,7 @@
   gap: var(--space-3);
   /* Extra top padding clears the absolutely-positioned status banner
      floating above it (see .lead-card__status-banner). */
-  padding: 34px var(--space-4) var(--space-3);
+  padding: 30px var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -683,8 +683,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   border-radius: 50%;
   background-color: var(--color-black);
@@ -736,8 +736,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  min-height: 20px;
+  padding: var(--space-2) var(--space-4);
+  min-height: 32px;
+  box-sizing: border-box;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -801,16 +802,16 @@
 /* ---------- Sections: grouped, labelled rows (customer / vehicle+dealer) ---------- */
 
 .lead-card__section {
-  padding: var(--space-2) var(--space-4);
+  padding: 6px var(--space-4);
 }
 
-.lead-card__section + .lead-card__section {
+.lead-card__section +  .lead-card__section {
   border-top: 1px solid var(--color-border-subtle);
 }
 
 .lead-card__section-label {
   display: block;
-  margin-bottom: var(--space-2);
+  margin-bottom: 4px;
   font-size: 10px;
   font-weight: var(--fw-semibold);
   color: var(--color-text-muted);
@@ -826,7 +827,7 @@
 }
 
 .lead-card__row + .lead-card__row {
-  margin-top: var(--space-2);
+  margin-top: 4px;
 }
 
 .lead-card__row-icon {
@@ -873,7 +874,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-2) var(--space-4);
   margin-top: auto;
   border-top: 1px solid var(--color-border-subtle);
 }
@@ -984,7 +985,7 @@
 
 @media (max-width: 900px) {
   .lead-exchange__grid {
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   }
 }
 
@@ -996,21 +997,21 @@
 
   .lead-card {
     height: auto;
-    min-height: 300px;
+    min-height: 264px;
   }
 
   .lead-card__header {
-    padding: 30px var(--space-3) var(--space-3);
+    padding: 28px var(--space-3) var(--space-2);
   }
 
   .lead-card__avatar {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     font-size: var(--fs-xs);
   }
 
   .lead-card__chips {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-3);
   }
 
   .lead-card__section {
@@ -1018,7 +1019,7 @@
   }
 
   .lead-card__footer {
-    padding: var(--space-3);
+    padding: var(--space-2) var(--space-3);
   }
 }
 
@@ -1141,16 +1142,31 @@
   padding: 6px 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-full);
-  background: var(--color-white);
   color: var(--color-text-primary);
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
   cursor: pointer;
-  transition: background var(--transition-fast) var(--ease-premium);
+  transition: background var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
 }
 
-.ooo-panel__refresh:hover {
+.ooo-panel__refresh:hover:not(:disabled) {
   background: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+.ooo-panel__refresh:focus-visible {
+  outline: 2px solid var(--color-primary, #1d4ed8);
+  outline-offset: 2px;
+}
+
+.ooo-panel__refresh:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.ooo-panel__refresh--spinning svg {
+  animation: lead-exchange-spin 0.9s linear infinite;
 }
 
 .ooo-panel__error {

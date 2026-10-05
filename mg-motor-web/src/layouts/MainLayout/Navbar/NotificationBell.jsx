@@ -3,6 +3,8 @@ import { Check, Trash2 } from "lucide-react";
 import IconButton from "../../../ui/IconButton/IconButton";
 import { BellIcon } from "../../../ui/icons";
 import { notificationService } from "../../../services/api/notificationService";
+import { CompactListSkeleton } from "../../../ui/Skeleton/PageSkeletons";
+import { useNotificationStyle } from "../../../utils/notificationStyle";
 import "./NotificationBell.css";
 
 const TYPE_LABELS = {
@@ -31,6 +33,7 @@ export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef(null);
+  const [notificationStyle] = useNotificationStyle();
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -110,11 +113,17 @@ export default function NotificationBell() {
     }
   };
 
+  // Settings → Notifications → "Hide": remove the bell from the navbar.
+  if (notificationStyle === "hidden") return null;
+
   return (
     <div className="notification-bell" ref={containerRef}>
       <div className="notification-bell__anchor">
         <IconButton icon={BellIcon} label="Notifications" active={open} onClick={handleToggle} />
-        {unreadCount > 0 && (
+        {unreadCount > 0 && notificationStyle === "dot" && (
+          <span className="notification-bell__dot" aria-hidden="true" />
+        )}
+        {unreadCount > 0 && notificationStyle !== "dot" && (
           <span className="notification-bell__badge" aria-hidden="true">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
@@ -132,7 +141,7 @@ export default function NotificationBell() {
           </div>
 
           {loading && notifications.length === 0 ? (
-            <div className="notification-bell__empty">Loading…</div>
+            <CompactListSkeleton rows={3} />
           ) : notifications.length === 0 ? (
             <div className="notification-bell__empty">
               <span className="notification-bell__empty-icon">

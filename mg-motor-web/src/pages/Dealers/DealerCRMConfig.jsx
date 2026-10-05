@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ROUTES } from "../../constants/routes.constants";
 import {
+  ArrowLeft,
   Plug,
   ShieldCheck,
   ArrowLeftRight,
@@ -469,6 +471,7 @@ function LogDetailOffcanvas({ row, onClose }) {
 }
 
 export default function DealerCRMConfig() {
+  const navigate = useNavigate();
   const { showAlert } = useAlerts();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
@@ -1058,6 +1061,10 @@ export default function DealerCRMConfig() {
 
   return (
     <div className="dealer-crm-config">
+      <button type="button" className="dealer-crm-config__back" onClick={() => navigate(ROUTES.SETTINGS)}>
+        <ArrowLeft size={15} />
+        Back to Settings
+      </button>
       <div className="dealer-crm-config__layout">
         {/* ---------- Left: dealer picker ---------- */}
                <div className="dealer-crm-config__panel dealer-crm-config__panel--list">

@@ -21,6 +21,7 @@ import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import { DetailSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import LeadDetailView from "./LeadDetailView";
 import EmptyState from "../../common/EmptyState/EmptyState";
 import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
@@ -635,7 +636,7 @@ export default function LeadExchangePage() {
               }
             />
           ) : (
-            <div className="lead-exchange__detail-status">Loading lead…</div>
+            <DetailSkeleton />
           )}
         </div>
       ) : (
@@ -1062,6 +1063,7 @@ function OutOfOrderEventsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [offcanvasOpen, setOffcanvasOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
     try {
@@ -1073,6 +1075,16 @@ function OutOfOrderEventsPanel() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Manual refresh: same fetch as the 30s poll, but with visible feedback
+  // (spinner + disabled) so the click doesn't look like a no-op when the
+  // data hasn't changed.
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
   };
 
   useEffect(() => {
@@ -1102,9 +1114,15 @@ function OutOfOrderEventsPanel() {
             enquiry exists, or expired with an alert after the retention period.
           </p>
         </div>
-        <button type="button" className="ooo-panel__refresh" onClick={load} aria-label="Refresh dealer events">
+        <button
+          type="button"
+          className={`ooo-panel__refresh${refreshing ? " ooo-panel__refresh--spinning" : ""}`}
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-label="Refresh dealer events"
+        >
           <RefreshCw size={14} strokeWidth={2} />
-          Refresh
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </div>
 

@@ -27,6 +27,18 @@
   pointer-events: none;
 }
 
+.notification-bell__dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--color-primary);
+  border: 2px solid var(--color-bg-elevated);
+  pointer-events: none;
+}
+
 .notification-bell__panel {
   position: absolute;
   top: calc(100% + var(--space-2));
@@ -215,4 +227,12 @@
 .notification-bell__item-action--delete:hover {
   background-color: color-mix(in srgb, #dc2626 12%, transparent);
   color: #dc2626;
+}
+/* Narrow phones: keep the dropdown inside the viewport */
+@media (max-width: 400px) {
+  .notification-bell__panel {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    right: -8px;
+  }
 }

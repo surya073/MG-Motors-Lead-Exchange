@@ -7,6 +7,7 @@ import { ROUTES } from "../../constants/routes.constants";
 // still owned by Overview.jsx (its path cards need it too), re-used here
 // only for the error-type filter dropdown below.
 import { SCENARIO_META } from "../Overview/Overview";
+import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import "./IntegrationsPage.css";
 
 /**
@@ -192,7 +193,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
       </div>
 
       {loading ? (
-        <div className="integrations-page__skeleton" />
+        <TableSkeleton columnCount={7} rowCount={8} />
       ) : error ? (
         <div className="overview__state overview__state--error">{error}</div>
       ) : data.logs.length === 0 ? (

@@ -4,6 +4,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { LayoutProvider } from "./contexts/LayoutContext";
 import { AlertProvider } from "./ui/Alerts/Alerts";
 import AppRoutes from "./routes/AppRoutes";
+import { markSessionStart, restoreProfilePreferences } from "./utils/profilePreferences";
 
 /**
  * App.jsx
@@ -24,6 +25,11 @@ export default function App() {
   useEffect(() => {
     const savedFontSize = localStorage.getItem("settings:fontSize");
     if (savedFontSize) document.documentElement.setAttribute("data-font-size", savedFontSize);
+    restoreProfilePreferences(); // saved accent colour
+    markSessionStart(); // for the Session timing card in Settings
+    if (localStorage.getItem("settings:reduceMotion") === "true") {
+      document.documentElement.setAttribute("data-reduce-motion", "true");
+    }
   }, []);
 
   return (

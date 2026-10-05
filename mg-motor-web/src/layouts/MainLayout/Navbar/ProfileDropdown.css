@@ -136,3 +136,8 @@
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
+@media (max-width: 400px) {
+  .profile-dropdown__panel {
+    max-width: calc(100vw - 24px);
+  }
+}
