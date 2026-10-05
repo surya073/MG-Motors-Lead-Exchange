@@ -7,6 +7,7 @@ const logger = require('../utils/logger');
 const { notifyAdmins, notifyUser } = require('./notificationService');
 const crmIntegrationService = require('./integrations/crmIntegrationService'); // NEW
 const pathPolicy = require('./integrations/pathPolicyService');
+const outboundSyncClaimService = require('./integrations/outboundSyncClaimService');
 
 const LEADS_TABLE = 'leads';
 
@@ -26,6 +27,23 @@ function describeValidationIssues(issues) {
     .join('; ');
 }
 const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
+
+// The leadSync:${dealer_code} claim (see syncLeads()) is held only for the
+// duration of one record's classification/insert/dispatch, so genuine
+// contention — a second overlapping syncLeads() execution for the same
+// dealer — is expected to clear in well under a second, not minutes. Unlike
+// every other claim/sweep in this codebase, there is no scheduled job that
+// retries a syncLeads() pass, so a claim that is busy for just one instant
+// must not permanently drop that record until some unrelated future
+// webhook/manual sync happens to pick it up again. A short bounded retry
+// here — still going through the same atomic claim each attempt, never
+// bypassing it — closes that gap without weakening the mutual exclusion.
+const LEAD_SYNC_CLAIM_MAX_ATTEMPTS = 3;
+const LEAD_SYNC_CLAIM_RETRY_DELAY_MS = 250;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * leadSyncService.js
@@ -428,117 +446,199 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
       const existingRow = existingLeadsByCrmId.get(crmRecord.id);
 
       if (!existingRow) {
-        const duplicate = validation.valid
-          ? findDeliveredBusinessDuplicate(
-              { ...mappedRow, CREATEDTIME: crmRecord.Created_Time },
-              existingLeadsByCrmId
-            )
-          : null;
-        let initialSyncStatus = 'PENDING';
-        if (validation.routingIssue) initialSyncStatus = 'ROUTING_HOLD';
-        else if (validation.privacyIssue) initialSyncStatus = 'CONSENT_HOLD';
-        else if (validation.issues.length > 0) initialSyncStatus = 'VALIDATION_HOLD';
-        else if (duplicate) initialSyncStatus = 'DUPLICATE_LINKED';
+        // Cross-instance guard for the confirmed syncLeads() race: two
+        // concurrent executions (webhook + webhook, webhook + manual, or
+        // two manual triggers) each load their own loadExistingLeadsByCrmId()
+        // snapshot, so two different-but-business-duplicate OEM records
+        // (duplicate matching always requires the same dealer_code — see
+        // DUPLICATE_FIELDS) could both be classified "new" before either
+        // insert is visible to the other, both bypassing Happy Path 3.
+        // sweepOverlapGuard is in-memory only (one warm instance); this
+        // reuses the existing cross-instance DB-backed claim mechanism
+        // instead, scoped per-dealer (not globally, so unrelated dealers —
+        // and 200+ dealer scale — stay fully concurrent) and namespaced
+        // with a 'leadSync' prefix so it can never collide with a real
+        // outbound-dispatch claim_key (always `${integrationId}:${zohoLeadId}`,
+        // a numeric-shaped pair). Scoped to just this one record's
+        // classification/insert/dispatch, released immediately after,
+        // never the whole batch or the whole function.
+        let claimResult;
+        for (let attempt = 1; attempt <= LEAD_SYNC_CLAIM_MAX_ATTEMPTS; attempt += 1) {
+          claimResult = await outboundSyncClaimService.withOutboundSyncClaim(
+            catalystApp,
+            'leadSync',
+            mappedRow.dealer_code,
+            crmRecord.id,
+            async () => {
+            const duplicate = validation.valid
+              ? findDeliveredBusinessDuplicate(
+                  { ...mappedRow, CREATEDTIME: crmRecord.Created_Time },
+                  existingLeadsByCrmId
+                )
+              : null;
+            let initialSyncStatus = 'PENDING';
+            if (validation.routingIssue) initialSyncStatus = 'ROUTING_HOLD';
+            else if (validation.privacyIssue) initialSyncStatus = 'CONSENT_HOLD';
+            else if (validation.issues.length > 0) initialSyncStatus = 'VALIDATION_HOLD';
+            else if (duplicate) initialSyncStatus = 'DUPLICATE_LINKED';
 
-        const insertedRow = await table.insertRow({
-          ...mappedRow,
-          last_synced_at: now,
-          sync_status: initialSyncStatus,
-        });
-        inserted += 1;
+            const insertedRow = await table.insertRow({
+              ...mappedRow,
+              last_synced_at: now,
+              sync_status: initialSyncStatus,
+            });
+            inserted += 1;
 
-        const fullLeadRow = {
-          ...mappedRow,
-          crm_record_id: crmRecord.id,
-          ROWID: insertedRow.ROWID,
-          CREATEDTIME: insertedRow.CREATEDTIME || crmRecord.Created_Time,
-          sync_status: initialSyncStatus,
-        };
-        existingLeadsByCrmId.set(crmRecord.id, fullLeadRow);
+            const fullLeadRow = {
+              ...mappedRow,
+              crm_record_id: crmRecord.id,
+              ROWID: insertedRow.ROWID,
+              CREATEDTIME: insertedRow.CREATEDTIME || crmRecord.Created_Time,
+              sync_status: initialSyncStatus,
+            };
+            existingLeadsByCrmId.set(crmRecord.id, fullLeadRow);
 
-        logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
+            logger.info('leadSyncService', `New lead inserted (ROWID=${insertedRow.ROWID}, dealer_code=${mappedRow.dealer_code})`);
 
-        if (validation.routingIssue) {
-          await crmIntegrationService.recordScenario(catalystApp, {
-            scenarioCode: 'Unhappy 5',
-            leadRow: fullLeadRow,
-            errorCode: 'DEALER_ROUTING_INVALID',
-            reason: validation.routingIssue.rule,
-            notify: true,
-          });
-          incrementScenario(scenarioCounts, 'Unhappy 5');
-        } else if (validation.privacyIssue) {
-          await crmIntegrationService.recordScenario(catalystApp, {
-            scenarioCode: 'Unhappy 8',
-            dealerCode: fullLeadRow.dealer_code,
-            leadRow: fullLeadRow,
-            errorCode: 'CONSENT_MISMATCH',
-            reason: validation.privacyIssue.rule,
-            notify: true,
-          });
-          incrementScenario(scenarioCounts, 'Unhappy 8');
-        } else if (validation.issues.length > 0) {
-          await crmIntegrationService.recordScenario(catalystApp, {
-            scenarioCode: 'Unhappy 2',
-            dealerCode: fullLeadRow.dealer_code,
-            leadRow: fullLeadRow,
-            errorCode: 'LEAD_VALIDATION_FAILED',
-            reason: describeValidationIssues(validation.issues),
-            notify: true,
-          });
-          incrementScenario(scenarioCounts, 'Unhappy 2');
-        } else if (duplicate) {
-          const originalSubmittedAt = pathPolicy.parseTimestamp(
-            duplicate.assigned_date || duplicate.CREATEDTIME
-          );
-          const duplicateSubmittedAt = pathPolicy.parseTimestamp(
-            fullLeadRow.assigned_date || fullLeadRow.CREATEDTIME
-          );
-          const gapMinutes = originalSubmittedAt && duplicateSubmittedAt
-            ? Math.max(0, (duplicateSubmittedAt.getTime() - originalSubmittedAt.getTime()) / 60000)
-            : null;
+            if (validation.routingIssue) {
+              await crmIntegrationService.recordScenario(catalystApp, {
+                scenarioCode: 'Unhappy 5',
+                leadRow: fullLeadRow,
+                errorCode: 'DEALER_ROUTING_INVALID',
+                reason: validation.routingIssue.rule,
+                notify: true,
+              });
+              incrementScenario(scenarioCounts, 'Unhappy 5');
+            } else if (validation.privacyIssue) {
+              await crmIntegrationService.recordScenario(catalystApp, {
+                scenarioCode: 'Unhappy 8',
+                dealerCode: fullLeadRow.dealer_code,
+                leadRow: fullLeadRow,
+                errorCode: 'CONSENT_MISMATCH',
+                reason: validation.privacyIssue.rule,
+                notify: true,
+              });
+              incrementScenario(scenarioCounts, 'Unhappy 8');
+            } else if (validation.issues.length > 0) {
+              await crmIntegrationService.recordScenario(catalystApp, {
+                scenarioCode: 'Unhappy 2',
+                dealerCode: fullLeadRow.dealer_code,
+                leadRow: fullLeadRow,
+                errorCode: 'LEAD_VALIDATION_FAILED',
+                reason: describeValidationIssues(validation.issues),
+                notify: true,
+              });
+              incrementScenario(scenarioCounts, 'Unhappy 2');
+            } else if (duplicate) {
+              const originalSubmittedAt = pathPolicy.parseTimestamp(
+                duplicate.assigned_date || duplicate.CREATEDTIME
+              );
+              const duplicateSubmittedAt = pathPolicy.parseTimestamp(
+                fullLeadRow.assigned_date || fullLeadRow.CREATEDTIME
+              );
+              const gapMinutes = originalSubmittedAt && duplicateSubmittedAt
+                ? Math.max(0, (duplicateSubmittedAt.getTime() - originalSubmittedAt.getTime()) / 60000)
+                : null;
 
-          // Confirmed duplicate: this branch never reaches the dealer
-          // dispatch call below (mutually exclusive with the `else` branch
-          // that calls dispatchNewLeadToDealer), so the duplicate is
-          // already guaranteed to skip the dealer CRM push — no change
-          // needed there. Reflect the outcome on the NEW duplicate lead's
-          // own OEM CRM record only, using the existing OEM status-update
-          // call and an already-approved Lead_Status value — crmRecord.id
-          // is THIS incoming record, never duplicate.crm_record_id (the
-          // original/existing lead, which stays untouched). No new field,
-          // no change to detection/linking above. Best-effort: a rejected
-          // write here must not affect the duplicate outcome already
-          // recorded.
-          try {
-            await updateOemLead(crmRecord.id, { Lead_Status: 'Not Qualified' });
-            await table.updateRow({ ROWID: fullLeadRow.ROWID, lead_status: 'Not Qualified' });
-            fullLeadRow.lead_status = 'Not Qualified';
-          } catch (err) {
-            logger.error('leadSyncService', `Failed to set Not Qualified on duplicate OEM lead ${crmRecord.id}`, err);
+              // Confirmed duplicate: this branch never reaches the dealer
+              // dispatch call below (mutually exclusive with the `else` branch
+              // that calls dispatchNewLeadToDealer), so the duplicate is
+              // already guaranteed to skip the dealer CRM push — no change
+              // needed there. Reflect the outcome on the NEW duplicate lead's
+              // own OEM CRM record only, using the existing OEM status-update
+              // call and an already-approved Lead_Status value — crmRecord.id
+              // is THIS incoming record, never duplicate.crm_record_id (the
+              // original/existing lead, which stays untouched). No new field,
+              // no change to detection/linking above. Best-effort: a rejected
+              // write here must not affect the duplicate outcome already
+              // recorded.
+              try {
+                await updateOemLead(crmRecord.id, { Lead_Status: 'Not Qualified' });
+                await table.updateRow({ ROWID: fullLeadRow.ROWID, lead_status: 'Not Qualified' });
+                fullLeadRow.lead_status = 'Not Qualified';
+              } catch (err) {
+                logger.error('leadSyncService', `Failed to set Not Qualified on duplicate OEM lead ${crmRecord.id}`, err);
+              }
+
+              await crmIntegrationService.recordScenario(catalystApp, {
+                scenarioCode: 'Happy 3',
+                dealerCode: fullLeadRow.dealer_code,
+                leadRow: fullLeadRow,
+                reason: `Exact mandatory-field match within ${pathPolicy.DUPLICATE_WINDOW_MINUTES} minutes; linked to ${duplicate.crm_record_id}.`,
+                fieldChanges: [{
+                  field: 'duplicate_link',
+                  from: duplicate.crm_record_id,
+                  to: fullLeadRow.crm_record_id,
+                  original_submitted_at: originalSubmittedAt?.toISOString() || null,
+                  duplicate_submitted_at: duplicateSubmittedAt?.toISOString() || null,
+                  gap_minutes: gapMinutes,
+                  matched_fields: pathPolicy.DUPLICATE_FIELDS,
+                }],
+              });
+              incrementScenario(scenarioCounts, 'Happy 3');
+            } else {
+              // AWAITED so Catalyst cannot freeze this serverless invocation
+              // before dealer delivery and its audit row finish.
+              const dispatchResult = await dispatchNewLeadToDealer(catalystApp, fullLeadRow);
+              incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
+            }
           }
+          );
 
-          await crmIntegrationService.recordScenario(catalystApp, {
-            scenarioCode: 'Happy 3',
-            dealerCode: fullLeadRow.dealer_code,
-            leadRow: fullLeadRow,
-            reason: `Exact mandatory-field match within ${pathPolicy.DUPLICATE_WINDOW_MINUTES} minutes; linked to ${duplicate.crm_record_id}.`,
-            fieldChanges: [{
-              field: 'duplicate_link',
-              from: duplicate.crm_record_id,
-              to: fullLeadRow.crm_record_id,
-              original_submitted_at: originalSubmittedAt?.toISOString() || null,
-              duplicate_submitted_at: duplicateSubmittedAt?.toISOString() || null,
-              gap_minutes: gapMinutes,
-              matched_fields: pathPolicy.DUPLICATE_FIELDS,
-            }],
+          if (!claimResult?.skipped) break;
+
+          if (attempt < LEAD_SYNC_CLAIM_MAX_ATTEMPTS) {
+            await wait(LEAD_SYNC_CLAIM_RETRY_DELAY_MS);
+          }
+        }
+
+        if (claimResult?.skipped) {
+          // Another concurrent syncLeads() execution still owned the
+          // leadSync claim for this dealer_code after every retry — this
+          // record was NOT inserted, classified, or dispatched. It stays
+          // exactly as it is in OEM and will be picked up as a new record
+          // again on the next sync/webhook/manual run.
+          logger.info(
+            'leadSyncService',
+            `Deferred new-lead classification for crm_record_id=${crmRecord.id} (dealer_code=${mappedRow.dealer_code}) — another sync is still processing a new lead for this dealer after ${LEAD_SYNC_CLAIM_MAX_ATTEMPTS} attempts; will retry next pass`
+          );
+        }
+      } else if (existingRow.sync_status === 'DUPLICATE_LINKED') {
+        // A lead already classified as a Happy Path 3 duplicate must stay
+        // blocked from Dealer CRM forever, even if the OEM record is edited
+        // again later. The generic update branch below calls
+        // dispatchLeadUpdateToDealer() unconditionally, which — finding no
+        // lead_integrations row for a never-dispatched duplicate — would
+        // treat a later edit as a first-time CREATE. Intercepting here,
+        // before that branch's condition is even evaluated, keeps mirrored
+        // fields fresh for operators without ever reaching dispatch.
+        if (hasChanges(existingRow, mappedRow)) {
+          await table.updateRow({
+            ROWID: existingRow.ROWID,
+            ...mappedRow,
+            last_synced_at: now,
+            sync_status: 'DUPLICATE_LINKED',
           });
-          incrementScenario(scenarioCounts, 'Happy 3');
+          existingLeadsByCrmId.set(crmRecord.id, {
+            ...existingRow,
+            ...mappedRow,
+            sync_status: 'DUPLICATE_LINKED',
+          });
+          updated += 1;
+        } else if (needsAssignedDateBackfill(existingRow, mappedRow)) {
+          await table.updateRow({
+            ROWID: existingRow.ROWID,
+            assigned_date: mappedRow.assigned_date,
+            last_synced_at: now,
+          });
+          existingLeadsByCrmId.set(crmRecord.id, {
+            ...existingRow,
+            assigned_date: mappedRow.assigned_date,
+            last_synced_at: now,
+          });
+          unchanged += 1;
         } else {
-          // AWAITED so Catalyst cannot freeze this serverless invocation
-          // before dealer delivery and its audit row finish.
-          const dispatchResult = await dispatchNewLeadToDealer(catalystApp, fullLeadRow);
-          incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
+          unchanged += 1;
         }
       } else if (existingRow.sync_status === 'Removed' || hasChanges(existingRow, mappedRow)) {
         await table.updateRow({ ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: 'PENDING' });
