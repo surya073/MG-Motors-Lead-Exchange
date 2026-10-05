@@ -4,6 +4,7 @@ const logger = require('../../utils/logger');
 const { toCatalystDateTime } = require('../../utils/dateFormat');
 const crmIntegrationService = require('./crmIntegrationService');
 const crmAdapterFactory = require('./crmAdapterFactory');
+const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { guardSweep } = require('./sweepOverlapGuard');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
@@ -406,7 +407,7 @@ async function assertDealerRecordExists(catalystApp, integration, externalLeadId
   const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
   let fetched;
   try {
-    fetched = await adapter.getLead(catalystApp, integration, externalLeadId);
+    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
   } catch (err) {
     if (err.response?.status === 404 || err.response?.status === 204) {
       const missing = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);

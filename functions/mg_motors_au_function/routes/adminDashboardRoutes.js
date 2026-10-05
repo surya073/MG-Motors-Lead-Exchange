@@ -20,6 +20,7 @@ const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { removeDealerUser } = require('../services/dealerInviteService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService'); // NEW
 const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
+const { withCrmApiLimit } = require('../services/integrations/crmApiConcurrencyLimiter');
 const aiAssistantToolService = require('../services/aiAssistantToolService');
 const logger = require('../utils/logger');
 
@@ -106,7 +107,7 @@ router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res
         const integration = await integrations.get(event.dealerCode);
         if (!integration) return;
         const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
-        const fetched = await adapter.getLead(catalystApp, integration, event.externalLeadId);
+        const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, event.externalLeadId));
         const raw = fetched && fetched.raw;
         const record = Array.isArray(raw && raw.data) ? raw.data[0] : raw;
         if (!record || typeof record !== 'object') {

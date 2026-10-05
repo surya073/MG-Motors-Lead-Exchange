@@ -16,6 +16,24 @@ const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 const MAX_LEADS_PER_SWEEP = 50;
 const MAX_CANDIDATES_TO_SCAN = 200;
 
+// Same proven pattern as dealerReconciliationService.js's
+// RECONCILE_CONCURRENCY (identical formula/default/cap): each candidate
+// costs one dealer-CRM round trip, and this sweep previously processed
+// up to MAX_LEADS_PER_SWEEP of them fully SERIALLY — the one scheduler in
+// this codebase with no concurrency bound at all. That file's own comment
+// documents measuring 51 records at ~20s and that 200 "exceeds Catalyst's
+// applogic execution limit and the whole run is lost"; outbound retry is
+// actually more exposed to that same ceiling, since a slow/down dealer
+// (exactly what populates this queue) can take up to the adapter's own
+// 8-10s timeout per lead, not a healthy dealer's fast round trip. Bounding
+// concurrency here — not shrinking MAX_LEADS_PER_SWEEP, which is already
+// in the same safe ballpark as reconciliation's proven 40 — closes that
+// gap the same way reconciliation already closed it.
+const OUTBOUND_RETRY_CONCURRENCY = (() => {
+  const configured = Number(process.env.OUTBOUND_RETRY_CONCURRENCY);
+  return Number.isFinite(configured) && configured >= 1 ? Math.min(configured, 10) : 6;
+})();
+
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
@@ -97,8 +115,15 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
     })
     .slice(0, MAX_LEADS_PER_SWEEP);
 
-  for (const mapping of dueNow) {
-
+  // Unchanged per-lead logic, only extracted into a named function so it
+  // can be invoked from bounded concurrent batches below instead of a
+  // strictly serial loop. Every existing behavior inside is identical:
+  // same integration/lead lookup, same syncLeadToExternalCrm call (so
+  // retry_count/backoff/escalation bookkeeping and the outbound claim are
+  // entirely untouched — they live inside that function, not here), same
+  // result counting, same error handling (one lead's failure/exception
+  // never aborts the sweep).
+  const processOne = async (mapping) => {
     try {
       const integrationRows = await catalystApp.zcql().executeZCQLQuery(
         `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${mapping.integration_id} LIMIT 1`
@@ -115,7 +140,7 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
         // upstream) — nothing sensible to retry. Leave it as-is rather
         // than guessing; surfaces in results for visibility.
         results.skippedNoIntegrationOrLead += 1;
-        continue;
+        return;
       }
 
       results.attempted += 1;
@@ -144,6 +169,20 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
       results.errored += 1;
       logger.error('outboundRetryScheduler', `Sweep errored on lead_integrations ROWID=${mapping.ROWID}`, rowErr);
     }
+  };
+
+  // Bounded concurrency, same chunked-Promise.all shape
+  // dealerReconciliationService.js already uses: candidates within one
+  // batch run in parallel (different dealers genuinely process
+  // concurrently), but the NEXT batch only starts once the current one
+  // fully settles — so one slow/down dealer can block at most
+  // OUTBOUND_RETRY_CONCURRENCY leads, never the whole sweep. The
+  // next_retry_at-ascending PRIORITY ORDER established above is preserved
+  // at the batch granularity: the most-overdue leads are always in the
+  // earliest batches, exactly mirroring reconciliation's own
+  // last_attempted_at-ascending ordering through its identical pattern.
+  for (let index = 0; index < dueNow.length; index += OUTBOUND_RETRY_CONCURRENCY) {
+    await Promise.all(dueNow.slice(index, index + OUTBOUND_RETRY_CONCURRENCY).map(processOne));
   }
 
   if (options && options.includeRoutingHolds) {

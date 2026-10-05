@@ -10,6 +10,7 @@ const pathPolicy = require('./pathPolicyService');
 const integrationAlertService = require('./integrationAlertService');
 const oemCrmService = require('../zohoCrmService');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
+const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -721,14 +722,14 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     attemptStartedAt = new Date();
     if (existingMapping?.external_crm_lead_id) {
       operation = 'UPDATE_LEAD';
-      result = await adapter.updateLead(
+      result = await withCrmApiLimit(integration.crm_type, () => adapter.updateLead(
         catalystApp,
         integration,
         existingMapping.external_crm_lead_id,
         payload
-      );
+      ));
     } else {
-      result = await adapter.createLead(
+      result = await withCrmApiLimit(integration.crm_type, () => adapter.createLead(
         catalystApp,
         integration,
         payload,
@@ -736,7 +737,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           idempotencyKey: zohoLeadId,
           idempotencyField: enquiryIdFieldMapping?.target_field,
         }
-      );
+      ));
       if (!result.externalLeadId) {
         const responseShape = summarizeResponseShape(result.raw).join(', ').slice(0, 300) || 'empty/unreadable body';
         const acknowledgementError = new Error(
@@ -1412,7 +1413,7 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
   for (const externalLeadId of ids) {
     const requestReference = crypto.randomUUID();
     try {
-      const fetched = await adapter.getLead(catalystApp, integration, externalLeadId);
+      const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
       const zohoRecord = fetched.raw?.data?.[0];
 
       if (!zohoRecord) {
@@ -1470,7 +1471,7 @@ async function replayInboundLead(
   // FIELD_MAPPING_INVALID.
   let fetched;
   try {
-    fetched = await adapter.getLead(catalystApp, integration, externalLeadId);
+    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
   } catch (err) {
     if (err.response?.status === 404 || err.response?.status === 204) {
       const missing = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);
@@ -1549,6 +1550,67 @@ async function processResolvedInboundLead(
 
   const mapping = mappingRows[0][LEAD_INTEGRATIONS_TABLE];
 
+  // Claimed for the duration of this whole attempt — every write this
+  // function can make (the Unhappy 7/6/4 holds below, and the actual MG
+  // write + its two local bookkeeping writes) sits inside this closure.
+  // Reuses the EXACT SAME claim mechanism/table/key format
+  // syncLeadToExternalCrm already uses for outbound sync, keyed
+  // identically (`${integration.ROWID}:${mapping.zoho_lead_id}`), so an
+  // inbound webhook for this lead and an outbound MG->dealer sync for
+  // the SAME lead genuinely coordinate on one lock — not two separate
+  // locks that could still race each other. See outboundSyncClaimService.js;
+  // nothing about that file changes for this.
+  const claimResult = await outboundSyncClaimService.withOutboundSyncClaim(
+    catalystApp,
+    integration.ROWID,
+    mapping.zoho_lead_id,
+    requestReference,
+    () => attemptInboundLeadUpdate(
+      catalystApp, integration, externalLeadId, externalRecord,
+      fieldMappings, statusMappings, requestReference, zohoCrmService,
+      affectedFields, replay, mapping
+    )
+  );
+
+  if (claimResult?.skipped && claimResult.reason === 'CONCURRENT_SYNC_IN_PROGRESS') {
+    // A fresh (non-replay) delivery that loses the claim race must not be
+    // silently dropped — nothing would ever pick it up again. Hold it the
+    // same way every other "can't apply this right now" case in this
+    // function already does, so inboundReplayScheduler.js's existing
+    // sweep finds and retries it. A replay call that loses the race is
+    // already a held/FAILED row from a prior attempt — inboundReplayScheduler.js's
+    // own `replay?.held` check (which this result's `held: true` below
+    // satisfies) already re-marks it attempted without a second log entry.
+    if (!replay) {
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'EXTERNAL_CRM_TO_ZOHO',
+        operation: 'UPDATE_LEAD',
+        zoho_lead_id: mapping.zoho_lead_id,
+        external_lead_id: externalLeadId,
+        status: 'FAILED',
+        error_message: 'CONCURRENT_UPDATE_IN_PROGRESS',
+        request_reference: requestReference,
+      }, {
+        scenarioCode: 'Unhappy 4',
+        scenarioMessage: 'Another update for this lead was already in progress; queued for automatic retry.',
+        notify: mapping.last_error !== 'CONCURRENT_UPDATE_IN_PROGRESS',
+        reason: 'A concurrent inbound or outbound operation for this lead was already in progress when this update arrived; it will be retried automatically.',
+      });
+      await markMappingHeld(catalystApp, mapping.ROWID, 'CONCURRENT_UPDATE_IN_PROGRESS');
+    }
+    return { ...claimResult, held: true };
+  }
+
+  return claimResult;
+}
+
+async function attemptInboundLeadUpdate(
+  catalystApp, integration, externalLeadId, externalRecord,
+  fieldMappings, statusMappings, requestReference, zohoCrmService,
+  affectedFields, replay, mapping
+) {
   // NOTE: the echo check that used to sit here hashed `externalRecord`
   // (the dealer CRM's whole record) and compared it against a hash of
   // our mapped OUTBOUND payload. Those two objects never match, so it
@@ -2016,7 +2078,7 @@ async function markWebhookEventStatus(catalystApp, eventRowId, status, errorMess
 
 async function testConnection(catalystApp, integration) {
   const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
-  const result = await adapter.testConnection(catalystApp, integration);
+  const result = await withCrmApiLimit(integration.crm_type, () => adapter.testConnection(catalystApp, integration));
 
   await catalystApp.datastore().table(DEALER_INTEGRATIONS_TABLE).updateRow({
     ROWID: integration.ROWID,
