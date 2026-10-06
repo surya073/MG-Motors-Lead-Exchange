@@ -83,18 +83,25 @@ async function waitForSignedOut({ intervalMs = 150, timeoutMs = 5000 } = {}) {
   const catalyst = await waitForCatalystSdk();
   const start = Date.now();
 
+  // Resolves true once the session is confirmed gone (isUserAuthenticated
+  // reports nothing, or rejects as unauthenticated), false if it is still
+  // valid when the timeout runs out — callers use that to retry sign-out.
   return new Promise((resolve) => {
     (function poll() {
       catalyst.auth
         .isUserAuthenticated()
         .then((result) => {
-          if (!result?.content || Date.now() - start > timeoutMs) {
-            resolve();
+          if (!result?.content) {
+            resolve(true);
+            return;
+          }
+          if (Date.now() - start > timeoutMs) {
+            resolve(false);
             return;
           }
           setTimeout(poll, intervalMs);
         })
-        .catch(() => resolve());
+        .catch(() => resolve(true));
     })();
   });
 }

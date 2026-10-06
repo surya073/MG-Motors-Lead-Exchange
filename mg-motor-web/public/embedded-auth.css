@@ -1584,3 +1584,70 @@ only screen and (min-resolution: 2dppx) {
 		max-width: 100%;
 	}
 }
+
+/* =========================================================
+   MG THEME OVERRIDES (kept last so they win over the defaults above)
+   ========================================================= */
+
+/* Catalyst's own "Forgot password?" opens a page rendered in Catalyst's
+   default style. The app shows its own themed link and form instead
+   (see LoginPage.jsx), so the embedded one is hidden. */
+#forgotpassword {
+	display: none !important;
+}
+
+/* Email / password: one consistent left indent so the text never overlaps
+   the mail / lock glyph, whichever helper class Catalyst puts on the input. */
+.textbox,
+.textbox.textindent42,
+.textbox.textindent62,
+.textbox.textintent52,
+#login_id.textbox,
+#password.textbox {
+	text-indent: 0 !important;
+	padding-left: 44px !important;
+	padding-right: 44px !important;
+	color: #ffffff;
+	-webkit-text-fill-color: #ffffff;
+	caret-color: #ffffff;
+}
+
+/* Browser autofill paints its own light background and dark text over the
+   field - keep it on our dark surface. */
+.textbox:-webkit-autofill,
+.textbox:-webkit-autofill:hover,
+.textbox:-webkit-autofill:focus,
+.textbox:-webkit-autofill:active {
+	-webkit-box-shadow: 0 0 0 1000px #1b1b1f inset !important;
+	box-shadow: 0 0 0 1000px #1b1b1f inset !important;
+	-webkit-text-fill-color: #ffffff !important;
+	caret-color: #ffffff !important;
+	transition: background-color 9999s ease-in-out 0s;
+}
+
+/* Show / hide password eye: pinned inside the field, vertically centred. */
+.textbox_div {
+	position: relative;
+}
+
+.show_hide_password {
+	position: absolute !important;
+	top: auto !important;
+	bottom: 14px !important;
+	right: 14px !important;
+	float: none !important;
+	font-size: 20px !important;
+	height: 20px !important;
+	line-height: 20px;
+	color: rgba(255, 255, 255, 0.45);
+}
+
+.show_hide_password:hover {
+	color: rgba(255, 255, 255, 0.85);
+}
+
+/* Validation text on the dark surface */
+.fielderror {
+	color: #ff8484;
+	font-size: 12px;
+}

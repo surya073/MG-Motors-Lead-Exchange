@@ -15,6 +15,39 @@ export default function LoginPage() {
   const containerRef = useRef(null);
   const [iframeLoading, setIframeLoading] = useState(true);
 
+  // "Forgot password" is handled here, in our own themed form, rather than
+  // by Catalyst's embedded page (which renders with Catalyst's default
+  // styling). The embedded sign-in iframe stays mounted but hidden while
+  // this form is showing, so going back is instant.
+  const [view, setView] = useState("signin"); // "signin" | "forgot"
+  const [resetEmail, setResetEmail] = useState("");
+  const [reset, setReset] = useState({ sending: false, sent: false, error: "" });
+
+  const handleReset = async (event) => {
+    event.preventDefault();
+    const email = resetEmail.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setReset({ sending: false, sent: false, error: "Enter a valid email address." });
+      return;
+    }
+    setReset({ sending: true, sent: false, error: "" });
+    try {
+      await authService.sendPasswordReset(email);
+      setReset({ sending: false, sent: true, error: "" });
+    } catch {
+      setReset({
+        sending: false,
+        sent: false,
+        error: "We could not send the reset email. Check the address and try again.",
+      });
+    }
+  };
+
+  const showSignIn = () => {
+    setView("signin");
+    setReset({ sending: false, sent: false, error: "" });
+  };
+
   const targetPath = location.state?.from?.pathname || ROUTES.DASHBOARD;
   const redirectTarget = `${window.location.origin}${APP_BASE_PATH}/#${targetPath}`;
 
@@ -60,13 +93,52 @@ export default function LoginPage() {
       <img src={mgLogo} alt="MG Motor" className="login-page__logo" />
 
       <div className="login-page__brand">
-        <h1 className="login-page__title">Welcome Back</h1>
+        <h1 className="login-page__title">{view === "forgot" ? "Reset your password" : "Welcome Back"}</h1>
         <p className="login-page__subtitle">
-          Sign in to your dealer account to continue.
+          {view === "forgot"
+            ? "Enter your account email and we will send you a link to reset your password."
+            : "Sign in to your dealer account to continue."}
         </p>
       </div>
 
-      <div className="login-page__form-area">
+      {view === "forgot" && (
+        <form className="login-page__reset" onSubmit={handleReset} noValidate>
+          {reset.sent ? (
+            <div className="login-page__reset-success" role="status">
+              <strong>Check your inbox</strong>
+              <span>
+                If an account exists for {resetEmail.trim()}, a password reset link is on its way.
+              </span>
+            </div>
+          ) : (
+            <>
+              <label className="login-page__field">
+                <span>Email address</span>
+                <input
+                  type="email"
+                  autoComplete="email"
+                  autoFocus
+                  placeholder="you@dealership.com.au"
+                  value={resetEmail}
+                  onChange={(event) => setResetEmail(event.target.value)}
+                  disabled={reset.sending}
+                />
+              </label>
+              {reset.error && (
+                <p className="login-page__reset-error" role="alert">{reset.error}</p>
+              )}
+              <button type="submit" className="login-page__primary-btn" disabled={reset.sending}>
+                {reset.sending ? "Sending…" : "Send reset link"}
+              </button>
+            </>
+          )}
+          <button type="button" className="login-page__link" onClick={showSignIn}>
+            ← Back to sign in
+          </button>
+        </form>
+      )}
+
+      <div className={`login-page__form-area${view === "forgot" ? " login-page__form-area--hidden" : ""}`}>
         {iframeLoading && (
           <div className="login-page__loading" aria-live="polite">
             <span className="login-page__spinner" />
@@ -79,6 +151,12 @@ export default function LoginPage() {
           className="login-page__iframe-slot"
         />
       </div>
+
+      {view === "signin" && (
+        <button type="button" className="login-page__link login-page__link--forgot" onClick={() => setView("forgot")}>
+          Forgot password?
+        </button>
+      )}
 
       <div className="login-page__divider" role="presentation">
         <span />

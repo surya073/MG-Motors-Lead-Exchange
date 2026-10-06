@@ -31,6 +31,11 @@ import { useAlerts } from "../ui/Alerts/Alerts";
 
 const AuthContext = createContext(undefined);
 
+// Logout: how many times to send sign-out if the session is still valid
+// afterwards, and how long to wait for each confirmation.
+const SIGN_OUT_ATTEMPTS = 3;
+const SIGN_OUT_CONFIRM_TIMEOUT_MS = 3000;
+
 function normalizeRole(profile) {
   if (!profile) return APP_ROLES.UNKNOWN;
 
@@ -129,49 +134,54 @@ export function AuthProvider({ children }) {
     });
   }, [showAlert]);
 
-  const logout = useCallback((targetPath = ROUTES.LOGIN) => {
+  const logout = useCallback(async (targetPath = ROUTES.LOGIN) => {
+    // Ignore repeat clicks while a sign-out is already running.
+    if (isLoggingOut.current) return;
     isLoggingOut.current = true;
 
-    // Stop background revalidation immediately — this is the piece that
-    // was missing before, and it's what let a stale "still authenticated"
-    // response from Catalyst silently undo the logout.
+    // Stop background revalidation immediately, so a stale "still
+    // authenticated" response can never silently undo the logout.
     if (revalidateTimer.current) {
       clearInterval(revalidateTimer.current);
       revalidateTimer.current = null;
     }
-
-    setUser(null);
-    setStatus(SESSION_STATUS.UNAUTHENTICATED);
     wasAuthenticated.current = false;
+
+    // Park on the neutral "checking session" screen instead of flipping to
+    // UNAUTHENTICATED right away. Flipping early routed to /login at once,
+    // which mounted Catalyst's embedded sign-in widget while the old
+    // session was still alive — the widget then never rendered its form
+    // (first click only), and a refresh found the session still valid and
+    // went straight back into the app. Nothing mounts the widget until the
+    // session is really gone.
+    setStatus(SESSION_STATUS.UNKNOWN);
 
     // Same fully-qualified hash-route shape LoginPage uses for sign-in's
     // service_url. A bare "/login" misses the HashRouter entirely and
     // can fall back to the app's default route on some static hosts.
     const redirectUrl = `${window.location.origin}${APP_BASE_PATH}/#${targetPath}`;
-    authService.signOut(redirectUrl);
 
-    // ProtectedRoute already soft-navigates to /login the instant status
-    // flips above, so the embedded sign-in widget can start mounting
-    // before catalyst.auth.signOut() has actually cleared the session.
-    // Its own redirect only changes the hash (same origin/path as the
-    // current page), which browsers treat as a same-document navigation,
-    // not a reload — so the SDK's widget state from the old session is
-    // never guaranteed to reset. Force a real reload as a fallback; if
-    // the SDK's own redirect already unloaded the page first, this never
-    // runs.
-    //
-    // Wait for signOut() to actually take effect first: reloading on a
-    // fixed delay instead can fire before the session is invalidated
-    // server-side, so the freshly-reloaded page's own session check sees
-    // a stale "still authenticated" response and bounces straight back
-    // into the app (isLoggingOut.current can't prevent this — it's an
-    // in-memory ref, and a reload wipes it along with the rest of the JS
-    // context). Only the FIRST click of Logout would hit this race;
-    // waiting for confirmation removes it instead of just narrowing it.
-    authService.waitForSignedOut().finally(() => {
-      window.location.href = redirectUrl;
-      window.location.reload();
-    });
+    try {
+      // signOut() gives no completion signal, so confirm by polling the
+      // session; if it is still valid after a few seconds the first request
+      // was lost, so send it again.
+      for (let attempt = 0; attempt < SIGN_OUT_ATTEMPTS; attempt += 1) {
+        await authService.signOut(redirectUrl);
+        const signedOut = await authService.waitForSignedOut({ timeoutMs: SIGN_OUT_CONFIRM_TIMEOUT_MS });
+        if (signedOut) break;
+      }
+    } catch (err) {
+      console.error("Sign-out request failed", err);
+    }
+
+    setUser(null);
+    setStatus(SESSION_STATUS.UNAUTHENTICATED);
+
+    // A real reload guarantees the SDK and the sign-in widget start from a
+    // clean state. The SDK's own redirect only changes the hash (a
+    // same-document navigation), so it cannot be relied on to do this.
+    window.location.href = redirectUrl;
+    window.location.reload();
   }, []);
 
   const value = {
