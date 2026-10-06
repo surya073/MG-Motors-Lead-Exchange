@@ -262,14 +262,16 @@
 
 /* Cards holding popups (date picker, dropdowns) must sit above the cards that follow them.
    Each card is its own stacking context (backdrop-filter), so the order is explicit:
-   the filter card is above the report card, which is above the rest of the page. */
+   the filter card is above the report card, which is above the rest of the page.
+   Keep these BELOW the sticky top bar (z-index 20 in MainLayout) — the notification
+   bell / profile dropdowns live inside the top bar and must stay above these cards. */
 .integrations-page__filters {
   position: relative;
-  z-index: 40;
+  z-index: 6;
   overflow: visible;
 }
 
 .integrations-page__report {
   position: relative;
-  z-index: 30;
+  z-index: 5;
 }

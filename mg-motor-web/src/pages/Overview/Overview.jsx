@@ -244,7 +244,7 @@ const OVERVIEW_UI_CSS = `
 
 /* The filter card holds popups (date picker, dropdown). Cards use backdrop-filter, so each one
    is its own stacking context; lift this one above the cards below so its popups are never covered. */
-.health-panel .health-panel__filters { position: relative; z-index: 30; overflow: visible; }
+.health-panel .health-panel__filters { position: relative; z-index: 6; overflow: visible; }
 
 /* Card headers */
 .overview .panel-card__header,
