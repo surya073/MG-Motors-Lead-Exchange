@@ -18,7 +18,6 @@ import {
   Clock,
   Hash,
   Globe,
-  X,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import { useAlerts } from "../../ui/Alerts/Alerts";
+import CloseButton from "../../ui/CloseButton/CloseButton";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import mgLogo from "../../assets/images/mg-logo-single.png";
@@ -358,16 +358,16 @@ function PaginationBar({ page, pageSize, total, onPageChange, onPageSizeChange }
         {total === 0 ? "0 results" : `${startItem}–${endItem} of ${total}`}
       </span>
       <div className="dealer-crm-config__pagination-controls">
-        <label>
-          Show
-          <select value={pageSize} onChange={(e) => onPageSizeChange(Number(e.target.value))}>
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="dealer-crm-config__page-size">
+          <span>Show</span>
+          <Dropdown
+            ariaLabel="Rows per page"
+            size="sm"
+            value={pageSize}
+            onChange={(value) => onPageSizeChange(Number(value))}
+            options={PAGE_SIZE_OPTIONS.map((size) => ({ value: size, label: String(size) }))}
+          />
+        </div>
         <div className="dealer-crm-config__pagination-buttons">
           <button type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous page">
             ‹
@@ -398,9 +398,7 @@ function LogDetailOffcanvas({ row, onClose }) {
       <div className="dealer-crm-config__offcanvas" onClick={(e) => e.stopPropagation()}>
         <div className="dealer-crm-config__offcanvas-header">
           <h4>Activity Detail</h4>
-          <button type="button" onClick={onClose} aria-label="Close details">
-            <X size={18} />
-          </button>
+          <CloseButton onClick={onClose} label="Close details" />
         </div>
 
         <div className="dealer-crm-config__offcanvas-body">

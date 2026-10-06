@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Badge from "../Badge/Badge";
 import "./DealerDetailsOffcanvas.css";
-import { XIcon } from "../../ui/icons";
+import CloseButton from "../CloseButton/CloseButton";
 import bannerImg from "../../assets/banners/bgbanner2.jpg";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 
@@ -104,9 +104,7 @@ export default function DealerDetailsOffcanvas({
         role="dialog"
         aria-label="Dealer details"
       >
-        <button className="offcanvas__close" onClick={onClose} aria-label="Close">
-          <XIcon size={18} />
-        </button>
+        <CloseButton variant="glass" className="offcanvas__close" onClick={onClose} />
 
         <header
           className="offcanvas__hero"

@@ -7,6 +7,9 @@ import { adminDashboardService } from "../../services/api/adminDashboardService"
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import CloseButton from "../../ui/CloseButton/CloseButton";
+import DatePicker from "../../ui/DatePicker/DatePicker";
+import Dropdown from "../../ui/Dropdown/Dropdown";
 import { DashboardSkeleton, KpiRowSkeleton, PanelSkeleton, ChartSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import ProgressRing from "./components/ProgressRing";
 import ProcessPathCard from "./components/ProcessPathCard";
@@ -238,6 +241,10 @@ const OVERVIEW_UI_CSS = `
 .health-panel .process-path-card-grid > * { height: 100%; }
 .overview .overview__kpis { grid-auto-rows: 1fr; align-items: stretch; }
 .overview .overview__kpis > .kpi-card { height: 100%; }
+
+/* The filter card holds popups (date picker, dropdown). Cards use backdrop-filter, so each one
+   is its own stacking context; lift this one above the cards below so its popups are never covered. */
+.health-panel .health-panel__filters { position: relative; z-index: 30; overflow: visible; }
 
 /* Card headers */
 .overview .panel-card__header,
@@ -548,9 +555,7 @@ function Drawer({ open, onClose, title, subtitle, children }) {
             <h3 className="drawer__title">{title}</h3>
             {subtitle && <p className="drawer__subtitle">{subtitle}</p>}
           </div>
-          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close panel">
-            ×
-          </button>
+          <CloseButton onClick={onClose} label="Close panel" />
         </div>
         <div className="drawer__body">{children}</div>
       </aside>
@@ -1424,9 +1429,7 @@ function AIAssistantPanel({ isDealer }) {
               <p>{isDealer ? "Your dealer copilot" : "Your network copilot"}</p>
             </div>
           </div>
-          <button type="button" className="drawer__close" onClick={() => setOpen(false)} aria-label="Close AI Assistant">
-            <Icon name="x" size={16} />
-          </button>
+          <CloseButton onClick={() => setOpen(false)} label="Close AI Assistant" />
         </div>
 
         <div className="ai-panel__body" ref={bodyRef} onScroll={handleScroll}>
@@ -1643,33 +1646,34 @@ function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onC
         ))}
       </div>
       <div className="health-filterbar__row">
-        <label className="health-filterbar__field">
+        <div className="health-filterbar__field">
           <span>From</span>
-          <input
-            type="date"
+          <DatePicker
             value={fromDate || ""}
             max={toDate || undefined}
-            onChange={(e) => onChange({ preset: "custom", fromDate: e.target.value })}
+            onChange={(value) => onChange({ preset: "custom", fromDate: value })}
           />
-        </label>
-        <label className="health-filterbar__field">
+        </div>
+        <div className="health-filterbar__field">
           <span>To</span>
-          <input
-            type="date"
+          <DatePicker
             value={toDate || ""}
             min={fromDate || undefined}
-            onChange={(e) => onChange({ preset: "custom", toDate: e.target.value })}
+            onChange={(value) => onChange({ preset: "custom", toDate: value })}
           />
-        </label>
-        <label className="health-filterbar__field">
+        </div>
+        <div className="health-filterbar__field">
           <span>Dealer</span>
-          <select value={dealerCode} onChange={(e) => onChange({ dealerCode: e.target.value })}>
-            <option value="">All Dealers</option>
-            {dealers.map((d) => (
-              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code} — {d.dealer_name}</option>
-            ))}
-          </select>
-        </label>
+          <Dropdown
+            ariaLabel="Dealer"
+            value={dealerCode}
+            onChange={(value) => onChange({ dealerCode: value })}
+            options={[
+              { value: "", label: "All Dealers" },
+              ...dealers.map((d) => ({ value: d.dealer_code, label: `${d.dealer_code} — ${d.dealer_name}` })),
+            ]}
+          />
+        </div>
         <div className="health-filterbar__actions">
           <button type="button" className="health-filterbar__apply" onClick={onApply}>Apply Filters</button>
           <button type="button" className="health-filterbar__reset" onClick={onReset}>Reset</button>
@@ -1791,7 +1795,7 @@ function LeadExchangeHealthPanel({ openDrawer }) {
 
   return (
     <div className="health-panel">
-      <div className="panel-card">
+      <div className="panel-card health-panel__filters">
         <div className="panel-card__header">
           <h3>Lead Exchange Overview</h3>
           <span className="panel-card__meta">

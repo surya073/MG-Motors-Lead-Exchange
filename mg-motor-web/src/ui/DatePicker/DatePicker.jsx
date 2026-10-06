@@ -47,7 +47,10 @@ function buildMonthGrid(viewDate) {
  * (YYYY-MM-DD) so it's a drop-in replacement wherever that format was
  * already used.
  */
-export default function DatePicker({ value, onChange, placeholder = "Select date…", disabled = false }) {
+export default function DatePicker({ value, onChange, placeholder = "Select date…", disabled = false, min, max }) {
+  const minDate = parseIsoDate(min);
+  const maxDate = parseIsoDate(max);
+  const isOutOfRange = (date) => Boolean((minDate && date < minDate) || (maxDate && date > maxDate));
   const [open, setOpen] = useState(false);
   const selectedDate = useMemo(() => parseIsoDate(value), [value]);
   const [viewDate, setViewDate] = useState(() => selectedDate || new Date());
@@ -130,6 +133,7 @@ export default function DatePicker({ value, onChange, placeholder = "Select date
                     isSelected ? "datepicker__day--selected" : ""
                   } ${isToday && !isSelected ? "datepicker__day--today" : ""}`}
                   onClick={() => selectDate(date)}
+                  disabled={isOutOfRange(date)}
                 >
                   {date.getDate()}
                 </button>
@@ -138,7 +142,12 @@ export default function DatePicker({ value, onChange, placeholder = "Select date
           </div>
 
           <div className="datepicker__footer">
-            <button type="button" className="datepicker__footer-btn" onClick={() => selectDate(today)}>
+            <button
+              type="button"
+              className="datepicker__footer-btn"
+              onClick={() => selectDate(today)}
+              disabled={isOutOfRange(today)}
+            >
               Today
             </button>
             {value && (

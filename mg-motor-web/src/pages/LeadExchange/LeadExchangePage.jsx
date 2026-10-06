@@ -20,6 +20,7 @@ import { syncLeadsService } from "../../services/api/syncService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
+import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import { DetailSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import LeadDetailView from "./LeadDetailView";
@@ -274,6 +275,7 @@ export default function LeadExchangePage() {
   });
 
   const [search, setSearch] = useState("");
+  useUrlSearch(setSearch); // ?search= from the navbar search
   const [statusFilter, setStatusFilter] = useState("");
   const [dealerFilter, setDealerFilter] = useState("");
   const [pathFilter, setPathFilter] = useState("all");

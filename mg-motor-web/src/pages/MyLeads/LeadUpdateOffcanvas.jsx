@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  X,
   Mail,
   Phone,
   Loader2,
@@ -21,6 +20,7 @@ import {
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import DatePicker from "../../ui/DatePicker/DatePicker";
 import Badge from "../../ui/Badge/Badge";
+import CloseButton from "../../ui/CloseButton/CloseButton";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import sedanIcon from "../../assets/images/sedan.png";
 import "./LeadUpdateOffcanvas.css";
@@ -134,9 +134,7 @@ export default function LeadUpdateOffcanvas({ lead, initialMode = "edit", onClos
       >
         <div className="lead-offcanvas__header">
           <h2>{lead.customer_name}</h2>
-          <button type="button" className="lead-offcanvas__close" onClick={handleClose} aria-label="Close">
-            <X size={18} />
-          </button>
+          <CloseButton onClick={handleClose} />
         </div>
 
         <div className="lead-offcanvas__body">

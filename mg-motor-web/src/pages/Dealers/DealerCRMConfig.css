@@ -931,20 +931,16 @@
   gap: var(--space-3);
 }
 
-.dealer-crm-config__pagination-controls label {
+.dealer-crm-config__page-size {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
 }
 
-.dealer-crm-config__pagination-controls select {
-  height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background-color: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  padding-inline: var(--space-1);
-  font-size: var(--fs-xs);
+.dealer-crm-config__page-size .dropdown {
+  min-width: 72px;
 }
 
 .dealer-crm-config__pagination-buttons {
@@ -1024,23 +1020,6 @@
 .dealer-crm-config__offcanvas-header h4 {
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
-}
-
-.dealer-crm-config__offcanvas-header button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-full);
-  color: var(--color-text-muted);
-  transition: background-color var(--transition-fast) var(--ease-premium),
-    color var(--transition-fast) var(--ease-premium);
-}
-
-.dealer-crm-config__offcanvas-header button:hover {
-  background-color: var(--color-surface-alt);
-  color: var(--color-text-primary);
 }
 
 .dealer-crm-config__offcanvas-body {
