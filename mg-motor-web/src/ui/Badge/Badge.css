@@ -1,215 +1,96 @@
-.badge {
-  --badge-color: #a1a1aa;
-  --badge-light: #52525b;
-  --badge-dark: #18181b;
+/* =========================================================
+   BADGE — status pill
+   A soft, tinted pill: the status colour at a low strength for the
+   background, a darker (light theme) or lighter (dark theme) shade of
+   the same colour for the text, and a small solid dot. Built from the
+   design tokens only, so it follows light / dark automatically.
+   ========================================================= */
 
-  position: relative;
+.badge {
+  /* tone colour: set by the variant classes below */
+  --badge-tone: var(--color-text-muted);
+
+  /* text: pushed toward black on light surfaces, toward white on dark ones,
+     so contrast holds for every tone in both themes */
+  --badge-text: color-mix(in srgb, var(--badge-tone) 72%, #000);
+  --badge-bg: color-mix(in srgb, var(--badge-tone) 12%, var(--color-bg-elevated));
+  --badge-border: color-mix(in srgb, var(--badge-tone) 28%, transparent);
 
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
 
-  min-height: 28px;
-  padding: 5px 11px 5px 8px;
+  min-height: 24px;
+  padding: 3px 10px 3px 8px;
 
   border: 1px solid var(--badge-border);
   border-radius: 999px;
-
+  background-color: var(--badge-bg);
   color: var(--badge-text);
 
-  background:
-    linear-gradient(
-      135deg,
-      var(--badge-light) 0%,
-      var(--badge-dark) 100%
-    );
-
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
+  font-size: 12px;
+  font-weight: var(--fw-semibold);
   line-height: 1;
-
+  letter-spacing: 0.01em;
   white-space: nowrap;
-  overflow: hidden;
-
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
-    0 2px 5px rgba(0, 0, 0, 0.12);
-
-  transition:
-    transform 180ms ease,
-    box-shadow 180ms ease,
-    border-color 180ms ease;
 }
 
-
-/* --------------------------------------------------------------------------
-   Subtle gradient shine
-   -------------------------------------------------------------------------- */
-
-.badge::before {
-  content: "";
-
-  position: absolute;
-  inset: 0;
-
-  background: linear-gradient(
-    120deg,
-    rgba(255, 255, 255, 0.12),
-    transparent 45%
-  );
-
-  pointer-events: none;
+[data-theme="dark"] .badge {
+  --badge-text: color-mix(in srgb, var(--badge-tone) 62%, #fff);
+  --badge-bg: color-mix(in srgb, var(--badge-tone) 16%, var(--color-bg-elevated));
+  --badge-border: color-mix(in srgb, var(--badge-tone) 34%, transparent);
 }
 
-
-/* --------------------------------------------------------------------------
-   Dot
-   -------------------------------------------------------------------------- */
+/* ---------- Dot ---------- */
 
 .badge__dot {
-  position: relative;
-  z-index: 1;
-
-  width: 7px;
-  height: 7px;
-
+  width: 6px;
+  height: 6px;
   flex-shrink: 0;
-
   border-radius: 50%;
-
-  background: var(--badge-color);
-
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.08),
-    0 0 7px var(--badge-color);
+  background-color: var(--badge-tone);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--badge-tone) 22%, transparent);
 }
-
-
-/* --------------------------------------------------------------------------
-   Text
-   -------------------------------------------------------------------------- */
 
 .badge__text {
   position: relative;
-  z-index: 1;
-
-  letter-spacing: 0.01em;
 }
 
-
-/* ==========================================================================
-   NEUTRAL — Deep Slate
-   ========================================================================== */
+/* ---------- Tones ---------- */
 
 .badge--neutral {
-  --badge-color: #d4d4d8;
-  --badge-light: #52525b;
-  --badge-dark: #27272a;
-
-  --badge-text: #f4f4f5;
-  --badge-border: #52525b;
+  --badge-tone: var(--color-text-muted);
+  --badge-text: var(--color-text-secondary);
+  --badge-bg: var(--color-surface-alt);
+  --badge-border: var(--color-border);
 }
 
-
-/* ==========================================================================
-   INFO — Deep Blue
-   ========================================================================== */
+[data-theme="dark"] .badge--neutral {
+  --badge-text: var(--color-text-secondary);
+  --badge-bg: var(--color-surface-alt);
+  --badge-border: var(--color-border);
+}
 
 .badge--info {
-  --badge-color: #93c5fd;
-  --badge-light: #1e40af;
-  --badge-dark: #172554;
-
-  --badge-text: #dbeafe;
-  --badge-border: #1d4ed8;
+  --badge-tone: var(--color-info);
 }
-
-
-/* ==========================================================================
-   PENDING / WARNING — Deep Amber
-   ========================================================================== */
 
 .badge--pending,
 .badge--warning {
-  --badge-color: #fcd34d;
-  --badge-light: #a16207;
-  --badge-dark: #451a03;
-
-  --badge-text: #fef3c7;
-  --badge-border: #92400e;
+  --badge-tone: var(--color-warning);
 }
-
-
-/* ==========================================================================
-   SUCCESS / ACTIVE — Deep Emerald
-   ========================================================================== */
 
 .badge--success,
 .badge--active {
-  --badge-color: #86efac;
-  --badge-light: #15803d;
-  --badge-dark: #052e16;
-
-  --badge-text: #dcfce7;
-  --badge-border: #166534;
-
-  font-weight: var(--fw-semibold);
+  --badge-tone: var(--color-success);
 }
-
-
-/* ==========================================================================
-   DANGER — Deep Crimson
-   ========================================================================== */
 
 .badge--danger {
-  --badge-color: #fca5a5;
-  --badge-light: #b91c1c;
-  --badge-dark: #450a0a;
-
-  --badge-text: #fee2e2;
-  --badge-border: #991b1b;
-
-  font-weight: var(--fw-semibold);
+  --badge-tone: var(--color-danger);
 }
 
-
-/* ==========================================================================
-   FIXED
-   ========================================================================== */
-
+/* Fixed width, so a column of badges lines up */
 .badge--fixed {
-  min-width: 96px;
+  min-width: 92px;
   justify-content: center;
-}
-
-
-/* ==========================================================================
-   HOVER
-   ========================================================================== */
-
-.badge:hover {
-  transform: translateY(-1px);
-
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 4px 12px rgba(0, 0, 0, 0.18),
-    0 0 12px color-mix(
-      in srgb,
-      var(--badge-color) 18%,
-      transparent
-    );
-}
-
-
-/* ==========================================================================
-   DARK MODE — Slightly richer
-   ========================================================================== */
-
-[data-theme="dark"] .badge,
-.dark .badge {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.13),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
-    0 2px 6px rgba(0, 0, 0, 0.25);
 }

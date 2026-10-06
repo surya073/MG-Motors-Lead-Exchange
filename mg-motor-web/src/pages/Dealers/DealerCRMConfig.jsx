@@ -20,6 +20,9 @@ import {
   Globe,
   Pencil,
   Trash2,
+  Store,
+  Search as SearchIcon,
+  X as ClearIcon,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
@@ -102,6 +105,12 @@ const OUR_FIELD_OPTIONS = [
 ];
 
 const CONNECTED_STATUSES = ["ACTIVE", "CONNECTED"];
+
+const CRM_TYPE_LABELS = {
+  GENERIC_REST: "Generic REST",
+  ZOHO_CRM: "Zoho CRM",
+  FUSION_SD: "Fusion SD",
+};
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 
@@ -555,17 +564,28 @@ export default function DealerCRMConfig() {
 
   useEffect(() => () => window.clearTimeout(saveSuccessTimeoutRef.current), []);
 
+  const [connFilter, setConnFilter] = useState("all"); // "all" | "connected" | "pending"
+
+  const connCounts = useMemo(() => {
+    const connected = dealers.filter(isDealerConnected).length;
+    return { all: dealers.length, connected, pending: dealers.length - connected };
+  }, [dealers]);
+
   const filteredDealers = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return dealers;
-    return dealers.filter((d) =>
-      [d.dealer_name, d.dealer_code, d.email_address, d.region].filter(Boolean).some((f) => f.toLowerCase().includes(term))
-    );
-  }, [dealers, search]);
+    return dealers.filter((d) => {
+      if (connFilter === "connected" && !isDealerConnected(d)) return false;
+      if (connFilter === "pending" && isDealerConnected(d)) return false;
+      if (!term) return true;
+      return [d.dealer_name, d.dealer_code, d.email_address, d.region]
+        .filter(Boolean)
+        .some((f) => f.toLowerCase().includes(term));
+    });
+  }, [dealers, search, connFilter]);
 
   useEffect(() => {
     setDealerPage(1);
-  }, [search]);
+  }, [search, connFilter]);
 
   const paginatedDealers = useMemo(
     () => paginate(filteredDealers, dealerPage, dealerPageSize),
@@ -1044,14 +1064,46 @@ export default function DealerCRMConfig() {
           <div className="dealer-crm-config__panel-header">
             <img src={mgLogo} alt="MG Motor" className="dealer-crm-config__brand-logo" />
             <h3>Our Dealers</h3>
+            <span className="dealer-crm-config__count">{connCounts.all}</span>
           </div>
 
           <div className="dealer-crm-config__search">
+            <SearchIcon size={15} className="dealer-crm-config__search-icon" aria-hidden="true" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, code, or region…"
+              aria-label="Search dealers"
             />
+            {search && (
+              <button
+                type="button"
+                className="dealer-crm-config__search-clear"
+                aria-label="Clear search"
+                onClick={() => setSearch("")}
+              >
+                <ClearIcon size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="dealer-crm-config__filters" role="group" aria-label="Filter by connection">
+            {[
+              ["all", "All"],
+              ["connected", "Connected"],
+              ["pending", "Not connected"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={`dealer-crm-config__chip${connFilter === key ? " dealer-crm-config__chip--active" : ""}`}
+                onClick={() => setConnFilter(key)}
+                aria-pressed={connFilter === key}
+              >
+                {label}
+                <span>{connCounts[key]}</span>
+              </button>
+            ))}
           </div>
 
           {dealersLoading ? (
@@ -1160,21 +1212,36 @@ export default function DealerCRMConfig() {
         <div className="dealer-crm-config__panel dealer-crm-config__panel--detail">
           {!selectedDealer ? (
             <div className="dealer-crm-config__empty-state">
-              <Plug size={28} strokeWidth={1.5} />
-              <p>Select a dealer to configure their CRM integration.</p>
+              <span className="dealer-crm-config__empty-icon">
+                <Plug size={26} strokeWidth={1.6} />
+              </span>
+              <h3>Select a dealer</h3>
+              <p>Choose a dealer on the left to set up how it connects to its CRM.</p>
+              <ol className="dealer-crm-config__empty-steps">
+                <li>Connect the dealer's CRM</li>
+                <li>Map fields and statuses</li>
+                <li>Watch the activity log</li>
+              </ol>
             </div>
           ) : (
             <>
               <div className="dealer-crm-config__detail-header">
-                <div>
-                  <h2>{selectedDealer.dealer_name}</h2>
-                  <p className="dealer-crm-config__detail-code">{selectedDealer.dealer_code}</p>
+                <div className="dealer-crm-config__detail-id">
+                  <span className="dealer-crm-config__detail-avatar">
+                    <img src={mgLogo} alt="" />
+                  </span>
+                  <div>
+                    <h2>{selectedDealer.dealer_name}</h2>
+                    <p className="dealer-crm-config__detail-code">{selectedDealer.dealer_code}</p>
+                  </div>
                 </div>
                 {/* NEW: simplified to just Connected / Not Connected —
                     the granular ACTIVE/CONFIGURING/ERROR/etc vocabulary
                     is still visible in the Activity Log per-row, just not
                     duplicated here at the top. */}
                 <div className="dealer-crm-config__detail-status">
+                  {selectedDealer.region && <Badge tone="info">{selectedDealer.region}</Badge>}
+                  {isExternalCrm && <Badge tone="neutral">{CRM_TYPE_LABELS[config.crm_type] || "External CRM"}</Badge>}
                   <Badge tone={isTopConnected ? "active" : "neutral"} fixed>
                     {isTopConnected ? "Connected" : "Not Connected"}
                   </Badge>
@@ -1213,33 +1280,56 @@ export default function DealerCRMConfig() {
               </div>
 
               {configLoading ? (
-                <div className="dealer-crm-config__skeleton-block">
-                  <Skeleton width="100%" height={40} />
-                  <Skeleton width="100%" height={40} />
-                  <Skeleton width="60%" height={40} />
+                <div className="dealer-crm-config__skeleton-block" aria-busy="true">
+                  {[0, 1, 2].map((i) => (
+                    <div className="dealer-crm-config__skeleton-field" key={i}>
+                      <Skeleton width={120} height={11} />
+                      <Skeleton width="100%" height={40} radius="var(--radius-md)" />
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <>
                   {tab === "connection" && (
                     <div className="dealer-crm-config__form">
-                      <div className="dealer-crm-config__mode-toggle">
-                        <label className={config.integration_type === "PORTAL" ? "dealer-crm-config__mode--active" : ""}>
+                      <div className="dealer-crm-config__mode-toggle" role="radiogroup" aria-label="Integration type">
+                        <label
+                          className={`dealer-crm-config__mode-card ${
+                            config.integration_type === "PORTAL" ? "dealer-crm-config__mode--active" : ""
+                          }`}
+                        >
                           <input
                             type="radio"
                             name="integration_type"
                             checked={config.integration_type === "PORTAL"}
                             onChange={() => handleConfigChange("integration_type", "PORTAL")}
                           />
-                          Dealer Portal
+                          <span className="dealer-crm-config__mode-icon">
+                            <Store size={18} />
+                          </span>
+                          <span className="dealer-crm-config__mode-text">
+                            <strong>Dealer Portal</strong>
+                            <small>Standard Catalyst portal, no setup needed</small>
+                          </span>
                         </label>
-                        <label className={config.integration_type === "EXTERNAL_CRM" ? "dealer-crm-config__mode--active" : ""}>
+                        <label
+                          className={`dealer-crm-config__mode-card ${
+                            config.integration_type === "EXTERNAL_CRM" ? "dealer-crm-config__mode--active" : ""
+                          }`}
+                        >
                           <input
                             type="radio"
                             name="integration_type"
                             checked={config.integration_type === "EXTERNAL_CRM"}
                             onChange={() => handleConfigChange("integration_type", "EXTERNAL_CRM")}
                           />
-                          External CRM
+                          <span className="dealer-crm-config__mode-icon">
+                            <Plug size={18} />
+                          </span>
+                          <span className="dealer-crm-config__mode-text">
+                            <strong>External CRM</strong>
+                            <small>Sync leads with the dealer's own CRM</small>
+                          </span>
                         </label>
                       </div>
 

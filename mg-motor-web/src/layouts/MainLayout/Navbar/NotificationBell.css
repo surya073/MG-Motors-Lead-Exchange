@@ -27,39 +27,61 @@
   background-color: var(--color-primary-soft-strong);
 }
 
-/* ---------- Badge (99+ capped) and dot ---------- */
+/* ---------- Badge (99+ capped) and dot ----------
+   Small and quiet: a compact accent pill that sits on the bell's corner,
+   separated from it by a thin ring in the bar's own colour so it never
+   looks stuck on. Pops in once when it appears; no looping animation. */
 
 .notification-bell__badge {
   position: absolute;
-  top: -3px;
-  right: -4px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  top: -2px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-full);
-  background-color: var(--color-primary);
-  color: var(--color-white);
-  font-size: 10px;
-  font-weight: var(--fw-bold);
+  background: linear-gradient(
+    180deg,
+    var(--color-primary) 0%,
+    color-mix(in srgb, var(--color-primary) 82%, #000) 100%
+  );
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  border: 2px solid var(--color-bg-elevated);
+  box-shadow: 0 0 0 1.5px var(--color-bg-elevated),
+    0 2px 4px color-mix(in srgb, var(--color-primary) 35%, transparent);
   pointer-events: none;
+  animation: notification-badge-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 .notification-bell__dot {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 9px;
-  height: 9px;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background-color: var(--color-primary);
-  border: 2px solid var(--color-bg-elevated);
+  box-shadow: 0 0 0 1.5px var(--color-bg-elevated), 0 0 0 4px var(--color-primary-soft);
   pointer-events: none;
+  animation: notification-badge-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes notification-badge-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* ---------- Panel ---------- */
@@ -513,7 +535,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .notification-bell__panel {
+  .notification-bell__panel,
+  .notification-bell__badge,
+  .notification-bell__dot {
     animation: none;
   }
 }
