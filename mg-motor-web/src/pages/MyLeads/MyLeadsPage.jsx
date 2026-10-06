@@ -6,8 +6,9 @@ import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import Pagination from "../../ui/Pagination/Pagination";
 import LeadUpdateOffcanvas from "./LeadUpdateOffcanvas";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import "./MyLeadsPage.css";
 import "../LeadExchange/LeadExchangePage.css";
 import mgLogo from "../../assets/images/mg-logo-single.png";
@@ -299,17 +300,13 @@ export default function MyLeadsPage() {
       </div>
 
       {loadError && (
-        <div className="my-leads__error">
+        <Alert
+          variant="error"
+          action={{ label: "Retry", onClick: loadLeads }}
+          onClose={() => setLoadError(null)}
+        >
           {loadError}
-          <button
-            type="button"
-            className="my-leads__error-close"
-            onClick={() => setLoadError(null)}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
+        </Alert>
       )}
 
       <div className="my-leads__kpis">
@@ -467,32 +464,16 @@ export default function MyLeadsPage() {
         </div>
       )}
 
-      <div className="my-leads__pagination">
-        <div className="my-leads__page-size">
-          <span>Rows per page</span>
-          <Dropdown
-            ariaLabel="Rows per page"
-            size="sm"
-            value={String(pageSize)}
-            onChange={handlePageSizeChange}
-            options={(view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS).map((n) => ({ value: String(n), label: String(n) }))}
-          />
-        </div>
-        <div className="my-leads__page-nav">
-          <button onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={currentPage === 0}>
-            Previous
-          </button>
-          <span>
-            Page {currentPage + 1} of {pageCount} · {filtered.length} lead{filtered.length === 1 ? "" : "s"}
-          </span>
-          <button
-            onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={currentPage >= pageCount - 1}
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      <Pagination
+        page={currentPage + 1}
+        pageCount={pageCount}
+        total={filtered.length}
+        noun="lead"
+        onPageChange={(p) => setPageIndex(p - 1)}
+        pageSize={pageSize}
+        pageSizeOptions={view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS}
+        onPageSizeChange={handlePageSizeChange}
+      />
 
       {activeLead && (
         <LeadUpdateOffcanvas

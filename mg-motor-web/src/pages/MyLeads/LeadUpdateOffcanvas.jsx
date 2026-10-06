@@ -21,7 +21,7 @@ import { dealerPortalService } from "../../services/api/dealerPortalService";
 import DatePicker from "../../ui/DatePicker/DatePicker";
 import Badge from "../../ui/Badge/Badge";
 import CloseButton from "../../ui/CloseButton/CloseButton";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import sedanIcon from "../../assets/images/sedan.png";
 import "./LeadUpdateOffcanvas.css";
 
@@ -240,7 +240,7 @@ export default function LeadUpdateOffcanvas({ lead, initialMode = "edit", onClos
             )}
           </div>
 
-          {error && <div className="lead-offcanvas__error">{error}</div>}
+          {error && <Alert variant="error">{error}</Alert>}
         </div>
 
         <div className="lead-offcanvas__actions">

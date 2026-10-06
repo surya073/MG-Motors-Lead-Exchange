@@ -4,10 +4,11 @@ import { adminDashboardService } from "../../services/api/adminDashboardService"
 import { inviteDealer, removeDealer, resendDealerInvite } from "../../services/api/dealerInviteService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
-import Dropdown from "../../ui/Dropdown/Dropdown";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 import "./DealerInvitations.css";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
+import Pagination from "../../ui/Pagination/Pagination";
+import { Alert, getErrorMessage, useAlerts } from "../../ui/Alerts/Alerts";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
@@ -60,7 +61,7 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [busyCode, setBusyCode] = useState(null);
-  const [message, setMessage] = useState(null);
+  const { showAlert } = useAlerts();
 
   const [view, setView] = useState("grid"); // "grid" | "list" — grid is now the default
   const [search, setSearch] = useState("");
@@ -114,10 +115,6 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
     );
   }, [scopedDealers, search]);
 
-   const pageSizeOptions = useMemo(
-    () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-    []
-  );
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
@@ -135,13 +132,12 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
 
   const handleInvite = async (dealer) => {
     setBusyCode(dealer.dealer_code);
-    setMessage(null);
     try {
       await inviteDealer(dealer.crmRecordId);
-      setMessage(`Invited ${dealer.dealer_name} (${dealer.dealer_code}) at ${dealer.email}.`);
+      showAlert("success", `Invited ${dealer.dealer_name} (${dealer.dealer_code}) at ${dealer.email}.`, { title: "Dealer invited" });
       await load({ silent: true });
     } catch (err) {
-      setMessage(err?.response?.data?.error || `Couldn't invite ${dealer.dealer_name}. Try again.`);
+      showAlert("error", getErrorMessage(err, `Couldn't invite ${dealer.dealer_name}. Try again.`), { title: "Invite failed" });
     } finally {
       setBusyCode(null);
     }
@@ -149,13 +145,12 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
 
   const handleResend = async (dealer) => {
     setBusyCode(dealer.dealer_code);
-    setMessage(null);
     try {
       await resendDealerInvite(dealer.dealer_code);
-      setMessage(`Sent a new invite to ${dealer.dealer_name} (${dealer.dealer_code}) at ${dealer.email}.`);
+      showAlert("success", `Sent a new invite to ${dealer.dealer_name} (${dealer.dealer_code}) at ${dealer.email}.`, { title: "Invite resent" });
       await load({ silent: true });
     } catch (err) {
-      setMessage(err?.response?.data?.error || `Couldn't resend the invite to ${dealer.dealer_name}. Try again.`);
+      showAlert("error", getErrorMessage(err, `Couldn't resend the invite to ${dealer.dealer_name}. Try again.`), { title: "Resend failed" });
     } finally {
       setBusyCode(null);
     }
@@ -163,13 +158,12 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
 
   const handleRemove = async (dealer) => {
     setBusyCode(dealer.dealer_code);
-    setMessage(null);
     try {
       await removeDealer(dealer.dealer_code);
-      setMessage(`Removed ${dealer.dealer_name} (${dealer.dealer_code}) as a dealer user.`);
+      showAlert("success", `Removed ${dealer.dealer_name} (${dealer.dealer_code}) as a dealer user.`, { title: "Dealer removed" });
       await load({ silent: true });
     } catch (err) {
-      setMessage(err?.response?.data?.error || `Couldn't remove ${dealer.dealer_name}. Try again.`);
+      showAlert("error", getErrorMessage(err, `Couldn't remove ${dealer.dealer_name}. Try again.`), { title: "Remove failed" });
     } finally {
       setBusyCode(null);
       setConfirmRemove(null);
@@ -236,8 +230,11 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
 
    return (
     <div className="dealer-invitations">
-      {message && <div className="dealer-invitations__notice">{message}</div>}
-      {error && <div className="dealer-invitations__notice dealer-invitations__notice--error">{error}</div>}
+      {error && (
+        <Alert variant="error" title="Load failed" onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
       <div className="dealer-invitations__toolbar">
         <div className="dealer-invitations__search">
@@ -340,23 +337,16 @@ export default function DealerInvitations({ statusFilter = "all" } = {}) {
         </div>
       )}
 
-      <div className="dealer-invitations__pagination">
-        <div className="dealer-invitations__page-size">
-          <span>Rows per page</span>
-          <Dropdown
-            ariaLabel="Rows per page"
-            size="sm"
-            value={String(pageSize)}
-            onChange={handlePageSizeChange}
-            options={pageSizeOptions}
-          />
-        </div>
-        <div className="dealer-invitations__page-nav">
-          <button onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={currentPage === 0}>‹</button>
-          <span>Page {currentPage + 1} of {pageCount} · {filtered.length} dealer{filtered.length === 1 ? "" : "s"}</span>
-          <button onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))} disabled={currentPage >= pageCount - 1}>›</button>
-        </div>
-      </div>
+      <Pagination
+        page={currentPage + 1}
+        pageCount={pageCount}
+        total={filtered.length}
+        noun="dealer"
+        onPageChange={(p) => setPageIndex(p - 1)}
+        pageSize={pageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        onPageSizeChange={handlePageSizeChange}
+      />
 
       {confirmRemove && (
         <div className="dealer-invitations__confirm-backdrop" onClick={() => setConfirmRemove(null)}>

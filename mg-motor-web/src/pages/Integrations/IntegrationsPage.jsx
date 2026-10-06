@@ -8,6 +8,8 @@ import { ROUTES } from "../../constants/routes.constants";
 // only for the error-type filter dropdown below.
 import { SCENARIO_META } from "../Overview/Overview";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
+import Pagination from "../../ui/Pagination/Pagination";
+import { Alert } from "../../ui/Alerts/Alerts";
 import DatePicker from "../../ui/DatePicker/DatePicker";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import "./IntegrationsPage.css";
@@ -214,7 +216,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
       {loading ? (
         <TableSkeleton columnCount={7} rowCount={8} />
       ) : error ? (
-        <div className="overview__state overview__state--error">{error}</div>
+        <Alert variant="error" title="Couldn't load the error report">{error}</Alert>
       ) : data.logs.length === 0 ? (
         <p className="overview__empty-note">No integration activity found for the selected filters.</p>
       ) : (
@@ -261,11 +263,13 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
               </tbody>
             </table>
           </div>
-          <div className="table-pagination">
-            <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
-            <span>Page {page} of {totalPages} · {data.total} result{data.total === 1 ? "" : "s"}</span>
-            <button type="button" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</button>
-          </div>
+          <Pagination
+            page={page}
+            pageCount={totalPages}
+            total={data.total || 0}
+            noun="result"
+            onPageChange={setPage}
+          />
         </>
       )}
     </div>

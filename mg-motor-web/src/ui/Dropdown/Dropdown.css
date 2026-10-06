@@ -87,14 +87,14 @@
 
 /* ---------- Panel ---------- */
 
+/* The panel is rendered in a portal on <body> and positioned by Dropdown.jsx
+   (fixed, from the trigger's rectangle) — so no table, card or scroll
+   container can clip it or grow because of it. Above modals / drawers. */
 .dropdown__panel {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  left: 0;
-  right: 0;
-  z-index: var(--z-dropdown);
-  max-height: 260px;
+  position: fixed;
+  z-index: calc(var(--z-modal, 1000) + 30);
   overflow-y: auto;
+  box-sizing: border-box;
   margin: 0;
   padding: var(--space-1);
   list-style: none;
@@ -115,6 +115,22 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes dropdown-panel-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Opens upwards when there is no room below (e.g. last table row) */
+.dropdown__panel--up {
+  animation-name: dropdown-panel-in-up;
 }
 
 @media (prefers-reduced-motion: reduce) {

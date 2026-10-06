@@ -27,6 +27,7 @@ import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import Pagination from "../../ui/Pagination/Pagination";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import CloseButton from "../../ui/CloseButton/CloseButton";
 import { useAuth } from "../../contexts/AuthContext";
@@ -347,45 +348,19 @@ function paginate(rows, page, pageSize) {
   return rows.slice(start, start + pageSize);
 }
 
-function PaginationBar({ page, pageSize, total, onPageChange, onPageSizeChange }) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const startItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const endItem = Math.min(total, page * pageSize);
-
+function PaginationBar({ page, pageSize, total, onPageChange, onPageSizeChange, compact = false }) {
   return (
-    <div className="dealer-crm-config__pagination">
-      <span className="dealer-crm-config__pagination-info">
-        {total === 0 ? "0 results" : `${startItem}–${endItem} of ${total}`}
-      </span>
-      <div className="dealer-crm-config__pagination-controls">
-        <div className="dealer-crm-config__page-size">
-          <span>Show</span>
-          <Dropdown
-            ariaLabel="Rows per page"
-            size="sm"
-            value={pageSize}
-            onChange={(value) => onPageSizeChange(Number(value))}
-            options={PAGE_SIZE_OPTIONS.map((size) => ({ value: size, label: String(size) }))}
-          />
-        </div>
-        <div className="dealer-crm-config__pagination-buttons">
-          <button type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous page">
-            ‹
-          </button>
-          <span>
-            {page} / {totalPages}
-          </span>
-          <button
-            type="button"
-            onClick={() => onPageChange(page + 1)}
-            disabled={page >= totalPages}
-            aria-label="Next page"
-          >
-            ›
-          </button>
-        </div>
-      </div>
-    </div>
+    <Pagination
+      compact={compact}
+      page={page}
+      pageCount={Math.max(1, Math.ceil(total / pageSize))}
+      total={total}
+      noun="result"
+      onPageChange={onPageChange}
+      pageSize={pageSize}
+      pageSizeOptions={PAGE_SIZE_OPTIONS}
+      onPageSizeChange={onPageSizeChange}
+    />
   );
 }
 
@@ -1167,6 +1142,7 @@ export default function DealerCRMConfig() {
               </div>
 
               <PaginationBar
+                compact
                 page={dealerPage}
                 pageSize={dealerPageSize}
                 total={filteredDealers.length}

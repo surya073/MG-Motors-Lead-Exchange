@@ -22,11 +22,12 @@ import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import Pagination from "../../ui/Pagination/Pagination";
 import { DetailSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import LeadDetailView from "./LeadDetailView";
 import EmptyState from "../../common/EmptyState/EmptyState";
 import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { ROUTES } from "../../constants/routes.constants";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
@@ -304,7 +305,11 @@ export default function LeadExchangePage() {
   // never leave a stale detail view showing, since there is no id to match.
   const detail = useMemo(() => {
     if (!leadId) return null;
-    return leads.find((l) => String(l.ROWID) === String(leadId)) || null;
+    return (
+      leads.find((l) => String(l.ROWID) === String(leadId)) ||
+      leads.find((l) => l.crm_record_id && String(l.crm_record_id) === String(leadId)) ||
+      null
+    );
   }, [leadId, leads]);
   const detailNotFound = Boolean(leadId) && !loading && !detail;
 
@@ -434,10 +439,6 @@ export default function LeadExchangePage() {
     []
   );
 
-  const pageSizeOptions = useMemo(
-    () => (view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS).map((n) => ({ value: String(n), label: String(n) })),
-    [view]
-  );
 
   // Counts for the toggle labels, computed pre-pathFilter so switching
   // segments doesn't make its own count disappear.
@@ -706,17 +707,13 @@ export default function LeadExchangePage() {
           </div>
 
           {loadError && (
-            <div className="lead-exchange__error">
+            <Alert
+              variant="error"
+              action={{ label: "Retry", onClick: loadLeads }}
+              onClose={() => setLoadError(null)}
+            >
               {loadError}
-              <button
-                type="button"
-                className="lead-exchange__error-close"
-                onClick={() => setLoadError(null)}
-                aria-label="Dismiss"
-              >
-                ×
-              </button>
-            </div>
+            </Alert>
           )}
 
           <div className="lead-exchange__filters">
@@ -1023,36 +1020,16 @@ export default function LeadExchangePage() {
             </div>
           )}
 
-          <div className="lead-exchange__pagination">
-            <div className="lead-exchange__page-size">
-              <span>Rows per page</span>
-              <Dropdown
-                ariaLabel="Rows per page"
-                size="sm"
-                value={String(pageSize)}
-                onChange={handlePageSizeChange}
-                options={pageSizeOptions}
-              />
-            </div>
-
-            <div className="lead-exchange__page-nav">
-              <button
-                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                disabled={currentPage === 0}
-              >
-                Previous
-              </button>
-              <span>
-                Page {currentPage + 1} of {pageCount} · {sorted.length} leads
-              </span>
-              <button
-                onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                disabled={currentPage >= pageCount - 1}
-              >
-                Next
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={currentPage + 1}
+            pageCount={pageCount}
+            total={sorted.length}
+            noun="lead"
+            onPageChange={(p) => setPageIndex(p - 1)}
+            pageSize={pageSize}
+            pageSizeOptions={view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS}
+            onPageSizeChange={handlePageSizeChange}
+          />
 
           <OutOfOrderEventsPanel />
         </div>
@@ -1139,7 +1116,7 @@ function OutOfOrderEventsPanel() {
         </button>
       </div>
 
-      {error && <div className="ooo-panel__error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       {events.length > 0 && (
         <div className="ooo-panel__cta">

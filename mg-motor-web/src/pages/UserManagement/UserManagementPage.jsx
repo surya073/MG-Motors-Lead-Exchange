@@ -6,11 +6,12 @@ import { adminUserService, ADMIN_ROLE_OPTIONS } from "../../services/api/adminUs
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import Table from "../../ui/Table/Table";
+import Pagination from "../../ui/Pagination/Pagination";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
 import "./UserManagementPage.css";
@@ -147,8 +148,13 @@ export default function UserManagementPage() {
   const handleRemove = async (row) => {
     setBusyId(row.ROWID);
     try {
-      await adminUserService.removeAdminUser(row.ROWID);
-      showAlert("success", `Removed access for ${row.admin_email}.`);
+      const result = await adminUserService.removeAdminUser(row.ROWID);
+      showAlert(
+        "success",
+        result?.purged
+          ? `Removed ${row.admin_email} from the list.`
+          : `Removed access for ${row.admin_email}.`
+      );
       await load({ silent: true });
     } catch (err) {
       showAlert("error", err?.response?.data?.error || `Couldn't remove ${row.admin_email}. Try again.`, {
@@ -209,10 +215,6 @@ export default function UserManagementPage() {
   const currentPage = Math.min(pageIndex, pageCount - 1);
   const pageRows = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
 
-  const pageSizeOptions = useMemo(
-    () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-    []
-  );
 
   const roleFilterOptions = useMemo(
     () => [{ value: "", label: "All roles" }, ...ADMIN_ROLE_OPTIONS],
@@ -270,7 +272,19 @@ export default function UserManagementPage() {
     }
 
     if (row.invite_status === "Removed") {
-      return <span className="user-mgmt__removed-note">Access revoked</span>;
+      return (
+        <div className="user-mgmt__row-actions">
+          <span className="user-mgmt__removed-note">Access revoked</span>
+          <button
+            className="user-mgmt__remove-btn"
+            onClick={() => setConfirmRemove(row)}
+            disabled={busyId === row.ROWID}
+            title="Remove this entry from the list"
+          >
+            Remove
+          </button>
+        </div>
+      );
     }
 
     return (
@@ -379,17 +393,9 @@ export default function UserManagementPage() {
       </div>
 
       {loadError && (
-        <div className="user-mgmt__notice user-mgmt__notice--error">
+        <Alert variant="error" onClose={() => setLoadError(null)}>
           {loadError}
-          <button
-            type="button"
-            className="user-mgmt__notice-close"
-            onClick={() => setLoadError(null)}
-            aria-label="Dismiss"
-          >
-            ×
-          </button>
-        </div>
+        </Alert>
       )}
 
       <form className="user-mgmt__invite-form" onSubmit={handleInvite}>
@@ -533,40 +539,29 @@ export default function UserManagementPage() {
         </div>
       )}
 
-      <div className="user-mgmt__pagination">
-        <div className="user-mgmt__page-size">
-          <span>Rows per page</span>
-          <Dropdown
-            ariaLabel="Rows per page"
-            size="sm"
-            value={String(pageSize)}
-            onChange={handlePageSizeChange}
-            options={pageSizeOptions}
-          />
-        </div>
-        <div className="user-mgmt__page-nav">
-          <button onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={currentPage === 0}>
-            Previous
-          </button>
-          <span>
-            Page {currentPage + 1} of {pageCount} · {filtered.length} user{filtered.length === 1 ? "" : "s"}
-          </span>
-          <button
-            onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={currentPage >= pageCount - 1}
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      <Pagination
+        page={currentPage + 1}
+        pageCount={pageCount}
+        total={filtered.length}
+        noun="user"
+        onPageChange={(p) => setPageIndex(p - 1)}
+        pageSize={pageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        onPageSizeChange={handlePageSizeChange}
+      />
 
       {confirmRemove && (
         <div className="user-mgmt__confirm-backdrop" onClick={() => setConfirmRemove(null)}>
           <div className="user-mgmt__confirm" onClick={(e) => e.stopPropagation()}>
-            <h3>Remove {confirmRemove.admin_name || confirmRemove.admin_email}?</h3>
+            <h3>
+              {confirmRemove.invite_status === "Removed"
+                ? `Remove ${confirmRemove.admin_name || confirmRemove.admin_email} from the list?`
+                : `Remove ${confirmRemove.admin_name || confirmRemove.admin_email}?`}
+            </h3>
             <p>
-              This deletes their Catalyst account and revokes Admin access immediately.
-              They'll need a fresh invite to sign in again.
+              {confirmRemove.invite_status === "Removed"
+                ? "Their access is already revoked. This clears the entry from the list for good. You can invite them again later."
+                : "This deletes their Catalyst account and revokes Admin access immediately. They'll need a fresh invite to sign in again."}
             </p>
             <div className="user-mgmt__confirm-actions">
               <button className="user-mgmt__confirm-cancel" onClick={() => setConfirmRemove(null)}>
@@ -577,7 +572,11 @@ export default function UserManagementPage() {
                 onClick={() => handleRemove(confirmRemove)}
                 disabled={busyId === confirmRemove.ROWID}
               >
-                {busyId === confirmRemove.ROWID ? "Removing…" : "Confirm remove"}
+                {busyId === confirmRemove.ROWID
+                  ? "Removing…"
+                  : confirmRemove.invite_status === "Removed"
+                    ? "Remove entry"
+                    : "Confirm remove"}
               </button>
             </div>
           </div>

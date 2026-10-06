@@ -8,6 +8,7 @@ import { dealerPortalService } from "../../services/api/dealerPortalService";
 import { aiAssistantService } from "../../services/api/aiAssistantService";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import CloseButton from "../../ui/CloseButton/CloseButton";
+import { useAlerts } from "../../ui/Alerts/Alerts";
 import DatePicker from "../../ui/DatePicker/DatePicker";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import { DashboardSkeleton, KpiRowSkeleton, PanelSkeleton, ChartSkeleton } from "../../ui/Skeleton/PageSkeletons";
@@ -1701,6 +1702,7 @@ function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onC
  */
 function LeadExchangeHealthPanel({ openDrawer }) {
   const navigate = useNavigate();
+  const { warning } = useAlerts();
   const [dealers, setDealers] = useState([]);
   const [preset, setPreset] = useState("last30");
   const initialRange = computePresetRange("last30");
@@ -1721,7 +1723,13 @@ function LeadExchangeHealthPanel({ openDrawer }) {
   // the filter bar and the Error Report's own dealer filter, so it is
   // never re-fetched on every filter change.
   useEffect(() => {
-    adminDashboardService.listDealers().then(setDealers).catch(() => setDealers([]));
+    adminDashboardService.listDealers().then(setDealers).catch(() => {
+      setDealers([]);
+      warning("The dealer filter list could not be loaded, so only All Dealers is available.", {
+        title: "Dealers unavailable",
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

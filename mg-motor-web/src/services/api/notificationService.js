@@ -18,6 +18,11 @@ export const notificationService = {
     return data;
   },
 
+  async clearAll() {
+    const { data } = await axiosInstance.delete("/mg_motors_au_function/notifications");
+    return data;
+  },
+
   async remove(notificationId) {
     const { data } = await axiosInstance.delete(
       `/mg_motors_au_function/notifications/${notificationId}`

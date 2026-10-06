@@ -193,7 +193,7 @@ function SearchOverlay({ startRect, onClose }) {
   return createPortal(
     <div className={`nsearch${entered ? " nsearch--entered" : ""}`} onMouseDown={onClose}>
       <div
-        className="nsearch__shell"
+        className={`nsearch__shell${results.length > 0 ? " nsearch__shell--open" : ""}`}
         style={shellStyle}
         onMouseDown={(event) => event.stopPropagation()}
       >

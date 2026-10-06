@@ -21,10 +21,11 @@ import { adminDashboardService } from "../../services/api/adminDashboardService"
 import { syncDealersService, syncLeadsService } from "../../services/api/syncService";
 import useUrlSearch from "../../hooks/useUrlSearch";
 import Table from "../../ui/Table/Table";
+import Pagination from "../../ui/Pagination/Pagination";
 import Badge from "../../ui/Badge/Badge";
 import CloseButton from "../../ui/CloseButton/CloseButton";
 import Dropdown from "../../ui/Dropdown/Dropdown";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import "./SyncLogsPage.css";
@@ -596,10 +597,6 @@ export default function SyncLogsPage() {
     [triggeredByValues]
   );
 
-  const pageSizeOptions = useMemo(
-    () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-    []
-  );
 
   const scenarioOptions = useMemo(() => {
     const relevant = SCENARIO_LIST.filter((s) => pathFilter === "all" || s.path === pathFilter);
@@ -856,17 +853,9 @@ export default function SyncLogsPage() {
       </div>
 
       {loadError && (
-        <div className="sync-logs__notice sync-logs__notice--error">
+        <Alert variant="error" onClose={() => setLoadError(null)}>
           {loadError}
-          <button
-            type="button"
-            className="sync-logs__notice-close"
-            onClick={() => setLoadError(null)}
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        </Alert>
       )}
 
       <div className="sync-logs__path-toggle" role="tablist" aria-label="Filter by outcome">
@@ -957,33 +946,16 @@ export default function SyncLogsPage() {
         onRowClick={(row) => setSelectedLog(row)}
       />
 
-      <div className="sync-logs__pagination">
-        <div className="sync-logs__page-size">
-          <span>Rows per page</span>
-          <Dropdown
-            ariaLabel="Rows per page"
-            size="sm"
-            value={String(pageSize)}
-            onChange={handlePageSizeChange}
-            options={pageSizeOptions}
-          />
-        </div>
-
-        <div className="sync-logs__page-nav">
-          <button onClick={() => setPageIndex((p) => Math.max(0, p - 1))} disabled={currentPage === 0}>
-            Previous
-          </button>
-          <span>
-            Page {currentPage + 1} of {pageCount} · {filtered.length} run{filtered.length === 1 ? "" : "s"}
-          </span>
-          <button
-            onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-            disabled={currentPage >= pageCount - 1}
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      <Pagination
+        page={currentPage + 1}
+        pageCount={pageCount}
+        total={filtered.length}
+        noun="run"
+        onPageChange={(p) => setPageIndex(p - 1)}
+        pageSize={pageSize}
+        pageSizeOptions={PAGE_SIZE_OPTIONS}
+        onPageSizeChange={handlePageSizeChange}
+      />
 
       {selectedLog && (
         <div className="sync-logs__offcanvas-backdrop" onClick={() => setSelectedLog(null)}>

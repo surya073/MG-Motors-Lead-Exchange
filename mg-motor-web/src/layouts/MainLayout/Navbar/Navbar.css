@@ -49,6 +49,16 @@
   font-size: 13px;
   line-height: 1.4;
   color: var(--color-text-secondary);
+  /* one line only: shows an ellipsis instead of wrapping and growing the bar */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navbar__greeting-content h1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* =========================================================

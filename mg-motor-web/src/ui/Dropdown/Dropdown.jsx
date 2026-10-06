@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 import "./Dropdown.css";
 
@@ -13,10 +14,22 @@ import "./Dropdown.css";
  * and automatically follows [data-theme="dark"] via the same CSS
  * variables every other component uses.
  *
+ * The options panel is drawn in a portal on <body>, positioned from the
+ * trigger's on-screen rectangle (position: fixed). That means it can never
+ * be clipped by, or stretch, a table / card / scroll container the
+ * dropdown happens to sit in, and it flips to open upwards when there is
+ * not enough room below (e.g. the last row of a table).
+ *
  * Drop-in shape: options = [{ value, label }], value/onChange behave
  * like a controlled <select>. Not a multi-select — see MultiDropdown
  * (not built here) if that's ever needed.
  */
+
+const PANEL_MAX_HEIGHT = 260;
+const PANEL_GAP = 6;
+const VIEWPORT_MARGIN = 8;
+const MIN_PANEL_WIDTH = 120;
+
 export default function Dropdown({
   options,
   value,
@@ -29,20 +42,67 @@ export default function Dropdown({
 }) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [panelStyle, setPanelStyle] = useState(null); // { top|bottom, left, width, maxHeight, placement }
   const containerRef = useRef(null);
+  const triggerRef = useRef(null);
   const listRef = useRef(null);
   const listboxId = useId();
 
   const selectedIndex = options.findIndex((opt) => opt.value === value);
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : null;
 
-  // Close on outside click.
+  // Where to draw the panel: under the trigger, or above it when the space
+  // below is too small to show the whole list.
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportH = window.innerHeight;
+    const viewportW = window.innerWidth;
+
+    const wanted = Math.min(PANEL_MAX_HEIGHT, options.length * 38 + 12);
+    const spaceBelow = viewportH - rect.bottom - PANEL_GAP - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - PANEL_GAP - VIEWPORT_MARGIN;
+    const placeAbove = spaceBelow < wanted && spaceAbove > spaceBelow;
+    const room = placeAbove ? spaceAbove : spaceBelow;
+
+    const width = Math.max(rect.width, MIN_PANEL_WIDTH);
+    const left = Math.min(Math.max(VIEWPORT_MARGIN, rect.left), Math.max(VIEWPORT_MARGIN, viewportW - width - VIEWPORT_MARGIN));
+
+    setPanelStyle({
+      placement: placeAbove ? "up" : "down",
+      left,
+      width,
+      maxHeight: Math.max(96, Math.min(PANEL_MAX_HEIGHT, room)),
+      ...(placeAbove
+        ? { bottom: viewportH - rect.top + PANEL_GAP }
+        : { top: rect.bottom + PANEL_GAP }),
+    });
+  }, [options.length]);
+
+  // Position before paint so the panel never flashes in the wrong place.
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, updatePosition]);
+
+  // Keep the panel attached to the trigger while the page scrolls or resizes.
+  useEffect(() => {
+    if (!open) return undefined;
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true); // capture: any scroll container
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, updatePosition]);
+
+  // Close on outside click. The panel lives in a portal, so it is checked separately.
   useEffect(() => {
     if (!open) return undefined;
     const handleClickOutside = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) {
-        setOpen(false);
-      }
+      const inTrigger = containerRef.current?.contains(event.target);
+      const inPanel = listRef.current?.contains(event.target);
+      if (!inTrigger && !inPanel) setOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -61,11 +121,16 @@ export default function Dropdown({
     setOpen(true);
   };
 
+  const closeAndFocusTrigger = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
   const commitSelection = (index) => {
     const option = options[index];
     if (!option) return;
     onChange(option.value);
-    setOpen(false);
+    closeAndFocusTrigger();
   };
 
   const handleTriggerKeyDown = (event) => {
@@ -94,7 +159,7 @@ export default function Dropdown({
         break;
       case "Escape":
         event.preventDefault();
-        setOpen(false);
+        closeAndFocusTrigger();
         break;
       case "Tab":
         setOpen(false);
@@ -110,6 +175,7 @@ export default function Dropdown({
       ref={containerRef}
     >
       <button
+        ref={triggerRef}
         type="button"
         className={`dropdown__trigger ${open ? "dropdown__trigger--open" : ""}`}
         onClick={() => (open ? setOpen(false) : openDropdown())}
@@ -125,38 +191,48 @@ export default function Dropdown({
         <ChevronDown size={15} strokeWidth={2} className="dropdown__chevron" />
       </button>
 
-      {open && (
-        <ul
-          className="dropdown__panel"
-          role="listbox"
-          id={listboxId}
-          ref={listRef}
-          tabIndex={-1}
-          onKeyDown={handleListKeyDown}
-          // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
-        >
-          {options.map((option, index) => {
-            const isSelected = option.value === value;
-            const isHighlighted = index === highlightedIndex;
-            return (
-              <li
-                key={option.value}
-                role="option"
-                aria-selected={isSelected}
-                className={`dropdown__option ${isSelected ? "dropdown__option--selected" : ""} ${
-                  isHighlighted ? "dropdown__option--highlighted" : ""
-                }`}
-                onMouseEnter={() => setHighlightedIndex(index)}
-                onClick={() => commitSelection(index)}
-              >
-                <span className="dropdown__option-label">{option.label}</span>
-                {isSelected && <Check size={14} strokeWidth={2.5} className="dropdown__option-check" />}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {open &&
+        panelStyle &&
+        createPortal(
+          <ul
+            className={`dropdown__panel dropdown__panel--${panelStyle.placement}`}
+            role="listbox"
+            id={listboxId}
+            ref={listRef}
+            tabIndex={-1}
+            onKeyDown={handleListKeyDown}
+            style={{
+              top: panelStyle.top,
+              bottom: panelStyle.bottom,
+              left: panelStyle.left,
+              width: panelStyle.width,
+              maxHeight: panelStyle.maxHeight,
+            }}
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+          >
+            {options.map((option, index) => {
+              const isSelected = option.value === value;
+              const isHighlighted = index === highlightedIndex;
+              return (
+                <li
+                  key={option.value}
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`dropdown__option ${isSelected ? "dropdown__option--selected" : ""} ${
+                    isHighlighted ? "dropdown__option--highlighted" : ""
+                  }`}
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  onClick={() => commitSelection(index)}
+                >
+                  <span className="dropdown__option-label">{option.label}</span>
+                  {isSelected && <Check size={14} strokeWidth={2.5} className="dropdown__option-check" />}
+                </li>
+              );
+            })}
+          </ul>,
+          document.body
+        )}
     </div>
   );
 }

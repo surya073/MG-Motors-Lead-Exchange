@@ -9,12 +9,13 @@ import DealerInvitations from "./DealerInvitations";
 import DealerDetailsOffcanvas from "../../ui/Offcanvas/DealerDetailsOffcanvas";
 import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
+import Pagination from "../../ui/Pagination/Pagination";
 import StatSkeleton from "../../ui/Skeleton/StatSkeleton";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
 import { PhoneIcon, MailIcon } from "../../ui/icons";
-import { useAlerts } from "../../ui/Alerts/Alerts";
+import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import mgLogo from "../../assets/images/mg-logo-single.png";
@@ -207,10 +208,6 @@ export default function DealerListPage() {
     [regions]
   );
 
-  const pageSizeOptions = useMemo(
-    () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
-    []
-  );
 
   const stats = useMemo(() => {
     const total = dealers.length;
@@ -465,18 +462,9 @@ export default function DealerListPage() {
           </div>
 
           {loadError && (
-            <div className="dealer-list__banner dealer-list__banner--error">
-              <Icon name="alert" size={16} />
-              <span>{loadError}</span>
-              <button
-                type="button"
-                className="dealer-list__banner-close"
-                onClick={() => setLoadError(null)}
-                aria-label="Dismiss"
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </div>
+            <Alert variant="error" onClose={() => setLoadError(null)}>
+              {loadError}
+            </Alert>
           )}
 
           <div className="dealer-list__toolbar">
@@ -577,40 +565,16 @@ export default function DealerListPage() {
             />
           )}
 
-          <div className="dealer-list__pagination">
-             <div className="dealer-list__page-size">
-              <span>Rows per page</span>
-              <Dropdown
-                ariaLabel="Rows per page"
-                size="sm"
-                value={String(pageSize)}
-                onChange={handlePageSizeChange}
-                options={pageSizeOptions}
-              />
-            </div>
-
-            <div className="dealer-list__page-nav">
-              <button
-                className="dealer-list__page-btn"
-                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                disabled={currentPage === 0}
-                aria-label="Previous page"
-              >
-                <Icon name="chevronLeft" size={15} />
-              </button>
-              <span>
-                Page {currentPage + 1} of {pageCount} · {filtered.length} dealer{filtered.length === 1 ? "" : "s"}
-              </span>
-              <button
-                className="dealer-list__page-btn"
-                onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                disabled={currentPage >= pageCount - 1}
-                aria-label="Next page"
-              >
-                <Icon name="chevronRight" size={15} />
-              </button>
-            </div>
-          </div>
+          <Pagination
+            page={currentPage + 1}
+            pageCount={pageCount}
+            total={filtered.length}
+            noun="dealer"
+            onPageChange={(p) => setPageIndex(p - 1)}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSizeChange={handlePageSizeChange}
+          />
           <DealerDetailsOffcanvas dealer={selectedDealer} onClose={() => setSelectedDealer(null)} />
         </>
       ) : activeTab === "active" ? (

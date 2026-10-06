@@ -1,0 +1,154 @@
+/* Shared pagination bar. Colours come from the design tokens only, so it
+   follows the light / dark theme and the chosen accent colour. */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+}
+
+.pagination__size {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.pagination__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.pagination__status {
+  font-size: var(--fs-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination__status strong {
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+}
+
+.pagination__total {
+  color: var(--color-text-muted);
+}
+
+.pagination__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-strong);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium),
+    transform var(--transition-fast) var(--ease-premium);
+}
+
+.pagination__btn:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+.pagination__btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.pagination__btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.pagination__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Compact: for narrow containers such as side panels. Driven by a prop (not a
+   viewport breakpoint) because the panel is narrow even on a wide screen:
+   icon-only Previous / Next on either side of a centred "Page X of Y" line. */
+.pagination--compact {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.pagination--compact .pagination__size {
+  justify-content: space-between;
+}
+
+.pagination--compact .pagination__nav {
+  width: 100%;
+  justify-content: space-between;
+  margin-left: 0;
+  gap: var(--space-2);
+}
+
+.pagination--compact .pagination__btn {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pagination--compact .pagination__btn-text {
+  display: none;
+}
+
+.pagination--compact .pagination__status {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tablet: stack the page-size picker above the nav */
+@media (max-width: 640px) {
+  .pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .pagination__nav {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+}
+
+/* Phones: icon-only Previous / Next so everything fits on one line */
+@media (max-width: 420px) {
+  .pagination__btn {
+    padding: 0 10px;
+  }
+
+  .pagination__btn-text {
+    display: none;
+  }
+
+  .pagination__total {
+    display: none;
+  }
+}
