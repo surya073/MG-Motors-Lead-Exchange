@@ -8,6 +8,8 @@ const leadMappingService = require('./leadMappingService');
 const leadFingerprintService = require('./leadFingerprintService');
 const pathPolicy = require('./pathPolicyService');
 const integrationAlertService = require('./integrationAlertService');
+const { notifyAdmins } = require('../notificationService');
+const { buildLeadChangeNotification } = require('../leadChangeNotificationService');
 const oemCrmService = require('../zohoCrmService');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
@@ -1959,6 +1961,26 @@ async function attemptInboundLeadUpdate(
           ? `Dealer classified the enquiry as "${rawDealerStatus}"; MG status set to "Not Qualified".`
           : undefined,
       });
+    }
+
+    // In-app notification for admins: which dealer changed which lead, and
+    // exactly what changed (status and any other field). Never allowed to
+    // fail the sync itself.
+    try {
+      const note = buildLeadChangeNotification({
+        dealerCode: integration.dealer_code,
+        leadRow: existingLeadRow,
+        fieldChanges,
+      });
+      if (note) {
+        await notifyAdmins(catalystApp, {
+          ...note,
+          relatedLeadId: existingLeadRow?.ROWID,
+          relatedDealerCode: integration.dealer_code,
+        });
+      }
+    } catch (notifyErr) {
+      logger.error('crmIntegrationService', `Change notification failed for lead ${mapping.zoho_lead_id}`, notifyErr);
     }
 
     return {

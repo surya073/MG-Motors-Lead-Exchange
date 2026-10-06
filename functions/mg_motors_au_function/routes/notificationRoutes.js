@@ -1,7 +1,13 @@
 'use strict';
 
 const express = require('express');
-const { listForUser, markRead, markAllRead, deleteNotification } = require('../services/notificationService');
+const {
+  listForUser,
+  markRead,
+  markAllRead,
+  deleteNotification,
+  clearAllForUser,
+} = require('../services/notificationService');
 const { normalizeRole } = require('../constants/roles.constants');
 const logger = require('../utils/logger');
 
@@ -47,6 +53,19 @@ router.post('/notifications/read-all', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (err) {
     logger.error('notificationRoutes', 'POST /notifications/read-all failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /notifications  — clear everything the caller can see
+router.delete('/notifications', async (req, res) => {
+  try {
+    const currentUser = res.locals.currentUser;
+    const role = normalizeRole(currentUser);
+    const result = await clearAllForUser(res.locals.catalystApp, { userId: currentUser.user_id, role });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('notificationRoutes', 'DELETE /notifications failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
 });

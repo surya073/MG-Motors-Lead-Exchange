@@ -288,7 +288,12 @@ async function removeUser(catalystApp, rowId) {
     throw new Error('No user mapping found for that id');
   }
   if (mapping.invite_status === 'Removed') {
-    throw new Error(`${mapping.admin_email} has already been removed`);
+    // Access was already revoked (the Catalyst account is gone), so the only
+    // thing left is the greyed-out list entry. A second remove clears that
+    // entry for good — it touches no Catalyst account — and the email can be
+    // invited again afterwards just as before.
+    await catalystApp.datastore().table(MAPPING_TABLE).deleteRow(mapping.ROWID);
+    return { email: mapping.admin_email, removed: true, purged: true };
   }
 
   const userManagement = catalystApp.userManagement();

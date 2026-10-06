@@ -82,4 +82,33 @@ async function deleteNotification(catalystApp, notificationId) {
   return table.deleteRow(notificationId);
 }
 
-module.exports = { notifyUser, notifyRole, notifyAdmins, listForUser, markRead, markAllRead, deleteNotification };
+// Removes every notification the caller can see (their own plus their role's).
+// Works in batches of ZCQL_PAGE_SIZE, bounded so a huge backlog can never
+// turn one click into an unbounded loop. Returns how many were deleted.
+const CLEAR_ALL_MAX_BATCHES = 10;
+
+async function clearAllForUser(catalystApp, { userId, role }) {
+  const table = catalystApp.datastore().table(NOTIFICATIONS_TABLE);
+  let deleted = 0;
+
+  for (let batch = 0; batch < CLEAR_ALL_MAX_BATCHES; batch += 1) {
+    const rows = await listForUser(catalystApp, { userId, role, maxRows: ZCQL_PAGE_SIZE });
+    if (rows.length === 0) break;
+    await Promise.all(rows.map((n) => table.deleteRow(n.ROWID)));
+    deleted += rows.length;
+    if (rows.length < ZCQL_PAGE_SIZE) break;
+  }
+
+  return { deleted };
+}
+
+module.exports = {
+  notifyUser,
+  notifyRole,
+  notifyAdmins,
+  listForUser,
+  markRead,
+  markAllRead,
+  deleteNotification,
+  clearAllForUser,
+};

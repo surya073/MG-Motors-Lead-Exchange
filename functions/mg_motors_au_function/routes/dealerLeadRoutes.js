@@ -10,6 +10,7 @@ const {
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const { updateOemLead } = require('../services/zohoCrmService'); 
 const { notifyAdmins } = require('../services/notificationService');
+const { buildLeadChangeNotification } = require('../services/leadChangeNotificationService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const pathPolicy = require('../services/integrations/pathPolicyService');
 
@@ -189,19 +190,30 @@ router.patch('/dealer/leads/:rowId', async (req, res) => {
 
     const updatedLead = await table.updateRow(updatePayload);
 
-    if (lead_status !== undefined) {
-      try {
+    // Tell the admins which dealer changed which lead, and exactly what
+    // changed — the status AND any other field (e.g. the follow-up date),
+    // not only the status.
+    try {
+      const changes = [];
+      if (lead_status !== undefined) {
+        changes.push({ field: 'lead_status', from: existingLead.lead_status, to: lead_status });
+      }
+      if (next_followup_date !== undefined) {
+        changes.push({ field: 'next_followup_date', from: existingLead.next_followup_date, to: next_followup_date });
+      }
+      const note = buildLeadChangeNotification({ dealerCode, leadRow: existingLead, fieldChanges: changes });
+      if (note) {
         await notifyAdmins(catalystApp, {
-          type: 'LEAD_STATUS_UPDATED',
-          title: `${dealerCode} updated a lead`,
-          message: `${existingLead.customer_name || 'A lead'} was marked as ${lead_status}.`,
+          ...note,
           relatedLeadId: req.params.rowId,
           relatedDealerCode: dealerCode,
         });
-      } catch (notifyErr) {
-        logger.error('dealerLeadRoutes', `Status notification failed for ROWID=${req.params.rowId}`, notifyErr);
       }
+    } catch (notifyErr) {
+      logger.error('dealerLeadRoutes', `Change notification failed for ROWID=${req.params.rowId}`, notifyErr);
+    }
 
+    if (lead_status !== undefined) {
       const rawScenario = pathPolicy.classifyDealerStatus(lead_status);
       const scenarioCode = rawScenario?.code || 'Happy 2';
       await crmIntegrationService.recordScenario(catalystApp, {
