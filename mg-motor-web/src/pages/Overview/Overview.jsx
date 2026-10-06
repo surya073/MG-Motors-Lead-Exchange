@@ -235,7 +235,7 @@ const OVERVIEW_UI_CSS = `
 .overview .overview__mid,
 .health-panel .monitoring-grid { align-items: stretch; }
 .overview .overview__mid > .panel-card,
-.health-panel .monitoring-grid > * { display: flex; flex-direction: column; height: 100%; min-height: 320px; }
+.health-panel .monitoring-grid > * { display: flex; flex-direction: column; }
 .overview .overview__mid > .panel-card > .panel-card__header { flex: 0 0 auto; }
 .health-panel .process-path-card-grid { grid-auto-rows: 1fr; align-items: stretch; }
 .health-panel .process-path-card-grid > * { height: 100%; }
@@ -285,7 +285,6 @@ const OVERVIEW_UI_CSS = `
 /* Responsive */
 @media (max-width: 1024px) {
   .overview .overview__mid > .panel-card,
-  .health-panel .monitoring-grid > * { min-height: 280px; }
 }
 @media (max-width: 900px) {
   .overview .overview__mid { grid-template-columns: 1fr; }
@@ -808,7 +807,7 @@ function niceCeiling(value) {
 /**
  * Sync volume trend — plots real fetched/inserted/updated/failed
  * counts from a dedicated, deeper sync_logs fetch (see AdminOverview's
- * `trendLogs` state, pulled via adminDashboardService.syncLogs({limit:20})
+ * `trendLogs` state, pulled via adminDashboardService.syncLogs({limit: 50})
  * rather than the 5-row dashboard summary). No dummy data: every point
  * and every stat tile is derived from actual sync_logs rows.
  *
@@ -2003,6 +2002,7 @@ function LeadExchangeHealthPanel({ openDrawer }) {
           <div className="monitoring-grid">
             <MonitoringCard
               title="Dealer Health"
+              icon={<Icon name="building" size={18} />}
               tone={dealerHealthCardTone}
               kpiValue={`${dealerActivePercent}%`}
               kpiLabel={`Active of ${health.dealerHealth.total} dealers`}
@@ -2015,6 +2015,7 @@ function LeadExchangeHealthPanel({ openDrawer }) {
 
             <MonitoringCard
               title="SLA Monitoring"
+              icon={<Icon name="clock" size={18} />}
               tone={slaCardTone}
               kpiValue={`${health.sla.breachPercent}%`}
               kpiLabel={`Breach rate · ${health.sla.monitored} monitored`}
@@ -2044,6 +2045,7 @@ function LeadExchangeHealthPanel({ openDrawer }) {
 
             <MonitoringCard
               title="Duplicate Leads"
+              icon={<Icon name="refresh" size={18} />}
               tone={duplicateCardTone}
               kpiValue={`${duplicatePercent}%`}
               kpiLabel={`Duplicate rate · ${health.leadStatusSummary.total} leads`}
@@ -2278,7 +2280,7 @@ function AdminOverview({ data, openDrawer }) {
 
   useEffect(() => {
     let cancelled = false;
-    adminDashboardService.syncLogs({ limit: 20 })
+    adminDashboardService.syncLogs({ limit: Math.max(...SYNC_RUN_OPTIONS) })
       .then((logs) => { if (!cancelled) setTrendLogs(logs); })
       .catch(() => { /* falls back to the 5-row summary already in state */ })
       .finally(() => { if (!cancelled) setTrendLoading(false); });

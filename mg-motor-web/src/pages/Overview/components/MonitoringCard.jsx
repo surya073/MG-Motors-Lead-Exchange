@@ -43,16 +43,30 @@ export function healthTone(percent, { goodThreshold = 80, warnThreshold = 50, hi
   return "danger";
 }
 
+// Plain-language label for the status pill. Presentation only — the tone
+// itself is still decided by healthTone() above.
+const STATUS_LABELS = {
+  success: "Healthy",
+  warning: "Watch",
+  danger: "Action needed",
+  info: "Info",
+  neutral: "No data",
+};
+
 /**
  * MonitoringCard — the shared shell for the three "live operational
- * monitoring" cards (Dealer Health, SLA Monitoring, Duplicate Leads):
- * a status dot + title, a prominent KPI with a small real supporting
- * metric next to it (never a fabricated vs.-last-period delta, since no
- * prior-period baseline exists in the data), a wave/area trend, and a
- * slot for whatever list/note each card already showed.
+ * monitoring" cards (Dealer Health, SLA Monitoring, Duplicate Leads).
+ * All three share one fixed height so they line up in a row:
+ *
+ *   header   icon badge + title + supporting metric, status pill on the right
+ *   KPI      the headline percentage and its label
+ *   trend    a full-width wave chart (or a same-sized placeholder when there
+ *            is not enough real data to draw one — never a fabricated line)
+ *   details  a scrollable area for each card's own list / note
  */
 export default function MonitoringCard({
   title,
+  icon,
   tone = "neutral",
   kpiValue,
   kpiLabel,
@@ -63,6 +77,8 @@ export default function MonitoringCard({
   children,
 }) {
   const Tag = onClick ? "button" : "div";
+  const hasTrend = trendPoints && trendPoints.length > 1;
+
   return (
     <Tag
       type={onClick ? "button" : undefined}
@@ -71,21 +87,33 @@ export default function MonitoringCard({
     >
       <div className="monitoring-card__header">
         <span className="monitoring-card__title-group">
-          <span className={`monitoring-card__status-dot monitoring-card__status-dot--${tone}`} aria-hidden="true" />
-          <h3>{title}</h3>
+          {icon && <span className={`monitoring-card__icon monitoring-card__icon--${tone}`}>{icon}</span>}
+          <span className="monitoring-card__title-text">
+            <h3>{title}</h3>
+            {supporting && <span className="monitoring-card__supporting">{supporting}</span>}
+          </span>
         </span>
-        {supporting && <span className="monitoring-card__supporting">{supporting}</span>}
+        <span className={`monitoring-card__pill monitoring-card__pill--${tone}`}>
+          <span className="monitoring-card__pill-dot" aria-hidden="true" />
+          {STATUS_LABELS[tone] || STATUS_LABELS.neutral}
+        </span>
       </div>
 
-      <div className="monitoring-card__kpi-row">
-        <div className="monitoring-card__kpi">
-          <span className="monitoring-card__kpi-value">{kpiValue}</span>
-          <span className="monitoring-card__kpi-label">{kpiLabel}</span>
-        </div>
-        {trendPoints && trendPoints.length > 1 && (
-          <div className="monitoring-card__trend">
-            <TrendArea points={trendPoints} tone={tone === "neutral" ? "info" : tone} />
+      <div className="monitoring-card__kpi">
+        <span className="monitoring-card__kpi-value">{kpiValue}</span>
+        <span className="monitoring-card__kpi-label">{kpiLabel}</span>
+      </div>
+
+      <div className="monitoring-card__trend">
+        {hasTrend ? (
+          <>
+            <TrendArea points={trendPoints} tone={tone === "neutral" ? "info" : tone} width={320} height={64} />
             {trendCaption && <span className="monitoring-card__trend-caption">{trendCaption}</span>}
+          </>
+        ) : (
+          <div className="monitoring-card__trend-empty">
+            <span className="monitoring-card__trend-empty-line" aria-hidden="true" />
+            <span>Not enough data for a trend yet</span>
           </div>
         )}
       </div>

@@ -2,9 +2,14 @@
    Live operational monitoring cards (Dealer Health / SLA
    Monitoring / Duplicate Leads) + their wave/area trend charts.
    Same token system as paths.css — no new palette.
+
+   All three cards share one fixed height so they line up in a row;
+   whatever list a card shows scrolls inside its own detail area
+   instead of stretching the card.
    ============================================================ */
 
 .monitoring-grid {
+  --monitoring-card-height: 380px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--space-5);
@@ -14,18 +19,41 @@
 .monitoring-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
   width: 100%;
+  height: var(--monitoring-card-height);
+  min-height: var(--monitoring-card-height);
   padding: var(--space-5);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: 18px;
   background-color: var(--color-bg-elevated);
   text-align: left;
   box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  position: relative;
   transition: box-shadow var(--transition-fast) var(--ease-premium),
     border-color var(--transition-fast) var(--ease-premium),
     transform var(--transition-fast) var(--ease-premium);
 }
+
+/* A soft tone wash across the top of the card (instead of a hard top border). */
+.monitoring-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 110px;
+  background: linear-gradient(180deg, var(--monitoring-wash, transparent) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+.monitoring-card > * {
+  position: relative; /* keep content above the wash */
+}
+
+.monitoring-card--success { --monitoring-wash: var(--color-success-soft); --monitoring-tone: var(--color-success); }
+.monitoring-card--warning { --monitoring-wash: var(--color-warning-soft); --monitoring-tone: var(--color-warning); }
+.monitoring-card--danger  { --monitoring-wash: var(--color-danger-soft);  --monitoring-tone: var(--color-danger); }
+.monitoring-card--info    { --monitoring-wash: var(--color-info-soft);    --monitoring-tone: var(--color-info); }
+.monitoring-card--neutral { --monitoring-wash: var(--color-surface-alt);  --monitoring-tone: var(--color-text-muted); }
 
 .monitoring-card--clickable {
   cursor: pointer;
@@ -47,88 +75,115 @@
   outline-offset: 2px;
 }
 
-/* Restrained top accent + a very soft corner wash, echoing the tone
-   without turning the whole card into a colored block. */
-.monitoring-card--success { border-top: 3px solid var(--color-success); background-image: linear-gradient(160deg, var(--color-success-soft) 0%, transparent 45%); }
-.monitoring-card--warning { border-top: 3px solid var(--color-warning); background-image: linear-gradient(160deg, var(--color-warning-soft) 0%, transparent 45%); }
-.monitoring-card--danger { border-top: 3px solid var(--color-danger); background-image: linear-gradient(160deg, var(--color-danger-soft) 0%, transparent 45%); }
-.monitoring-card--info { border-top: 3px solid var(--color-info); background-image: linear-gradient(160deg, var(--color-info-soft) 0%, transparent 45%); }
-.monitoring-card--neutral { border-top: 3px solid var(--color-border-strong); }
+/* ---------- Header ---------- */
 
 .monitoring-card__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+  flex: 0 0 auto;
 }
 
 .monitoring-card__title-group {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  min-width: 0;
 }
 
-.monitoring-card__title-group h3 {
-  font-size: var(--fs-sm);
+.monitoring-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background-color: var(--color-bg-elevated);
+  color: var(--monitoring-tone);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xs);
+}
+
+.monitoring-card__title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.monitoring-card__title-text h3 {
+  font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
+  line-height: 1.2;
   color: var(--color-text-primary);
 }
-
-.monitoring-card__status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.monitoring-card__status-dot--success { background-color: var(--color-success); box-shadow: 0 0 0 3px var(--color-success-soft); }
-.monitoring-card__status-dot--warning { background-color: var(--color-warning); box-shadow: 0 0 0 3px var(--color-warning-soft); }
-.monitoring-card__status-dot--danger { background-color: var(--color-danger); box-shadow: 0 0 0 3px var(--color-danger-soft); }
-.monitoring-card__status-dot--info { background-color: var(--color-info); box-shadow: 0 0 0 3px var(--color-info-soft); }
-.monitoring-card__status-dot--neutral { background-color: var(--color-text-muted); }
 
 .monitoring-card__supporting {
   font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitoring-card__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
   color: var(--color-text-secondary);
-  text-align: right;
   white-space: nowrap;
 }
 
-.monitoring-card__kpi-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-top: var(--space-4);
-  flex-wrap: wrap;
+.monitoring-card__pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--monitoring-tone);
+  box-shadow: 0 0 0 3px var(--monitoring-wash);
 }
+
+/* ---------- Headline number ---------- */
 
 .monitoring-card__kpi {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-4);
+  flex: 0 0 auto;
 }
 
 .monitoring-card__kpi-value {
-  font-size: 30px;
+  font-size: 36px;
   font-weight: var(--fw-bold);
   color: var(--color-text-primary);
-  line-height: 1.1;
-  letter-spacing: -0.5px;
+  line-height: 1;
+  letter-spacing: -1px;
 }
 
 .monitoring-card__kpi-label {
-  margin-top: 2px;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
 }
 
+/* ---------- Trend (fixed-height slot, so the card never jumps) ---------- */
+
 .monitoring-card__trend {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  flex: 1;
-  min-width: 120px;
+  justify-content: center;
+  height: 84px;
+  margin-top: var(--space-3);
+  flex: 0 0 auto;
 }
 
 .monitoring-card__trend-caption {
@@ -137,10 +192,50 @@
   color: var(--color-text-muted);
 }
 
+.monitoring-card__trend-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.monitoring-card__trend-empty-line {
+  display: block;
+  width: 60%;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-border-strong), transparent);
+}
+
+/* ---------- Details (each card's own list / note) ---------- */
+
 .monitoring-card__body {
+  flex: 1 1 auto;
+  min-height: 0;
   margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.monitoring-card__body .task-list__item {
+  min-height: 0;
+  padding-block: 6px;
+}
+
+/* Empty-state placeholders inside the details area should fill it neatly. */
+.monitoring-card__body .ov-empty {
+  min-height: 100%;
+  border: 0;
+  padding: var(--space-2);
+  background: transparent;
 }
 
 /* ---------- TrendArea ---------- */
@@ -148,12 +243,13 @@
 .trend-area {
   display: block;
   width: 100%;
-  max-width: 240px;
-  height: 56px;
+  max-width: none;
+  height: 64px;
 }
 
 .trend-area__line {
-  stroke-width: 2;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke; /* keep the line crisp when the chart stretches */
   transition: d 400ms var(--ease-premium);
 }
 
@@ -227,22 +323,24 @@
 
 /* ---------- Responsive ---------- */
 
+@media (max-width: 1024px) {
+  .monitoring-grid {
+    --monitoring-card-height: 360px;
+  }
+}
+
 @media (max-width: 560px) {
   .monitoring-grid {
     grid-template-columns: 1fr;
+    --monitoring-card-height: 350px;
   }
 
-  .monitoring-card__kpi-row {
-    align-items: flex-start;
+  .monitoring-card {
+    padding: var(--space-4);
   }
 
-  .monitoring-card__trend {
-    align-items: flex-start;
-    width: 100%;
-  }
-
-  .trend-area {
-    max-width: 100%;
+  .monitoring-card__kpi-value {
+    font-size: 32px;
   }
 
   .integration-cta {
