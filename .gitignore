@@ -17,3 +17,6 @@ build/
 
 # Catalyst function config
 functions/mg_motors_au_function/catalyst-config.json
+
+# Fusion AMS-Pro integration docs/test payloads - confidential, never commit
+/data/
