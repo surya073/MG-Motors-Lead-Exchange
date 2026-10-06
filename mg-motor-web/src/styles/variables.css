@@ -753,3 +753,32 @@ table tbody tr:last-child td {
   --fs-2xl: 31px;
   --fs-3xl: 38px;
 }
+
+/* ---------- Table density preference (set via Settings page) ---------- */
+:root[data-table-density="compact"] .table tbody td,
+:root[data-table-density="compact"] .table__row--skeleton td {
+  padding: var(--space-2) var(--space-3);
+}
+
+:root[data-table-density="compact"] .table thead th {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ---------- High contrast preference (set via Settings page) ---------- */
+:root[data-contrast="high"] {
+  --color-text-secondary: #2B2D32;
+  --color-text-muted: #55585F;
+  --color-border-subtle: rgba(22, 24, 28, 0.22);
+  --color-border: rgba(22, 24, 28, 0.45);
+  --color-border-strong: rgba(22, 24, 28, 0.65);
+  --color-border-hover: rgba(22, 24, 28, 0.8);
+}
+
+:root[data-theme="dark"][data-contrast="high"] {
+  --color-text-secondary: #E4E6EA;
+  --color-text-muted: #B4B7BD;
+  --color-border-subtle: rgba(255, 255, 255, 0.22);
+  --color-border: rgba(255, 255, 255, 0.4);
+  --color-border-strong: rgba(255, 255, 255, 0.6);
+  --color-border-hover: rgba(255, 255, 255, 0.8);
+}

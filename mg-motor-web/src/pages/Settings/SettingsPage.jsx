@@ -42,6 +42,12 @@ import {
   useAccentColor,
   useAvatarPreference,
 } from "../../utils/profilePreferences";
+import {
+  applyHighContrast,
+  applyTableDensity,
+  readHighContrast,
+  readTableDensity,
+} from "../../utils/displayPreferences";
 import "./SettingsPage.css";
 
 /** Live session clock — isolated so its 1s tick never re-renders the whole page. */
@@ -68,6 +74,11 @@ const FONT_SIZES = [
   { value: "small", label: "Small" },
   { value: "medium", label: "Medium" },
   { value: "large", label: "Large" },
+];
+
+const TABLE_DENSITIES = [
+  { value: "comfortable", label: "Comfortable" },
+  { value: "compact", label: "Compact" },
 ];
 
 const NOTIF_STYLES = [
@@ -103,6 +114,9 @@ export default function SettingsPage() {
     if (typeof window === "undefined") return false;
     return localStorage.getItem(REDUCE_MOTION_STORAGE_KEY) === "true";
   });
+
+  const [tableDensity, setTableDensity] = useState(readTableDensity);
+  const [highContrast, setHighContrast] = useState(readHighContrast);
 
   // Shared with the navbar bell, so a change here applies instantly.
   const [notificationStyle, setNotificationStyle] = useNotificationStyle();
@@ -146,10 +160,22 @@ export default function SettingsPage() {
     else document.documentElement.removeAttribute("data-reduce-motion");
   };
 
+  const handleTableDensityChange = (value) => {
+    setTableDensity(value);
+    applyTableDensity(value);
+  };
+
+  const handleHighContrastChange = (enabled) => {
+    setHighContrast(enabled);
+    applyHighContrast(enabled);
+  };
+
   // Puts every preference on this page back to its default.
   const handleResetPreferences = () => {
     handleFontSizeChange("medium");
     applyReduceMotion(false);
+    handleTableDensityChange("comfortable");
+    handleHighContrastChange(false);
     setNotificationStyle("badge");
     resetProfilePreferences();
     if (mode === "dark") toggleTheme();
@@ -306,6 +332,40 @@ export default function SettingsPage() {
               aria-label="Reduce motion"
               className={`settings__switch ${reduceMotion ? "settings__switch--on" : ""}`}
               onClick={() => applyReduceMotion(!reduceMotion)}
+            >
+              <span className="settings__switch-thumb" />
+            </button>
+          </div>
+          <div className="settings__block">
+            <p className="settings__label">Table density</p>
+            <div className="settings__option-group">
+              {TABLE_DENSITIES.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`settings__option ${tableDensity === value ? "settings__option--active" : ""}`}
+                  onClick={() => handleTableDensityChange(value)}
+                  aria-pressed={tableDensity === value}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="settings__hint">Compact fits more rows on screen in lead and dealer tables.</p>
+          </div>
+
+          <div className="settings__block settings__block--action">
+            <div>
+              <p className="settings__label">High contrast</p>
+              <p className="settings__value-muted">Stronger text and borders for easier reading.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={highContrast}
+              aria-label="High contrast"
+              className={`settings__switch ${highContrast ? "settings__switch--on" : ""}`}
+              onClick={() => handleHighContrastChange(!highContrast)}
             >
               <span className="settings__switch-thumb" />
             </button>
@@ -472,7 +532,7 @@ export default function SettingsPage() {
           <div className="settings__block settings__block--action">
             <div>
               <p className="settings__label">Reset preferences</p>
-              <p className="settings__value-muted">Restore theme, accent color, avatar, text size, motion and bell indicator to defaults.</p>
+              <p className="settings__value-muted">Restore theme, accent color, avatar, text size, motion, contrast, table density and bell indicator to defaults.</p>
             </div>
             <button type="button" className="settings__button settings__button--outline" onClick={handleResetPreferences}>
               <RotateCcw size={14} strokeWidth={2.5} />

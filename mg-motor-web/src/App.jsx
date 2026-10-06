@@ -4,6 +4,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { LayoutProvider } from "./contexts/LayoutContext";
 import { AlertProvider } from "./ui/Alerts/Alerts";
 import AppRoutes from "./routes/AppRoutes";
+import { restoreDisplayPreferences } from "./utils/displayPreferences";
 import { markSessionStart, restoreProfilePreferences } from "./utils/profilePreferences";
 
 /**
@@ -26,6 +27,7 @@ export default function App() {
     const savedFontSize = localStorage.getItem("settings:fontSize");
     if (savedFontSize) document.documentElement.setAttribute("data-font-size", savedFontSize);
     restoreProfilePreferences(); // saved accent colour
+    restoreDisplayPreferences(); // table density + high contrast
     markSessionStart(); // for the Session timing card in Settings
     if (localStorage.getItem("settings:reduceMotion") === "true") {
       document.documentElement.setAttribute("data-reduce-motion", "true");
