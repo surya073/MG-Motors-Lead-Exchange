@@ -1,0 +1,60 @@
+/* Shared close button for offcanvas / drawer / side panels.
+   Shape, size and hover motion come from the Dealer Details offcanvas. */
+
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.close-btn:hover {
+  transform: rotate(90deg);
+}
+
+.close-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* On light/dark panel surfaces — follows the theme tokens. */
+.close-btn--default {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.close-btn--default:hover {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+/* On a dark hero/photo — exactly the Dealer Details look. */
+.close-btn--glass {
+  background-color: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  backdrop-filter: blur(4px);
+}
+
+.close-btn--glass:hover {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .close-btn {
+    transition: none;
+  }
+
+  .close-btn:hover {
+    transform: none;
+  }
+}

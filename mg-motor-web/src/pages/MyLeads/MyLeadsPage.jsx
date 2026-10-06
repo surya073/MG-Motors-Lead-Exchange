@@ -4,6 +4,7 @@ import { dealerPortalService } from "../../services/api/dealerPortalService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
+import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import LeadUpdateOffcanvas from "./LeadUpdateOffcanvas";
 import { useAlerts } from "../../ui/Alerts/Alerts";
@@ -117,6 +118,7 @@ export default function MyLeadsPage() {
   const [loadError, setLoadError] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
+  useUrlSearch(setSearch); // ?search= from the navbar search
   const [activeLead, setActiveLead] = useState(null); // { lead, mode: "view" | "edit" } | null
 
   const [view, setView] = useState(() => {

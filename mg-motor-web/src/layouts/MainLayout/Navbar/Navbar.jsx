@@ -12,11 +12,11 @@ import {
   SunsetIcon,
   MoonIcon,
   SettingsIcon,
-  SearchIcon,
 } from "../../../ui/icons";
 
 import { ROUTES } from "../../../constants/routes.constants";
 
+import NavbarSearch from "./NavbarSearch";
 import NotificationBell from "./NotificationBell";
 import ProfileDropdown from "./ProfileDropdown";
 
@@ -199,19 +199,7 @@ export default function Navbar() {
 
         {/* Search */}
 
-        <div className="navbar__search">
-          <SearchIcon size={18} />
-
-          <input
-            type="text"
-            placeholder="Search dealers, leads, logs..."
-            aria-label="Search"
-          />
-
-          <span className="navbar__search-shortcut">
-            /
-          </span>
-        </div>
+        <NavbarSearch />
 
         {/* Theme */}
 

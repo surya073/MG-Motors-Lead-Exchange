@@ -1,0 +1,285 @@
+/* Navbar search.
+   - .navbar-search-trigger : the pill in the top bar (shape comes from
+     .navbar__search in Navbar.css; this adds the button reset + text)
+   - .nsearch*              : the expanded search — blurred backdrop, a bar
+     that grows out of the pill, and the results panel beneath it. */
+
+/* ---------- Trigger in the navbar ---------- */
+
+.navbar-search-trigger {
+  cursor: text;
+  text-align: left;
+  font-family: inherit;
+}
+
+.navbar-search-trigger:hover {
+  border-color: var(--color-border-strong);
+}
+
+.navbar-search-trigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.navbar-search-trigger__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 700px) {
+  .navbar-search-trigger {
+    cursor: pointer;
+  }
+
+  .navbar-search-trigger__text {
+    display: none;
+  }
+}
+
+/* ---------- Expanded search ---------- */
+
+.nsearch {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal, 1000) + 10);
+  background: rgba(10, 10, 14, 0);
+  -webkit-backdrop-filter: blur(0px);
+  backdrop-filter: blur(0px);
+  transition: background-color 220ms var(--ease-premium, ease),
+    backdrop-filter 220ms var(--ease-premium, ease),
+    -webkit-backdrop-filter 220ms var(--ease-premium, ease);
+}
+
+.nsearch--entered {
+  background: rgba(10, 10, 14, 0.42);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(8px) saturate(120%);
+}
+
+.nsearch__shell {
+  position: fixed;
+  transition: top 240ms var(--ease-premium, cubic-bezier(0.22, 1, 0.36, 1)),
+    left 240ms var(--ease-premium, cubic-bezier(0.22, 1, 0.36, 1)),
+    width 240ms var(--ease-premium, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.nsearch__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px 0 18px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-primary);
+  border-radius: 26px;
+  box-shadow: 0 0 0 4px var(--color-primary-soft), var(--shadow-lg);
+  color: var(--color-text-tertiary);
+}
+
+.nsearch__icon {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.nsearch__bar input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.nsearch__bar input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.nsearch__chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.nsearch__chip--button {
+  cursor: pointer;
+}
+
+.nsearch__chip--button:hover {
+  color: var(--color-text-primary);
+}
+
+/* ---------- Results ---------- */
+
+.nsearch__panel {
+  margin-top: 10px;
+  max-height: min(64vh, 520px);
+  overflow-y: auto;
+  padding: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text-primary);
+  animation: nsearch-panel-in 160ms var(--ease-premium, ease) both;
+}
+
+@keyframes nsearch-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nsearch__group + .nsearch__group {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.nsearch__group-label {
+  padding: 4px var(--space-3);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.nsearch__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 8px var(--space-3);
+  border-radius: var(--radius-md);
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+}
+
+.nsearch__item--active {
+  background: var(--color-primary-soft);
+}
+
+.nsearch__item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+}
+
+.nsearch__item--active .nsearch__item-icon {
+  background: var(--color-primary);
+  color: var(--color-white);
+}
+
+.nsearch__item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nsearch__item-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nsearch__item-hint {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nsearch__item-enter {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.nsearch__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3) 2px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.nsearch__footer kbd {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-alt);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.nsearch__loading {
+  margin-left: auto;
+}
+
+@media (max-width: 700px) {
+  .nsearch__bar {
+    height: 48px;
+  }
+
+  .nsearch__footer span:not(.nsearch__loading) {
+    display: none;
+  }
+
+  .nsearch__footer {
+    padding-top: 2px;
+    border-top: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nsearch,
+  .nsearch__shell {
+    transition: none;
+  }
+
+  .nsearch__panel {
+    animation: none;
+  }
+}

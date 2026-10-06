@@ -16,6 +16,7 @@ import {
 } from "../../ui/icons";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
+import CloseButton from "../../ui/CloseButton/CloseButton";
 import { CompactListSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import "./LeadDetailView.css";
 
@@ -590,15 +591,6 @@ function DotsCircleIcon(props) {
   );
 }
 
-function CloseIcon(props) {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-
 /* ----------------------------------------------------------------
    Status Pill
 ------------------------------------------------------------------ */
@@ -781,9 +773,7 @@ function TimelineOffcanvas({ open, onClose, timeline, loading }) {
             <ClockIcon size={16} />
             Full Activity Timeline
           </h3>
-          <button type="button" className="lead-detail__offcanvas-close" onClick={onClose} aria-label="Close">
-            <CloseIcon />
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
         <div className="lead-detail__offcanvas-body">
           <ul className="lead-detail__timeline">

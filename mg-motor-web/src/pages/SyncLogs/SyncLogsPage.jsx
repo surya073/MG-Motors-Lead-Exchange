@@ -19,8 +19,10 @@ import {
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { syncDealersService, syncLeadsService } from "../../services/api/syncService";
+import useUrlSearch from "../../hooks/useUrlSearch";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";
+import CloseButton from "../../ui/CloseButton/CloseButton";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import { useAuth } from "../../contexts/AuthContext";
@@ -478,6 +480,7 @@ export default function SyncLogsPage() {
   const [loadError, setLoadError] = useState(null);
 
   const [search, setSearch] = useState("");
+  useUrlSearch(setSearch); // ?search= from the navbar search
   const [typeFilter, setTypeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [triggeredByFilter, setTriggeredByFilter] = useState("");
@@ -1006,14 +1009,7 @@ export default function SyncLogsPage() {
                   <ScenarioBadge key={s.code} scenario={s} />
                 ))}
                 <Badge tone={STATUS_TONES[selectedLog.status] || "neutral"}>{selectedLog.status}</Badge>
-                <button
-                  type="button"
-                  className="sync-logs__offcanvas-close"
-                  onClick={() => setSelectedLog(null)}
-                  aria-label="Close"
-                >
-                  <X size={20} />
-                </button>
+                <CloseButton onClick={() => setSelectedLog(null)} />
               </div>
             </div>
 

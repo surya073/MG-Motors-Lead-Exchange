@@ -7,6 +7,7 @@ import Dropdown from "../../ui/Dropdown/Dropdown";
 import "./DealerListPage.css";
 import DealerInvitations from "./DealerInvitations";
 import DealerDetailsOffcanvas from "../../ui/Offcanvas/DealerDetailsOffcanvas";
+import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import StatSkeleton from "../../ui/Skeleton/StatSkeleton";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
@@ -98,6 +99,7 @@ export default function DealerListPage() {
   const [syncing, setSyncing] = useState(false);
 
   const [search, setSearch] = useState("");
+  useUrlSearch(setSearch); // ?search= from the navbar search
   const [regionFilter, setRegionFilter] = useState("");
   const [showRemoved, setShowRemoved] = useState(true);
   const [pageIndex, setPageIndex] = useState(0);

@@ -168,6 +168,12 @@
   min-width: 150px;
 }
 
+.health-filterbar__field .dropdown,
+.health-filterbar__field .datepicker {
+  min-width: 170px;
+  width: 100%;
+}
+
 .health-filterbar__actions {
   display: flex;
   gap: var(--space-2);
@@ -207,13 +213,8 @@
   gap: var(--space-2);
 }
 
-.error-report__filters select {
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background-color: var(--color-surface);
-  color: var(--color-text-secondary);
-  font-size: var(--fs-xs);
+.error-report__filters .dropdown {
+  min-width: 150px;
 }
 
 .table-pagination {
@@ -251,8 +252,24 @@
     margin-left: 0;
   }
   .health-filterbar__field input,
-  .health-filterbar__field select {
+  .health-filterbar__field select,
+  .health-filterbar__field .dropdown,
+  .health-filterbar__field .datepicker {
     min-width: 0;
     width: 100%;
   }
+}
+
+/* Cards holding popups (date picker, dropdowns) must sit above the cards that follow them.
+   Each card is its own stacking context (backdrop-filter), so the order is explicit:
+   the filter card is above the report card, which is above the rest of the page. */
+.integrations-page__filters {
+  position: relative;
+  z-index: 40;
+  overflow: visible;
+}
+
+.integrations-page__report {
+  position: relative;
+  z-index: 30;
 }

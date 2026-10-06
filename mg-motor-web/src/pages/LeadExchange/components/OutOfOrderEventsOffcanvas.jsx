@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { X, Store, Hash, Clock, AlertTriangle, Link2 } from "lucide-react";
+import { Store, Hash, Clock, AlertTriangle, Link2 } from "lucide-react";
 import Badge from "../../../ui/Badge/Badge";
+import CloseButton from "../../../ui/CloseButton/CloseButton";
 import "./OutOfOrderEventsOffcanvas.css";
 
 const OUT_OF_ORDER_STATES = {
@@ -65,9 +66,7 @@ export default function OutOfOrderEventsOffcanvas({ open, onClose, events, heldC
                 : `${heldCount} held · ${events.length} total`}
             </p>
           </div>
-          <button type="button" className="ooo-offcanvas__close" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
 
         <div className="ooo-offcanvas__body">

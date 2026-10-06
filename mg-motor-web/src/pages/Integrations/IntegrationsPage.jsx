@@ -8,6 +8,8 @@ import { ROUTES } from "../../constants/routes.constants";
 // only for the error-type filter dropdown below.
 import { SCENARIO_META } from "../Overview/Overview";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
+import DatePicker from "../../ui/DatePicker/DatePicker";
+import Dropdown from "../../ui/Dropdown/Dropdown";
 import "./IntegrationsPage.css";
 
 /**
@@ -92,33 +94,34 @@ function DateRangeFilterBar({ fromDate, toDate, dealerCode, dealers, preset, onC
         ))}
       </div>
       <div className="health-filterbar__row">
-        <label className="health-filterbar__field">
+        <div className="health-filterbar__field">
           <span>From</span>
-          <input
-            type="date"
+          <DatePicker
             value={fromDate || ""}
             max={toDate || undefined}
-            onChange={(e) => onChange({ preset: "custom", fromDate: e.target.value })}
+            onChange={(value) => onChange({ preset: "custom", fromDate: value })}
           />
-        </label>
-        <label className="health-filterbar__field">
+        </div>
+        <div className="health-filterbar__field">
           <span>To</span>
-          <input
-            type="date"
+          <DatePicker
             value={toDate || ""}
             min={fromDate || undefined}
-            onChange={(e) => onChange({ preset: "custom", toDate: e.target.value })}
+            onChange={(value) => onChange({ preset: "custom", toDate: value })}
           />
-        </label>
-        <label className="health-filterbar__field">
+        </div>
+        <div className="health-filterbar__field">
           <span>Dealer</span>
-          <select value={dealerCode} onChange={(e) => onChange({ dealerCode: e.target.value })}>
-            <option value="">All Dealers</option>
-            {dealers.map((d) => (
-              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code} — {d.dealer_name}</option>
-            ))}
-          </select>
-        </label>
+          <Dropdown
+            ariaLabel="Dealer"
+            value={dealerCode}
+            onChange={(value) => onChange({ dealerCode: value })}
+            options={[
+              { value: "", label: "All Dealers" },
+              ...dealers.map((d) => ({ value: d.dealer_code, label: `${d.dealer_code} — ${d.dealer_name}` })),
+            ]}
+          />
+        </div>
         <div className="health-filterbar__actions">
           <button type="button" className="health-filterbar__apply" onClick={onApply}>Apply Filters</button>
           <button type="button" className="health-filterbar__reset" onClick={onReset}>Reset</button>
@@ -168,27 +171,43 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
   const totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 25)));
 
   return (
-    <div className="panel-card">
+    <div className="panel-card integrations-page__report">
       <div className="panel-card__header">
         <h3>Integration Errors</h3>
         <div className="error-report__filters">
-          <select value={dealerFilter} onChange={(e) => setDealerFilter(e.target.value)}>
-            <option value="">All dealers</option>
-            {dealers.map((d) => (
-              <option key={d.dealer_code} value={d.dealer_code}>{d.dealer_code}</option>
-            ))}
-          </select>
-          <select value={scenarioFilter} onChange={(e) => setScenarioFilter(e.target.value)}>
-            <option value="">All error types</option>
-            {Object.keys(SCENARIO_META).filter((k) => k.startsWith("Unhappy")).map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">Any status</option>
-            <option value="FAILED">Failed</option>
-            <option value="SUCCESS">Success</option>
-          </select>
+          <Dropdown
+            ariaLabel="Filter by dealer"
+            size="sm"
+            value={dealerFilter}
+            onChange={setDealerFilter}
+            options={[
+              { value: "", label: "All dealers" },
+              ...dealers.map((d) => ({ value: d.dealer_code, label: d.dealer_code })),
+            ]}
+          />
+          <Dropdown
+            ariaLabel="Filter by error type"
+            size="sm"
+            value={scenarioFilter}
+            onChange={setScenarioFilter}
+            options={[
+              { value: "", label: "All error types" },
+              ...Object.keys(SCENARIO_META)
+                .filter((k) => k.startsWith("Unhappy"))
+                .map((name) => ({ value: name, label: name })),
+            ]}
+          />
+          <Dropdown
+            ariaLabel="Filter by status"
+            size="sm"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { value: "", label: "Any status" },
+              { value: "FAILED", label: "Failed" },
+              { value: "SUCCESS", label: "Success" },
+            ]}
+          />
         </div>
       </div>
 
@@ -316,7 +335,7 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      <div className="panel-card">
+      <div className="panel-card integrations-page__filters">
         <div className="panel-card__header">
           <h3>Filters</h3>
           <span className="panel-card__meta">
