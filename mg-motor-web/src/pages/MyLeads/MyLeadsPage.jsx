@@ -13,6 +13,13 @@ import "../LeadExchange/LeadExchangePage.css";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+
+// Card view shows a grid of up to 4 columns, so its page sizes are multiples
+// of 12 (divisible by 1, 2, 3 and 4): every row on a full page is complete,
+// instead of ending with a lone card. Table view keeps its own sizes.
+const CARD_PAGE_SIZE_OPTIONS = [12, 24, 48];
+const nearestSize = (sizes, value) =>
+  sizes.reduce((best, n) => (Math.abs(n - value) < Math.abs(best - value) ? n : best), sizes[0]);
 const VIEW_STORAGE_KEY = "myLeads:view";
 
 const STATUS_CARDS = [
@@ -129,7 +136,7 @@ export default function MyLeadsPage() {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [pageIndex, setPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(() => (view === "grid" ? CARD_PAGE_SIZE_OPTIONS[0] : 10));
 
   const loadLeads = async () => {
     setLoading(true);
@@ -155,6 +162,10 @@ export default function MyLeadsPage() {
   const changeView = (next) => {
     setView(next);
     localStorage.setItem(VIEW_STORAGE_KEY, next);
+    // Keep the page size valid for the view being switched to.
+    const sizes = next === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS;
+    if (!sizes.includes(pageSize)) setPageSize(nearestSize(sizes, pageSize));
+    setPageIndex(0);
   };
 
   // Computed client-side from the single leads fetch above, rather than
@@ -464,7 +475,7 @@ export default function MyLeadsPage() {
             size="sm"
             value={String(pageSize)}
             onChange={handlePageSizeChange}
-            options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+            options={(view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS).map((n) => ({ value: String(n), label: String(n) }))}
           />
         </div>
         <div className="my-leads__page-nav">

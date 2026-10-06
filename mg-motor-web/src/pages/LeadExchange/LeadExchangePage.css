@@ -266,7 +266,8 @@
 }
 
 .lead-exchange__contact-link {
-  color: var(--color-primary, #1d4ed8);
+  /* Blue, like the contact links on the lead cards — not the brand red */
+  color: var(--color-info, #2F6FED);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -535,7 +536,8 @@
 
 .lead-exchange__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* At most 4 columns, so the 12 / 24 / 48 page sizes always fill whole rows */
+  grid-template-columns: repeat(auto-fill, minmax(max(280px, calc((100% - 3 * var(--space-4)) / 4)), 1fr));
   gap: var(--space-4);
 }
 
@@ -634,9 +636,9 @@
   transform: translateX(-50%);
   z-index: 3;
   display: inline-flex;
-  padding: 6px 26px;
+  padding: 4px 20px;
   text-align: center;
-  font-size: 10.5px;
+  font-size: 9px;
   font-weight: var(--fw-bold, 700);
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -985,7 +987,7 @@
 
 @media (max-width: 900px) {
   .lead-exchange__grid {
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(max(260px, calc((100% - 3 * var(--space-4)) / 4)), 1fr));
   }
 }
 

@@ -246,6 +246,14 @@ const OVERVIEW_UI_CSS = `
    is its own stacking context; lift this one above the cards below so its popups are never covered. */
 .health-panel .health-panel__filters { position: relative; z-index: 6; overflow: visible; }
 
+/* "Partial data" tag shown when the selected range has more events than one fetch covers */
+.health-panel__partial {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 2px 8px;
+  border-radius: var(--radius-full); font-size: 11px; font-weight: 600; cursor: help;
+  color: var(--color-warning); background: var(--color-warning-soft);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
 /* Card headers */
 .overview .panel-card__header,
 .health-panel .panel-card__header {
@@ -1800,6 +1808,14 @@ function LeadExchangeHealthPanel({ openDrawer }) {
           <span className="panel-card__meta">
             {appliedFilters.fromDate} → {appliedFilters.toDate}
             {appliedFilters.dealerCode ? ` · ${appliedFilters.dealerCode}` : ""}
+            {health?.truncated && (
+              <span
+                className="health-panel__partial"
+                title="This range has more integration events than a single fetch covers, so the counts below are partial. Narrow the date range for a complete count."
+              >
+                Partial data
+              </span>
+            )}
           </span>
         </div>
         <DateRangeFilterBar
@@ -1862,15 +1878,6 @@ function LeadExchangeHealthPanel({ openDrawer }) {
             />
             <KpiCard icon="check" label="Active Dealers" value={health.dealerHealth.activeInRange} tone="success" />
           </div>
-
-          {health.truncated && (
-            <EmptyPlaceholder
-              compact
-              icon="alert"
-              title="Results truncated"
-              hint="This range has more integration events than a single fetch covers — narrow the date range for a complete count."
-            />
-          )}
 
           {/* Exchange health hero — same exchangeHealth numbers as the KPI
               row above, just given a ring so "success rate" reads at a
