@@ -152,11 +152,14 @@ function SearchOverlay({ startRect, onClose }) {
     [navigate, onClose]
   );
 
+  // Nothing typed yet: show the welcome screen with an icon dock of pages.
+  const isLanding = !query.trim();
+
   const handleKeyDown = (event) => {
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" || (isLanding && event.key === "ArrowRight")) {
       event.preventDefault();
       setActive((i) => (results.length ? (i + 1) % results.length : 0));
-    } else if (event.key === "ArrowUp") {
+    } else if (event.key === "ArrowUp" || (isLanding && event.key === "ArrowLeft")) {
       event.preventDefault();
       setActive((i) => (results.length ? (i - 1 + results.length) % results.length : 0));
     } else if (event.key === "Enter") {
@@ -237,7 +240,58 @@ function SearchOverlay({ startRect, onClose }) {
           )}
         </div>
 
-        {results.length > 0 && (
+        {results.length > 0 && isLanding && (
+          <div className="nsearch__panel nsearch__panel--landing" id={listId} role="listbox" aria-label="Pages">
+            <div className="nsearch__hero">
+              <span className="nsearch__hero-icon" aria-hidden="true">
+                <Search size={46} strokeWidth={1.6} />
+              </span>
+              <h3 className="nsearch__hero-title">What can we help you with today?</h3>
+              <p className="nsearch__hero-text">
+                Search dealers, leads, sync logs and Happy / Unhappy paths, or jump straight to any page of the MG
+                Lead Exchange.
+              </p>
+            </div>
+
+            <div className="nsearch__dock">
+              {results.map((item, index) => {
+                const Icon = ICONS[item.icon] || Search;
+                const isActive = index === active;
+                return (
+                  <button
+                    type="button"
+                    key={item.id}
+                    id={`${listId}-opt-${index}`}
+                    role="option"
+                    aria-selected={isActive}
+                    aria-label={item.label}
+                    title={item.label}
+                    className={`nsearch__dock-btn${isActive ? " nsearch__dock-btn--active" : ""}`}
+                    onMouseEnter={() => setActive(index)}
+                    onFocus={() => setActive(index)}
+                    onClick={() => choose(item)}
+                  >
+                    <Icon size={22} strokeWidth={1.8} />
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="nsearch__dock-caption">
+              <strong>{results[active]?.label}</strong>
+              {results[active]?.hint && <span>{results[active].hint}</span>}
+            </p>
+
+            <div className="nsearch__footer">
+              <span><kbd>←</kbd><kbd>→</kbd> navigate</span>
+              <span><kbd>Enter</kbd> open</span>
+              <span><kbd>Esc</kbd> close</span>
+              {dataLoading && <span className="nsearch__loading">Loading leads…</span>}
+            </div>
+          </div>
+        )}
+
+        {results.length > 0 && !isLanding && (
           <div className="nsearch__panel" id={listId} role="listbox" aria-label="Search results">
             {groups.map(([group, items]) => (
               <div className="nsearch__group" key={group} role="presentation">
