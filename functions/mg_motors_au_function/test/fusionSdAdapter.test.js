@@ -37,10 +37,10 @@ test('FUSION_SD does not affect GENERIC_REST/ZOHO_CRM resolution (regression che
   assert.equal(crmAdapterFactory.getAdapter('ZOHO_CRM'), genericRestAdapter);
 });
 
-test('Fusion adapter declares only createLead as a confirmed capability', () => {
+test('Fusion adapter declares create and update as its supported capabilities', () => {
   assert.deepEqual(fusionSdAdapter.capabilities, {
     createLead: true,
-    updateLead: false,
+    updateLead: true,
     getLead: false,
     statusUpdate: false,
     webhook: false,
@@ -48,8 +48,7 @@ test('Fusion adapter declares only createLead as a confirmed capability', () => 
   });
 });
 
-test('updateLead and getLead reject with UNSUPPORTED_OPERATION rather than guessing a request shape', async () => {
-  await assert.rejects(() => fusionSdAdapter.updateLead(), (err) => err.code === 'UNSUPPORTED_OPERATION');
+test('getLead rejects with UNSUPPORTED_OPERATION rather than guessing a request shape', async () => {
   await assert.rejects(() => fusionSdAdapter.getLead(), (err) => err.code === 'UNSUPPORTED_OPERATION');
 });
 
@@ -324,4 +323,98 @@ test('createLead sends nested body, Idempotency-Key, and parses the lead_id from
   assert.equal(sent.headers['Idempotency-Key'], 'zoho-123');
   assert.equal(sent.headers.Authorization, 'Bearer tok');
   assert.deepEqual(sent.data, { contact: { lastName: 'Testing', email: 'a@example.com' } });
+});
+
+function mockFusionToken(t) {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok', expires_in: 600 } }));
+}
+
+// Public IP literal so the SSRF guard needs no DNS lookup (offline-safe).
+const updateIntegration = () => fakeIntegration({ base_url: 'https://8.8.8.8/api/leadapi' });
+
+test('updateLead sends a nested merge-patch PATCH to /v1/leads/{lead_id}', async (t) => {
+  mockFusionToken(t);
+  let sent;
+  t.mock.method(axios, 'request', async (req) => {
+    sent = req;
+    return { status: 200, data: { lead_id: 'lead_01ABC', enquiry_updated: true }, headers: {} };
+  });
+
+  const result = await fusionSdAdapter.updateLead(
+    {},
+    updateIntegration(),
+    'lead_01ABC',
+    { 'contact.phone': '0400000000', enquiryStatus: 'Contacted' }
+  );
+
+  assert.equal(sent.method, 'PATCH');
+  assert.equal(sent.url, 'https://8.8.8.8/api/leadapi/v1/leads/lead_01ABC');
+  assert.equal(sent.headers['Content-Type'], 'application/merge-patch+json');
+  assert.equal(sent.headers.Authorization, 'Bearer tok');
+  assert.deepEqual(sent.data, { contact: { phone: '0400000000' }, enquiryStatus: 'Contacted' });
+  assert.equal(result.externalLeadId, 'lead_01ABC');
+});
+
+test('updateLead treats enquiry_updated:false (update held for a person) as success, not a failure', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => ({
+    status: 200,
+    data: { lead_id: 'lead_01ABC', enquiry_updated: false },
+    headers: {},
+  }));
+  const result = await fusionSdAdapter.updateLead({}, updateIntegration(), 'lead_01ABC', { enquiryStatus: 'Open' });
+  assert.equal(result.externalLeadId, 'lead_01ABC');
+  assert.equal(result.raw.enquiry_updated, false);
+});
+
+test('updateLead on a dealer with updates disabled (403 updates_not_enabled) is a no-op, not a retryable error', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => {
+    const err = new Error('forbidden');
+    err.response = {
+      status: 403,
+      data: { type: 'https://docs.fusionamspro.com/lead-api/errors/updates_not_enabled', title: 'Updates not enabled' },
+    };
+    throw err;
+  });
+  const result = await fusionSdAdapter.updateLead({}, updateIntegration(), 'lead_01ABC', { enquiryStatus: 'Open' });
+  assert.equal(result.skipped, true);
+  assert.equal(result.externalLeadId, 'lead_01ABC');
+});
+
+test('updateLead keeps a 409 lead_not_ready retryable and a real 403 as an auth failure', async (t) => {
+  mockFusionToken(t);
+  let status = 409;
+  t.mock.method(axios, 'request', async () => {
+    const err = new Error('x');
+    err.response = { status, data: { type: 'https://docs.fusionamspro.com/lead-api/errors/lead_not_ready' } };
+    throw err;
+  });
+  await assert.rejects(
+    () => fusionSdAdapter.updateLead({}, updateIntegration(), 'lead_01ABC', {}),
+    (err) => err.code === 'EXTERNAL_CRM_ERROR'
+  );
+  status = 403;
+  await assert.rejects(
+    () => fusionSdAdapter.updateLead({}, updateIntegration(), 'lead_01ABC', {}),
+    (err) => err.code === 'AUTHENTICATION_FAILED'
+  );
+});
+
+test('updateLead without a dealer lead id is rejected before any request', async (t) => {
+  mockFusionToken(t);
+  await assert.rejects(
+    () => fusionSdAdapter.updateLead({}, updateIntegration(), '', {}),
+    (err) => err.code === 'INVALID_CRM_CONFIGURATION'
+  );
+});
+
+test('crmAdapterFactory.supports: only an explicit false opts a CRM type out of a capability', () => {
+  assert.equal(crmAdapterFactory.supports('FUSION_SD', 'getLead'), false);
+  assert.equal(crmAdapterFactory.supports('FUSION_SD', 'updateLead'), true);
+  assert.equal(crmAdapterFactory.supports('GENERIC_REST', 'getLead'), true);
+  assert.equal(crmAdapterFactory.supports('ZOHO_CRM', 'getLead'), true);
+  assert.equal(crmAdapterFactory.supports('NOT_A_CRM', 'getLead'), false);
 });

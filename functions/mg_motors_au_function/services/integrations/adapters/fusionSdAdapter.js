@@ -29,6 +29,10 @@ const { getAccessTokenForFusionSd } = require('./fusionSdOAuthHelper');
  * capability as adapters for less REST-standard CRMs get added.
  *
  * ================================================================
+ * Update (PATCH) is implemented per Fusion's OpenAPI file; getLead/webhook
+ * stay unsupported (no read endpoint is documented), and callers check
+ * `capabilities` via crmAdapterFactory.supports() before using them.
+ *
  * STATUS (2026-10-02) — token auth confirmed; lead payload still unknown
  * ================================================================
  * Token exchange (fusionSdOAuthHelper.js) is CONFIRMED against Fusion's
@@ -70,7 +74,7 @@ const { getAccessTokenForFusionSd } = require('./fusionSdOAuthHelper');
 
 const capabilities = Object.freeze({
   createLead: true,
-  updateLead: false, // not confirmed supported by Fusion's documented API surface
+  updateLead: true, // PATCH /v1/leads/{lead_id}, RFC 7396 merge patch (needs the leads:update scope)
   getLead: false,
   statusUpdate: false,
   webhook: false,
@@ -223,8 +227,71 @@ function extractExternalLeadId(response) {
   return bareStringCandidate || undefined;
 }
 
-async function updateLead() {
-  unsupported('updateLead');
+/**
+ * Fusion Lead API: PATCH /v1/leads/{lead_id} with RFC 7396 merge-patch
+ * semantics. The path is derived from the dealer's create endpoint
+ * ("/v1/leads" -> "/v1/leads/{id}") so there is one configured source of
+ * truth, rather than trusting an update-endpoint field that new dealers
+ * carry the generic placeholder default for.
+ *
+ * Per Fusion's guide:
+ *   - `enquiry_updated: false` means the dealer holds updates for a person
+ *     to accept — recorded, NOT a failure, and must not be retried, so it
+ *     is returned as a normal success.
+ *   - 403 `updates_not_enabled` means this dealer has switched updates off
+ *     for MG. Retrying can never succeed, and it is not a credential
+ *     problem, so it is a logged no-op instead of an error — otherwise the
+ *     generic retry path would loop on it, escalate to Unhappy 3 and mark
+ *     the lead "Dealer Unavailable".
+ *   - 409 `lead_not_ready` is transient and stays retryable.
+ */
+function updatePath(integration, externalLeadId) {
+  const createPath = String(integration.create_lead_endpoint || '/v1/leads').replace(/\/+$/, '');
+  return `${createPath}/${encodeURIComponent(externalLeadId)}`;
+}
+
+function isUpdatesNotEnabled(err) {
+  const type = err.response?.data?.type;
+  return err.response?.status === 403 && typeof type === 'string' && type.endsWith('/updates_not_enabled');
+}
+
+async function updateLead(catalystApp, integration, externalLeadId, payload) {
+  if (!externalLeadId) {
+    const err = new Error('Fusion SD updateLead needs the dealer lead id (lead_id)');
+    err.code = 'INVALID_CRM_CONFIGURATION';
+    throw err;
+  }
+  const url = await assertSafeUrl(`${integration.base_url}${updatePath(integration, externalLeadId)}`);
+  const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
+
+  let response;
+  try {
+    response = await axios.request({
+      method: 'PATCH',
+      url: url.toString(),
+      headers: {
+        'Content-Type': 'application/merge-patch+json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      data: nestDottedKeys(payload),
+      timeout: 10000,
+    });
+  } catch (err) {
+    if (isUpdatesNotEnabled(err)) {
+      logger.info(
+        'fusionSdAdapter',
+        `Dealer ${integration.dealer_code || integration.ROWID} has lead updates disabled for MG — update skipped (not an error)`
+      );
+      return { externalLeadId, httpStatus: 403, raw: err.response.data, skipped: true };
+    }
+    logger.error(
+      'fusionSdAdapter',
+      `updateLead failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
+    );
+    throw wrapFusionError(err, 'Fusion SD rejected the lead update request');
+  }
+
+  return { externalLeadId, httpStatus: response.status, raw: response.data };
 }
 
 async function getLead() {
@@ -258,5 +325,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyFusionError, nestDottedKeys },
+  _test: { classifyFusionError, nestDottedKeys, updatePath },
 };

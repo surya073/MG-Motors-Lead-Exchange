@@ -150,8 +150,27 @@ async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly 
     let integration = null;
     try {
       integration = integrations.get(String(mapping.integration_id)) || null;
-      if (!integration || integration.integration_type !== 'EXTERNAL_CRM' || !isEnabled(integration.inbound_enabled)) {
+      // Not reconcilable: no/non-external integration, inbound switched off,
+      // or an adapter that cannot read a lead back (Fusion SD). Rotate the
+      // row like the "no external id" case above — rows selected
+      // oldest-first that are skipped WITHOUT being touched stay at the head
+      // of every sweep and, with enough of them (one dealer type with 30+
+      // dealers), starve every other dealer's records of a slot.
+      if (
+        !integration ||
+        integration.integration_type !== 'EXTERNAL_CRM' ||
+        !isEnabled(integration.inbound_enabled) ||
+        !crmAdapterFactory.supports(integration.crm_type, 'getLead')
+      ) {
         results.skipped += 1;
+        try {
+          await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+            ROWID: mapping.ROWID,
+            last_attempted_at: toCatalystDateTime(),
+          });
+        } catch (touchErr) {
+          logger.error('dealerReconciliationService', `Could not rotate skipped mapping ROWID=${mapping.ROWID}`, touchErr);
+        }
         return;
       }
 

@@ -132,7 +132,9 @@ test('CRM_API_QUEUE_FULL is classified as retryable: retry_count still advances,
     external_crm_lead_id: '',
     sync_status: 'FAILED',
     retry_count: '1',
-    failure_streak_started_at: '2026-10-05 00:00:00',
+    // Recent on purpose: a fixed past date eventually crosses the 24h Unhappy 3
+    // escalation window and flips this ordinary retryable failure to FAILED_CRITICAL.
+    failure_streak_started_at: new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '),
   };
   const catalystApp = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU901', mapping: existingMapping });
 

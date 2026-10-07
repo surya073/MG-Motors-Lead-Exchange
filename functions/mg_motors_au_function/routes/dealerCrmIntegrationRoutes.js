@@ -147,7 +147,9 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       webhook_enabled: Boolean(body.webhook_enabled),
       webhook_id_field: body.webhook_id_field || 'id',
       outbound_enabled: true,
-      inbound_enabled: true,
+      // Fusion SD has no webhook or read-back endpoint, so there is nothing
+      // inbound to reconcile or replay for it.
+      inbound_enabled: !isFusionSd,
       status: (integration?.status === 'ACTIVE' || integration?.status === 'CONNECTED') ? 'CONFIGURING' : 'NOT_CONFIGURED',
     };
     if (integration) {
