@@ -1,20 +1,18 @@
 ﻿// src/ui/Offcanvas/DealerDetailsOffcanvas.jsx
 import { useEffect, useRef, useState } from "react";
 import {
-  Search,
-  RefreshCw,
-  Mail,
-  Users,
-  Building2,
   MapPin,
-  CheckCircle2,
-  Clock,
-  FileText,
-  Plus,
   ExternalLink,
-  ChevronRight,
 } from "lucide-react";
 import Badge from "../Badge/Badge";
+import {
+  ContactTab,
+  LeadActivityTab,
+  LogsTab,
+  OverviewTab,
+  SyncDetailsTab,
+  useDealerActivity,
+} from "./DealerDetailsTabs";
 import "./DealerDetailsOffcanvas.css";
 import CloseButton from "../CloseButton/CloseButton";
 import bannerImg from "../../assets/banners/bgbanner2.jpg";
@@ -34,18 +32,7 @@ function statusTone(status) {
   return "neutral";
 }
 
-/**
- * onSyncNow / onSendInvitation / onViewLeads are optional — pass handlers
- * from the parent page if you want Quick Actions to actually do something.
- * Left unwired, the buttons render but no-op.
- */
-export default function DealerDetailsOffcanvas({
-  dealer,
-  onClose,
-  onSyncNow,
-  onSendInvitation,
-  onViewLeads,
-}) {
+export default function DealerDetailsOffcanvas({ dealer, onClose }) {
   const [renderedDealer, setRenderedDealer] = useState(dealer);
   const [closing, setClosing] = useState(false);
   const [activeTab, setActiveTab] = useState("Overview");
@@ -80,6 +67,8 @@ export default function DealerDetailsOffcanvas({
       document.body.style.overflow = "";
     };
   }, [renderedDealer, onClose]);
+
+  const activity = useDealerActivity(renderedDealer?.dealer_code);
 
   if (!renderedDealer) return null;
 
@@ -155,256 +144,13 @@ export default function DealerDetailsOffcanvas({
 
         <div className="offcanvas__content">
           <div className="offcanvas__main">
-            {activeTab === "Overview" && (
-              <>
-                <div className="offcanvas__stat-row">
-                  <div className="offcanvas__stat-card">
-                    <span className="offcanvas__stat-icon">
-                      <Building2 size={16} />
-                    </span>
-                    <div>
-                      <span className="offcanvas__stat-label">Dealer code</span>
-                      <span className="offcanvas__stat-value">{code}</span>
-                    </div>
-                  </div>
-                  <div className="offcanvas__stat-card">
-                    <span className="offcanvas__stat-icon">
-                      <MapPin size={16} />
-                    </span>
-                    <div>
-                      <span className="offcanvas__stat-label">Region</span>
-                      <span className="offcanvas__stat-value">{val("region")}</span>
-                    </div>
-                  </div>
-                  <div className="offcanvas__stat-card offcanvas__stat-card--status">
-                    <span className="offcanvas__stat-icon">
-                      <CheckCircle2 size={16} />
-                    </span>
-                    <div>
-                      <span className="offcanvas__stat-label">Status</span>
-                      <span className="offcanvas__stat-value">
-                        {renderedDealer.sync_status || "Synced"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <section className="offcanvas__group">
-                  <h3>
-                    <Building2 size={14} /> Dealer information
-                  </h3>
-                  <dl>
-                    <div className="offcanvas__row">
-                      <dt>Dealer code</dt>
-                      <dd>{code}</dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Dealer name</dt>
-                      <dd>{val("dealer_name")}</dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Region</dt>
-                      <dd>{val("region")}</dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>City</dt>
-                      <dd>{val("city")}</dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>State</dt>
-                      <dd>{val("state")}</dd>
-                    </div>
-                  </dl>
-                </section>
-
-                <section className="offcanvas__group">
-                  <h3>
-                    <Users size={14} /> Contact information
-                  </h3>
-                  <dl>
-                    <div className="offcanvas__row">
-                      <dt>Email</dt>
-                      <dd>
-                        {renderedDealer.email_address ? (
-                          <a href={`mailto:${renderedDealer.email_address}`}>
-                            {renderedDealer.email_address}
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Phone</dt>
-                      <dd>
-                        {renderedDealer.phone_number ? (
-                          <a href={`tel:${renderedDealer.phone_number}`}>
-                            {renderedDealer.phone_number}
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Sync status</dt>
-                      <dd>
-                        <Badge tone={statusTone(renderedDealer.sync_status)} fixed>
-                          {renderedDealer.sync_status || "Synced"}
-                        </Badge>
-                      </dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Last synced</dt>
-                      <dd>{val("last_synced_at")}</dd>
-                    </div>
-                    <div className="offcanvas__row">
-                      <dt>Lead count</dt>
-                      <dd>{renderedDealer.lead_count ?? 0}</dd>
-                    </div>
-                  </dl>
-                </section>
-              </>
-            )}
-
-            {activeTab === "Contact" && (
-              <section className="offcanvas__group">
-                <h3>
-                  <Users size={14} /> Contact information
-                </h3>
-                <dl>
-                  <div className="offcanvas__row">
-                    <dt>Email</dt>
-                    <dd>{val("email_address")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>Phone</dt>
-                    <dd>{val("phone_number")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>City</dt>
-                    <dd>{val("city")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>State</dt>
-                    <dd>{val("state")}</dd>
-                  </div>
-                </dl>
-              </section>
-            )}
-
-            {activeTab === "Sync Details" && (
-              <section className="offcanvas__group">
-                <h3>
-                  <RefreshCw size={14} /> Sync details
-                </h3>
-                <dl>
-                  <div className="offcanvas__row">
-                    <dt>Sync status</dt>
-                    <dd>{val("sync_status")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>Last synced</dt>
-                    <dd>{val("last_synced_at")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>Created</dt>
-                    <dd>{val("CREATEDTIME")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>Modified</dt>
-                    <dd>{val("MODIFIEDTIME")}</dd>
-                  </div>
-                  <div className="offcanvas__row">
-                    <dt>CRM record ID</dt>
-                    <dd>{val("crm_record_id")}</dd>
-                  </div>
-                </dl>
-              </section>
-            )}
-
-            {activeTab === "Lead Activity" && (
-              <div className="offcanvas__empty-state">
-                <Users size={22} />
-                <p>
-                  Lead activity isn't wired up yet — this needs a per-dealer leads
-                  endpoint to populate.
-                </p>
-              </div>
-            )}
-
-            {activeTab === "Logs" && (
-              <div className="offcanvas__empty-state">
-                <FileText size={22} />
-                <p>
-                  Sync logs aren't wired up yet — this needs a per-dealer sync-log
-                  endpoint to populate.
-                </p>
-              </div>
-            )}
+            {activeTab === "Overview" && <OverviewTab dealer={renderedDealer} activity={activity} />}
+            {activeTab === "Contact" && <ContactTab dealer={renderedDealer} />}
+            {activeTab === "Sync Details" && <SyncDetailsTab dealer={renderedDealer} />}
+            {activeTab === "Lead Activity" && <LeadActivityTab activity={activity} />}
+            {activeTab === "Logs" && <LogsTab activity={activity} />}
           </div>
 
-          <div className="offcanvas__side">
-            <section className="offcanvas__side-card offcanvas__side-card--dark">
-              <h3>Quick actions</h3>
-              <button className="offcanvas__action-row" onClick={() => setActiveTab("Overview")}>
-                <span>
-                  <Search size={14} /> View dealer details
-                </span>
-                <ChevronRight size={14} />
-              </button>
-              <button
-                className="offcanvas__action-row"
-                onClick={() => onSyncNow?.(renderedDealer)}
-              >
-                <span>
-                  <RefreshCw size={14} /> Sync now
-                </span>
-                <ChevronRight size={14} />
-              </button>
-              <button
-                className="offcanvas__action-row"
-                onClick={() => onSendInvitation?.(renderedDealer)}
-              >
-                <span>
-                  <Mail size={14} /> Send invitation
-                </span>
-                <ChevronRight size={14} />
-              </button>
-              <button
-                className="offcanvas__action-row"
-                onClick={() => onViewLeads?.(renderedDealer)}
-              >
-                <span>
-                  <Users size={14} /> View leads
-                </span>
-                <ChevronRight size={14} />
-              </button>
-            </section>
-
-            <section className="offcanvas__side-card">
-              <h3>
-                <FileText size={14} /> Dealer notes
-              </h3>
-              <p className="offcanvas__notes-empty">No additional notes available.</p>
-              <button className="offcanvas__add-note-btn" type="button">
-                <Plus size={14} /> Add note
-              </button>
-            </section>
-
-            <section className="offcanvas__side-card">
-              <h3>
-                <Clock size={14} /> Recent activity
-              </h3>
-              <div className="offcanvas__activity-item">
-                <span className="offcanvas__activity-dot" />
-                <div>
-                  <span className="offcanvas__activity-title">Dealers synced</span>
-                  <span className="offcanvas__activity-time">{val("last_synced_at")}</span>
-                </div>
-              </div>
-            </section>
-          </div>
         </div>
       </aside>
     </>
