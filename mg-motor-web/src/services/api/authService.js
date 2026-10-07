@@ -138,7 +138,10 @@ async function getDealerContext(profile) {
 
 async function sendPasswordReset(email) {
   const catalyst = await waitForCatalystSdk();
-  await catalyst.auth.forgotPassword(email, {
+  // In Web SDK 4.6.1 forgotPassword lives on `userManagement` (not `auth`)
+  // and takes ONE options object that carries the address as `email_id`.
+  await catalyst.userManagement.forgotPassword({
+    email_id: email,
     platform_type: "web",
   });
 }

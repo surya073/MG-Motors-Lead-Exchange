@@ -13,6 +13,7 @@ const ACCENT_KEY = "settings:accentColor";
 const AVATAR_GLYPH_KEY = "settings:avatarGlyph";
 const AVATAR_COLOR_KEY = "settings:avatarColor";
 const SESSION_START_KEY = "session:startedAt";
+const SESSION_USER_KEY = "session:startedFor";
 const CHANGE_EVENT = "settings:profilePreferences:change";
 
 /* ---------------- Accent colours ---------------- */
@@ -144,20 +145,38 @@ export function restoreProfilePreferences() {
 
 /* ---------------- Session timing ---------------- */
 
-/** Records when this browser tab session began (first call wins). */
-export function markSessionStart() {
+/**
+ * Records when the signed-in user's session began. Called once the app
+ * confirms an authenticated user: the first call after a login stores
+ * "now", later calls (page reloads, extra tabs) keep it. A different
+ * user id means a different login, so the clock restarts.
+ */
+export function markSessionStart(userId) {
   try {
-    if (!sessionStorage.getItem(SESSION_START_KEY)) {
-      sessionStorage.setItem(SESSION_START_KEY, String(Date.now()));
+    const owner = userId == null ? "" : String(userId);
+    const hasStart = Number(localStorage.getItem(SESSION_START_KEY)) > 0;
+    if (!hasStart || localStorage.getItem(SESSION_USER_KEY) !== owner) {
+      localStorage.setItem(SESSION_START_KEY, String(Date.now()));
+      localStorage.setItem(SESSION_USER_KEY, owner);
     }
   } catch {
-    // sessionStorage unavailable — session timing simply won't show.
+    // storage unavailable — session timing simply won't show.
+  }
+}
+
+/** Forgets the session start — call on logout or when the session ends. */
+export function clearSessionStart() {
+  try {
+    localStorage.removeItem(SESSION_START_KEY);
+    localStorage.removeItem(SESSION_USER_KEY);
+  } catch {
+    // nothing to clear
   }
 }
 
 export function getSessionStart() {
   try {
-    const raw = Number(sessionStorage.getItem(SESSION_START_KEY));
+    const raw = Number(localStorage.getItem(SESSION_START_KEY));
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   } catch {
     return null;

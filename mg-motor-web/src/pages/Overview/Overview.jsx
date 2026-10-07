@@ -14,6 +14,7 @@ import Dropdown from "../../ui/Dropdown/Dropdown";
 import { DashboardSkeleton, KpiRowSkeleton, PanelSkeleton, ChartSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import ProgressRing from "./components/ProgressRing";
 import ProcessPathCard from "./components/ProcessPathCard";
+import OutOfOrderEventsOffcanvas from "../LeadExchange/components/OutOfOrderEventsOffcanvas";
 import MonitoringCard, { healthTone, bucketByDay } from "./components/MonitoringCard";
 import "./Overview.css";
 
@@ -1719,6 +1720,11 @@ function LeadExchangeHealthPanel({ openDrawer }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Unhappy 7 (out-of-order dealer events) opens its own side panel instead
+  // of the lead list — those events have no MG lead to show there.
+  const [oooOpen, setOooOpen] = useState(false);
+  const [oooEvents, setOooEvents] = useState([]);
+
   // Dealer list for the filter dropdown — fetched once, reused by both
   // the filter bar and the Error Report's own dealer filter, so it is
   // never re-fetched on every filter change.
@@ -1770,11 +1776,20 @@ function LeadExchangeHealthPanel({ openDrawer }) {
     setAppliedFilters({ fromDate: range.from, toDate: range.to, dealerCode: "" });
   }
 
-  // Clicking a path card jumps straight to the Lead Exchange page,
+  // Clicking a path card jumps straight to the Lead Exchange page (Unhappy 7
+  // is the exception — it opens the Out-of-Order Events side panel here),
   // pre-filtered to that exact scenario (e.g. "Unhappy 3") via a query
   // param LeadExchangePage.jsx reads on mount — this is the actual list
   // of leads on that path, not just a summary drawer.
   function openPathDetails(scenario) {
+    if (scenario.name === "Unhappy 7") {
+      setOooOpen(true);
+      adminDashboardService
+        .listOutOfOrderEvents()
+        .then((events) => setOooEvents(events || []))
+        .catch(() => setOooEvents([]));
+      return;
+    }
     navigate(`${ROUTES.LEAD_EXCHANGE}?scenario=${encodeURIComponent(scenario.name)}`);
   }
 
@@ -2088,6 +2103,13 @@ function LeadExchangeHealthPanel({ openDrawer }) {
           </div>
         </>
       )}
+
+      <OutOfOrderEventsOffcanvas
+        open={oooOpen}
+        onClose={() => setOooOpen(false)}
+        events={oooEvents}
+        heldCount={oooEvents.filter((e) => e.state === "HELD").length}
+      />
     </div>
   );
 }

@@ -30,6 +30,7 @@ import PathBadge from "../../ui/PathBadge/PathBadge";
 import LeadDetailView from "./LeadDetailView";
 import EmptyState from "../../common/EmptyState/EmptyState";
 import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
+import PathEmptyState from "./components/PathEmptyState";
 import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { ROUTES } from "../../constants/routes.constants";
 import { useAuth } from "../../contexts/AuthContext";
@@ -428,11 +429,14 @@ export default function LeadExchangePage() {
       const label = classifyLeadWithDuplicate(l, leads).label;
       if (label) labels.add(label);
     });
+    // A path reached from an Overview card may have no leads at all — keep
+    // it selectable so the dropdown still shows what is being filtered.
+    if (scenarioFilter) labels.add(scenarioFilter);
     return [
       { value: "", label: "All paths" },
       ...[...labels].sort(compareScenarioLabels).map((label) => ({ value: label, label })),
     ];
-  }, [leads]);
+  }, [leads, scenarioFilter]);
 
   const sortDropdownOptions = useMemo(
     () => [
@@ -526,6 +530,24 @@ export default function LeadExchangePage() {
 
   const handleScenarioFilterChange = (value) => {
     setScenarioFilter(value);
+    resetPage();
+  };
+
+  // A Happy/Unhappy path (e.g. from an Overview card) with no leads at all:
+  // show the friendly path-specific empty state, but only when nothing else
+  // (search, status, dealer) is what emptied the list.
+  const pathFilterActive = Boolean(scenarioFilter) || pathFilter !== "all";
+  const showPathEmpty =
+    !loading &&
+    filtered.length === 0 &&
+    pathFilterActive &&
+    !search.trim() &&
+    !statusFilter &&
+    !dealerFilter;
+
+  const clearPathFilters = () => {
+    setScenarioFilter("");
+    setPathFilter("all");
     resetPage();
   };
 
@@ -833,7 +855,12 @@ export default function LeadExchangePage() {
             </div>
           </div>
 
-          {view === "list" ? (
+          {showPathEmpty ? (
+            <PathEmptyState
+              label={scenarioFilter || (pathFilter === "unhappy" ? "Unhappy" : "Happy")}
+              onClear={clearPathFilters}
+            />
+          ) : view === "list" ? (
             <Table
               columns={columns}
               rows={pageRows}

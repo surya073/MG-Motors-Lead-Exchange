@@ -10,6 +10,7 @@ import {
 } from "../constants/auth.constants";
 import { ROUTES, APP_BASE_PATH } from "../constants/routes.constants";
 import { useAlerts } from "../ui/Alerts/Alerts";
+import { clearSessionStart, markSessionStart } from "../utils/profilePreferences";
 
 /**
  * AuthContext.jsx
@@ -91,6 +92,8 @@ export function AuthProvider({ children }) {
 
         setUser({ ...profile, appRole, dealerCode });
         setStatus(SESSION_STATUS.AUTHENTICATED);
+        // Start the "Session active for" clock at login (kept across reloads).
+        markSessionStart(profile.user_id ?? profile.email_id);
         wasAuthenticated.current = true;
       } else {
         if (wasAuthenticated.current) {
@@ -99,6 +102,7 @@ export function AuthProvider({ children }) {
         setUser(null);
         setStatus(SESSION_STATUS.UNAUTHENTICATED);
         wasAuthenticated.current = false;
+        clearSessionStart();
       }
     } catch (err) {
       if (isLoggingOut.current) return;
@@ -131,6 +135,7 @@ export function AuthProvider({ children }) {
       setUser(null);
       setStatus(SESSION_STATUS.EXPIRED);
       wasAuthenticated.current = false;
+      clearSessionStart();
     });
   }, [showAlert]);
 
@@ -174,6 +179,7 @@ export function AuthProvider({ children }) {
       console.error("Sign-out request failed", err);
     }
 
+    clearSessionStart();
     setUser(null);
     setStatus(SESSION_STATUS.UNAUTHENTICATED);
 
