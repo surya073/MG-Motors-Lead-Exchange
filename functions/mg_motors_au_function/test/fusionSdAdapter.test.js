@@ -285,3 +285,43 @@ test('createLead: a 401 from Fusion is classified AUTHENTICATION_FAILED and the 
     }
   );
 });
+
+test('nestDottedKeys expands dotted mapping targets into the nested Fusion body', () => {
+  const { nestDottedKeys } = fusionSdAdapter._test;
+  assert.deepEqual(
+    nestDottedKeys({
+      'contact.firstName': 'Jane',
+      'contact.email': 'jane@example.com',
+      'requirement.model': 'ZS',
+      leadSource: 'Website',
+    }),
+    {
+      contact: { firstName: 'Jane', email: 'jane@example.com' },
+      requirement: { model: 'ZS' },
+      leadSource: 'Website',
+    }
+  );
+});
+
+test('createLead sends nested body, Idempotency-Key, and parses the lead_id from a 201', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok', expires_in: 600 } }));
+  let sent;
+  t.mock.method(axios, 'request', async (req) => {
+    sent = req;
+    return { status: 201, data: { lead_id: 'lead_01ABC', status: 'received' }, headers: {} };
+  });
+  const result = await fusionSdAdapter.createLead(
+    {},
+    // Public IP literal so the SSRF guard needs no DNS lookup (offline-safe).
+    fakeIntegration({ base_url: 'https://8.8.8.8/api/leadapi' }),
+    { 'contact.lastName': 'Testing', 'contact.email': 'a@example.com' },
+    { idempotencyKey: 'zoho-123' }
+  );
+
+  assert.equal(result.externalLeadId, 'lead_01ABC');
+  assert.equal(sent.headers['Idempotency-Key'], 'zoho-123');
+  assert.equal(sent.headers.Authorization, 'Bearer tok');
+  assert.deepEqual(sent.data, { contact: { lastName: 'Testing', email: 'a@example.com' } });
+});

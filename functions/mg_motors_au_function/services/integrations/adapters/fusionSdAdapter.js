@@ -99,13 +99,48 @@ function classifyFusionError(err) {
  */
 function wrapFusionError(err, contextMessage) {
   const code = classifyFusionError(err);
-  const wrapped = new Error(`${contextMessage} (HTTP ${err.response?.status || 'network error'})`);
+  // RFC 7807 problem+json: only the generic title and the request
+  // correlation id (`correlation_id`, e.g. "lreq_..."; the OpenAPI doc calls it `instance`) are surfaced — they carry
+  // no lead data and give Fusion support something concrete to trace.
+  const problem = err.response?.data;
+  const title = typeof problem?.title === 'string' ? problem.title.slice(0, 80) : null;
+  const ref = problem?.correlation_id || problem?.instance;
+  const instance = typeof ref === 'string' ? ref.slice(0, 60) : null;
+  const extra = [title, instance && `ref ${instance}`].filter(Boolean).join(', ');
+  const wrapped = new Error(
+    `${contextMessage} (HTTP ${err.response?.status || 'network error'}${extra ? `: ${extra}` : ''})`
+  );
   wrapped.code = code;
   wrapped.response = err.response ? { status: err.response.status } : undefined;
   return wrapped;
 }
 
-async function createLead(catalystApp, integration, payload) {
+/**
+ * Fusion's Lead API expects a nested body ({ contact: { firstName }, requirement:
+ * { model } }), but field mappings produce flat keys. A mapping whose
+ * target_field is a dotted path ("contact.firstName") is expanded here, so
+ * the mapping table stays the single place field names are configured.
+ * Keys without a dot pass through untouched.
+ */
+function nestDottedKeys(flat) {
+  const out = {};
+  Object.entries(flat || {}).forEach(([key, value]) => {
+    const parts = key.split('.').filter(Boolean);
+    if (parts.length <= 1) {
+      out[key] = value;
+      return;
+    }
+    let node = out;
+    parts.slice(0, -1).forEach((part) => {
+      if (typeof node[part] !== 'object' || node[part] === null) node[part] = {};
+      node = node[part];
+    });
+    node[parts[parts.length - 1]] = value;
+  });
+  return out;
+}
+
+async function createLead(catalystApp, integration, payload, { idempotencyKey } = {}) {
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
   const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
 
@@ -117,8 +152,11 @@ async function createLead(catalystApp, integration, payload) {
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
+        // Fusion: "always send Idempotency-Key" — a retry after a timeout then
+        // returns the original lead instead of creating a duplicate.
+        ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
       },
-      data: payload,
+      data: nestDottedKeys(payload),
       timeout: 10000,
     });
   } catch (err) {
@@ -220,5 +258,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyFusionError },
+  _test: { classifyFusionError, nestDottedKeys },
 };
