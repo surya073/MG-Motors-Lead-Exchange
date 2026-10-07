@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { UserPlus, RefreshCw, LayoutGrid, List, Pencil, Check, X as XIcon, ArrowLeft } from "lucide-react";
+import { UserPlus, RefreshCw, LayoutGrid, List, Pencil, Check, X as XIcon, ArrowLeft, Mail, CalendarDays, UserCheck, UserX } from "lucide-react";
 import { ROUTES } from "../../constants/routes.constants";
 import { adminUserService, ADMIN_ROLE_OPTIONS } from "../../services/api/adminUserService";
 import { useAuth } from "../../contexts/AuthContext";
@@ -46,6 +46,9 @@ function statusBadge(status) {
   if (status === "Removed") return <Badge tone="neutral" fixed>Removed</Badge>;
   return <Badge tone="pending" fixed>Invited</Badge>;
 }
+
+// Which user icon the card's side strip shows for each invite status.
+const STATUS_ICONS = { active: UserCheck, invited: UserPlus, removed: UserX };
 
 export default function UserManagementPage() {
   const navigate = useNavigate();
@@ -505,30 +508,39 @@ export default function UserManagementPage() {
             <div className="user-mgmt__grid-empty">No users found</div>
           ) : (
             pageRows.map((row) => {
-              const initial = (row.admin_name || row.admin_email || "?").charAt(0).toUpperCase();
+              const statusKey = String(row.invite_status || "Invited").toLowerCase();
+              const StatusIcon = STATUS_ICONS[statusKey] || UserPlus;
               return (
                 <div
                   key={row.ROWID}
-                  className={`user-mgmt__card ${row.invite_status === "Removed" ? "user-mgmt__card--removed" : ""}`}
+                  className={`user-mgmt__card user-mgmt__card--${statusKey} ${
+                    row.invite_status === "Removed" ? "user-mgmt__card--removed" : ""
+                  }`}
                 >
-                  <div className="user-mgmt__card-banner">
-                    <div className="user-mgmt__card-avatar">{initial}</div>
+                  <div className="user-mgmt__card-side">
+                    <span className="user-mgmt__card-usericon">
+                      <StatusIcon size={30} strokeWidth={1.8} />
+                    </span>
                   </div>
 
-                  <div className="user-mgmt__card-body">
-                    <div className="user-mgmt__card-name-row">
+                  <div className="user-mgmt__card-main">
+                    <div className="user-mgmt__card-top-row">
                       <h3>{nameCell(row)}</h3>
-                    </div>
-                    <p className="user-mgmt__card-email">{row.admin_email}</p>
-
-                    <div className="user-mgmt__card-meta">
                       {statusBadge(row.invite_status)}
-                      {roleCell(row)}
                     </div>
 
-                    {row.invited_at && (
-                      <p className="user-mgmt__card-invited">Invited {row.invited_at.split(" ")[0]}</p>
-                    )}
+                    <p className="user-mgmt__card-email">
+                      <Mail size={13} />
+                      <span>{row.admin_email}</span>
+                    </p>
+
+                    <div className="user-mgmt__card-chips">
+                      <div className="user-mgmt__card-role">{roleCell(row)}</div>
+                      <span className="user-mgmt__card-date">
+                        <CalendarDays size={13} />
+                        {row.invited_at ? `Invited ${row.invited_at.split(" ")[0]}` : "Not invited yet"}
+                      </span>
+                    </div>
 
                     <div className="user-mgmt__card-actions">{actionCell(row)}</div>
                   </div>

@@ -820,7 +820,41 @@ export default function SyncLogsPage() {
 
   return (
     <div className="sync-logs">
-      <div className="sync-logs__header">
+      {loadError && (
+        <Alert variant="error" onClose={() => setLoadError(null)}>
+          {loadError}
+        </Alert>
+      )}
+
+      <div className="sync-logs__toolbar">
+        <div className="sync-logs__header">
+      <div className="sync-logs__path-toggle" role="tablist" aria-label="Filter by outcome">
+        {PATH_FILTER_OPTIONS.map((option) => {
+          const count =
+            option.value === "happy"
+              ? pathCounts.happy
+              : option.value === "unhappy"
+              ? pathCounts.unhappy
+              : logs.length;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="tab"
+              aria-selected={pathFilter === option.value}
+              className={`sync-logs__path-pill sync-logs__path-pill--${option.value} ${
+                pathFilter === option.value ? "sync-logs__path-pill--active" : ""
+              }`}
+              onClick={() => handlePathFilterChange(option.value)}
+            >
+              {option.value === "happy" && <Smile size={15} />}
+              {option.value === "unhappy" && <Frown size={15} />}
+              {option.label}
+              <span className="sync-logs__path-pill-count">{count}</span>
+            </button>
+          );
+        })}
+      </div>
         <div className="sync-logs__actions">
           <button
             type="button"
@@ -851,41 +885,7 @@ export default function SyncLogsPage() {
             {syncingLeads ? "Syncing…" : "Sync leads"}
           </button>
         </div>
-      </div>
-
-      {loadError && (
-        <Alert variant="error" onClose={() => setLoadError(null)}>
-          {loadError}
-        </Alert>
-      )}
-
-      <div className="sync-logs__path-toggle" role="tablist" aria-label="Filter by outcome">
-        {PATH_FILTER_OPTIONS.map((option) => {
-          const count =
-            option.value === "happy"
-              ? pathCounts.happy
-              : option.value === "unhappy"
-              ? pathCounts.unhappy
-              : logs.length;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="tab"
-              aria-selected={pathFilter === option.value}
-              className={`sync-logs__path-pill sync-logs__path-pill--${option.value} ${
-                pathFilter === option.value ? "sync-logs__path-pill--active" : ""
-              }`}
-              onClick={() => handlePathFilterChange(option.value)}
-            >
-              {option.value === "happy" && <Smile size={15} />}
-              {option.value === "unhappy" && <Frown size={15} />}
-              {option.label}
-              <span className="sync-logs__path-pill-count">{count}</span>
-            </button>
-          );
-        })}
-      </div>
+        </div>
 
       <div className="sync-logs__filters">
         <div className="sync-logs__search">
@@ -939,6 +939,7 @@ export default function SyncLogsPage() {
             Clear filters
           </button>
         )}
+      </div>
       </div>
 
       <Table

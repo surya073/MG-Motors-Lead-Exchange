@@ -404,7 +404,7 @@
 
 .user-mgmt__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--space-5);
 }
 
@@ -443,87 +443,128 @@
   transform: none;
 }
 
-/* Top banner: dark gray-to-black gradient, gives the card an identity
-   band before you even read the name. Flips to a light-to-dark-gray
-   gradient in dark theme so it still reads as a distinct "header"
-   region rather than blending into the card body. */
-.user-mgmt__card-banner {
-  position: relative;
-  height: 64px;
-  background: linear-gradient(135deg, #3f3f46 0%, #18181b 100%);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+/* ---------- Card layout: user-icon side strip + details ----------
+   Left: a tinted strip with a big user icon in a ring — the icon follows
+   the status (check = Active, plus = Invited, cross = Removed) and the
+   strip takes the same colour. Right: name + status badge, email, role and
+   invite date chips, and the actions on a divided footer. */
+.user-mgmt__card {
+  --card-accent: var(--color-text-muted);
+  flex-direction: row;
+  align-items: stretch;
 }
 
-[data-theme="dark"] .user-mgmt__card-banner {
-  background: linear-gradient(135deg, #52525b 0%, #09090b 100%);
+.user-mgmt__card--active {
+  --card-accent: var(--color-success);
 }
 
-/* Large avatar, overlaps the banner's bottom edge by half its own
-   height — the classic "profile card" look. */
-.user-mgmt__card-avatar {
-  position: absolute;
-  bottom: -32px;
+.user-mgmt__card--invited {
+  --card-accent: var(--color-warning);
+}
+
+.user-mgmt__card-side {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  flex-shrink: 0;
+  width: 84px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--card-accent) 22%, transparent),
+      color-mix(in srgb, var(--card-accent) 8%, transparent)
+    );
+  border-right: 1px solid color-mix(in srgb, var(--card-accent) 25%, transparent);
+}
+
+.user-mgmt__card-usericon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
-  background-color: var(--color-bg-elevated);
-  border: 3px solid var(--color-bg-elevated);
-  box-shadow: var(--shadow-soft);
-  color: var(--color-text-primary);
-  font-size: 22px;
-  font-weight: var(--fw-bold);
+  background: var(--color-bg-elevated);
+  color: var(--card-accent);
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--card-accent) 18%, transparent),
+    var(--shadow-xs);
 }
 
-.user-mgmt__card-body {
+.user-mgmt__card-main {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
   gap: var(--space-2);
-  padding: 40px var(--space-4) var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
 }
 
-.user-mgmt__card-name-row h3 {
-  font-size: var(--fs-sm);
+.user-mgmt__card-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.user-mgmt__card-top-row h3 {
+  min-width: 0;
+  font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
   color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-mgmt__card-email {
-  font-size: var(--fs-xs);
-  color: var(--color-text-muted);
-  word-break: break-all;
-  max-width: 100%;
-}
-
-.user-mgmt__card-meta {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: 2px;
-}
-
-.user-mgmt__card-invited {
+  gap: 6px;
+  min-width: 0;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
+}
+
+.user-mgmt__card-email svg {
+  flex-shrink: 0;
+}
+
+.user-mgmt__card-email span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-mgmt__card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.user-mgmt__card-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .user-mgmt__card-actions {
-  margin-top: var(--space-2);
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .user-mgmt__card--skeleton {
-  gap: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
   pointer-events: none;
 }
 

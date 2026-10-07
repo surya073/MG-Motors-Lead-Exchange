@@ -10,7 +10,6 @@ import DealerDetailsOffcanvas from "../../ui/Offcanvas/DealerDetailsOffcanvas";
 import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import Pagination from "../../ui/Pagination/Pagination";
-import StatSkeleton from "../../ui/Skeleton/StatSkeleton";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
@@ -18,11 +17,37 @@ import { PhoneIcon, MailIcon } from "../../ui/icons";
 import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
+import { LayoutGrid, List, Mail, Phone, MapPin, ChevronRight, Clock, Users, Plug } from "lucide-react";
 import mgLogo from "../../assets/images/mg-logo-single.png";
 
 const REGION_LABELS = { East: "East", West: "West", North: "North", South: "South" };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50, 100];
+// Whole rows of cards (the grid shows up to 4 across).
+const CARD_PAGE_SIZE_OPTIONS = [12, 24, 48];
+const VIEW_STORAGE_KEY = "dealerList:view";
+
+const SORT_OPTIONS = [
+  { value: "", label: "Default order" },
+  { value: "dealer_name:asc", label: "Name (A–Z)" },
+  { value: "lead_count:desc", label: "Most leads" },
+  { value: "last_synced_at:desc", label: "Recently synced" },
+  { value: "region:asc", label: "Region" },
+];
+
+// dealer_integrations.status values that mean the dealer is wired to a CRM.
+const CRM_CONNECTED_STATUSES = ["ACTIVE", "CONNECTED"];
+
+function isCrmConnected(dealer) {
+  return (
+    dealer.sync_status !== "Removed" &&
+    CRM_CONNECTED_STATUSES.includes(String(dealer.integration_status || "").toUpperCase())
+  );
+}
+
+function nearestSize(sizes, current) {
+  return sizes.reduce((best, size) => (Math.abs(size - current) < Math.abs(best - current) ? size : best), sizes[0]);
+}
 
 const SYNC_STATUS_TONES = {
   Synced: "active",
@@ -111,7 +136,14 @@ export default function DealerListPage() {
   const [activeTab, setActiveTab] = useState("synced");
   const tabsRef = useRef(null);
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
-  const [pageSize, setPageSize] = useState(10);
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_STORAGE_KEY) === "list" ? "list" : "grid";
+    } catch {
+      return "grid";
+    }
+  });
+  const [pageSize, setPageSize] = useState(() => (view === "grid" ? CARD_PAGE_SIZE_OPTIONS[0] : 10));
   const [selectedDealer, setSelectedDealer] = useState(null);
 
   useLayoutEffect(() => {
@@ -209,16 +241,8 @@ export default function DealerListPage() {
   );
 
 
-  const stats = useMemo(() => {
-    const total = dealers.length;
-    const removed = dealers.filter((d) => d.sync_status === "Removed").length;
-    return {
-      total,
-      active: total - removed,
-      removed,
-      regions: regions.length,
-    };
-  }, [dealers, regions]);
+  // Busiest dealer's lead count — scales each card's small lead-share bar.
+  const maxLeads = useMemo(() => Math.max(0, ...dealers.map((d) => Number(d.lead_count) || 0)), [dealers]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -249,6 +273,32 @@ export default function DealerListPage() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
   const pageRows = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
+
+  const changeView = (next) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      // storage unavailable - the choice just won't persist
+    }
+    // Keep the page size valid for the view being switched to.
+    const sizes = next === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS;
+    if (!sizes.includes(pageSize)) setPageSize(nearestSize(sizes, pageSize));
+    setPageIndex(0);
+  };
+
+  const sortValue = sortKey ? `${sortKey}:${sortDir}` : "";
+  const handleSortSelect = (value) => {
+    if (!value) {
+      setSortKey(null);
+      setSortDir("asc");
+    } else {
+      const [key, dir] = value.split(":");
+      setSortKey(key);
+      setSortDir(dir);
+    }
+    setPageIndex(0);
+  };
 
   const handlePageSizeChange = (value) => {
     setPageSize(Number(value));
@@ -321,6 +371,11 @@ export default function DealerListPage() {
         <span className="dealer-list__name-cell">
           <img src={mgLogo} alt="" className="dealer-list__dealer-logo" />
           {row.dealer_name}
+          {isCrmConnected(row) && (
+            <span className="dealer-list__crm-tag" title="Connected to a CRM">
+              <Plug size={11} /> CRM
+            </span>
+          )}
         </span>
       ),
     email_address: (row) =>
@@ -377,21 +432,8 @@ export default function DealerListPage() {
 
   return (
     <div className="dealer-list">
-      <div className="dealer-list__header">
-        {isSyncedTab && (
-          <button
-            className={`dealer-list__refresh-btn ${syncing ? "dealer-list__refresh-btn--spinning" : ""}`}
-            onClick={handleSync}
-            disabled={syncing || isViewUser}
-            aria-label="Sync dealers"
-            title={viewOnlyTitle}
-          >
-            <Icon name="refresh" size={16} />
-            {syncing ? "Syncing…" : "Sync now"}
-          </button>
-        )}
-      </div>
-
+      <div className="dealer-list__box">
+        <div className={`dealer-list__box-top ${isSyncedTab ? "dealer-list__box-top--divided" : ""}`}>
       <div className="dealer-list__tabs" ref={tabsRef}>
         <span
           className="dealer-list__tab-indicator"
@@ -416,57 +458,21 @@ export default function DealerListPage() {
           Invite dealers
         </button>
       </div>
+        {isSyncedTab && (
+          <button
+            className={`dealer-list__refresh-btn ${syncing ? "dealer-list__refresh-btn--spinning" : ""}`}
+            onClick={handleSync}
+            disabled={syncing || isViewUser}
+            aria-label="Sync dealers"
+            title={viewOnlyTitle}
+          >
+            <Icon name="refresh" size={16} />
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
+        )}
+        </div>
 
-      {isSyncedTab ? (
-        <>
-          <div className="dealer-list__stats">
-            {loading ? (
-              <>
-                <StatSkeleton />
-                <StatSkeleton />
-                <StatSkeleton />
-                <StatSkeleton />
-              </>
-            ) : (
-              <>
-                <div className="dealer-list__stat">
-                  <span className="dealer-list__stat-icon"><Icon name="building" size={16} /></span>
-                  <div>
-                    <span className="dealer-list__stat-value">{stats.total}</span>
-                    <span className="dealer-list__stat-label">Total dealers</span>
-                  </div>
-                </div>
-                <div className="dealer-list__stat">
-                  <span className="dealer-list__stat-icon"><Icon name="check" size={16} /></span>
-                  <div>
-                    <span className="dealer-list__stat-value">{stats.active}</span>
-                    <span className="dealer-list__stat-label">Active</span>
-                  </div>
-                </div>
-                <div className="dealer-list__stat">
-                  <span className="dealer-list__stat-icon"><Icon name="alert" size={16} /></span>
-                  <div>
-                    <span className="dealer-list__stat-value">{stats.removed}</span>
-                    <span className="dealer-list__stat-label">Removed</span>
-                  </div>
-                </div>
-                <div className="dealer-list__stat">
-                  <span className="dealer-list__stat-icon"><Icon name="map" size={16} /></span>
-                  <div>
-                    <span className="dealer-list__stat-value">{stats.regions}</span>
-                    <span className="dealer-list__stat-label">Regions</span>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {loadError && (
-            <Alert variant="error" onClose={() => setLoadError(null)}>
-              {loadError}
-            </Alert>
-          )}
-
+        {isSyncedTab && (
           <div className="dealer-list__toolbar">
             <div className="dealer-list__search">
               <div className="dealer-list__search-field">
@@ -490,6 +496,15 @@ export default function DealerListPage() {
                 options={regionDropdownOptions}
               />
 
+              {view === "grid" && (
+                <Dropdown
+                  ariaLabel="Sort dealers"
+                  value={sortValue}
+                  onChange={handleSortSelect}
+                  options={SORT_OPTIONS}
+                />
+              )}
+
               {hasActiveFilters && (
                 <button type="button" className="dealer-list__clear-filters" onClick={clearFilters}>
                   <Icon name="filterOff" size={14} />
@@ -512,6 +527,7 @@ export default function DealerListPage() {
                 Show removed
               </label>
 
+              {view === "list" && (
               <div className="dealer-list__column-menu" ref={columnMenuRef}>
                 <button
                   type="button"
@@ -550,19 +566,185 @@ export default function DealerListPage() {
                   </div>
                 )}
               </div>
+              )}
+
+              <div className="dealer-list__view-toggle" role="group" aria-label="Switch view">
+                <button
+                  type="button"
+                  className={view === "grid" ? "dealer-list__view-btn--active" : ""}
+                  onClick={() => changeView("grid")}
+                  aria-label="Grid view"
+                  aria-pressed={view === "grid"}
+                  title="Grid view"
+                >
+                  <LayoutGrid size={16} strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  className={view === "list" ? "dealer-list__view-btn--active" : ""}
+                  onClick={() => changeView("list")}
+                  aria-label="List view"
+                  aria-pressed={view === "list"}
+                  title="List view"
+                >
+                  <List size={16} strokeWidth={2} />
+                </button>
+              </div>
             </div>
           </div>
+        )}
+      </div>
 
-          {loading ? (
-            <TableSkeleton columnCount={columns.length} rowCount={pageSize} />
+      {isSyncedTab ? (
+        <>
+          {loadError && (
+            <Alert variant="error" onClose={() => setLoadError(null)}>
+              {loadError}
+            </Alert>
+          )}
+
+          {view === "list" ? (
+            loading ? (
+              <TableSkeleton columnCount={columns.length} rowCount={pageSize} />
+            ) : (
+              <Table
+                columns={columns}
+                rows={pageRows}
+                loading={loading}
+                emptyMessage="No dealers match your search"
+                onRowClick={(row) => setSelectedDealer(row)}
+              />
+            )
           ) : (
-            <Table
-              columns={columns}
-              rows={pageRows}
-              loading={loading}
-              emptyMessage="No dealers match your search"
-              onRowClick={(row) => setSelectedDealer(row)}
-            />
+            <div className="dealer-list__grid">
+              {loading ? (
+                Array.from({ length: pageSize }).map((_, i) => (
+                  <div key={i} className="dealer-card dealer-card--skeleton">
+                    <div className="dealer-card__hero">
+                      <Skeleton width={44} height={44} radius="var(--radius-lg)" />
+                      <div className="dealer-card__id">
+                        <Skeleton width="70%" height={15} />
+                        <Skeleton width={60} height={14} />
+                      </div>
+                    </div>
+                    <Skeleton width="55%" height={14} />
+                    <Skeleton width="100%" height={52} radius="var(--radius-md)" />
+                    <Skeleton width="85%" height={12} />
+                    <Skeleton width="60%" height={12} />
+                  </div>
+                ))
+              ) : pageRows.length === 0 ? (
+                <div className="dealer-list__grid-empty">No dealers match your search</div>
+              ) : (
+                pageRows.map((row) => {
+                  const removed = row.sync_status === "Removed";
+                  const connected = isCrmConnected(row);
+                  const place = [row.city, row.state].filter(Boolean).join(", ");
+                  const leads = Number(row.lead_count) || 0;
+                  const share = maxLeads ? Math.max(leads ? 6 : 0, Math.round((leads / maxLeads) * 100)) : 0;
+                  return (
+                    <div
+                      key={row.ROWID || row.dealer_code}
+                      className={`dealer-card ${removed ? "dealer-card--removed" : ""} ${
+                        connected ? "dealer-card--connected" : ""
+                      }`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedDealer(row)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedDealer(row);
+                        }
+                      }}
+                    >
+                      <div className="dealer-card__hero">
+                        <span className="dealer-card__logo">
+                          <img src={mgLogo} alt="" />
+                        </span>
+                        <div className="dealer-card__id">
+                          <h3 title={row.dealer_name}>{row.dealer_name}</h3>
+                          <span className="dealer-card__code">{row.dealer_code}</span>
+                        </div>
+                      </div>
+
+                      <div className="dealer-card__body">
+                        <div className="dealer-card__chips">
+                          {connected && (
+                            <span className="dealer-card__crm-tag">
+                              <Plug size={11} /> CRM
+                            </span>
+                          )}
+                          <Badge tone="info" fixed>{REGION_LABELS[row.region] || row.region || "—"}</Badge>
+                          <Badge tone={syncStatusTone(row.sync_status)} fixed>
+                            {row.sync_status || "Synced"}
+                          </Badge>
+                        </div>
+
+                        <p className="dealer-card__location">
+                          <MapPin size={13} />
+                          {place || "Location not set"}
+                        </p>
+
+                        <div className="dealer-card__stats">
+                          <div className="dealer-card__stat">
+                            <span className="dealer-card__stat-icon"><Users size={14} /></span>
+                            <div>
+                              <strong>{leads}</strong>
+                              <span>Leads</span>
+                            </div>
+                          </div>
+                          <div className="dealer-card__stat">
+                            <span className="dealer-card__stat-icon"><Clock size={14} /></span>
+                            <div>
+                              <strong>{row.last_synced_at ? String(row.last_synced_at).split(" ")[0] : "—"}</strong>
+                              <span>Last synced</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="dealer-card__bar" title="Share of the busiest dealer's leads">
+                          <span style={{ width: `${share}%` }} />
+                        </div>
+
+                        <ul className="dealer-card__contacts">
+                          <li>
+                            <span className="dealer-card__contact-icon"><Mail size={13} /></span>
+                            {row.email_address ? (
+                              <a href={`mailto:${row.email_address}`} onClick={(e) => e.stopPropagation()}>
+                                {row.email_address}
+                              </a>
+                            ) : (
+                              <span className="dealer-card__muted">No email</span>
+                            )}
+                          </li>
+                          <li>
+                            <span className="dealer-card__contact-icon"><Phone size={13} /></span>
+                            {row.phone_number ? (
+                              <a href={`tel:${row.phone_number}`} onClick={(e) => e.stopPropagation()}>
+                                {row.phone_number}
+                              </a>
+                            ) : (
+                              <span className="dealer-card__muted">No phone</span>
+                            )}
+                          </li>
+                        </ul>
+                      </div>
+
+                      <div className="dealer-card__foot">
+                        <span className={`dealer-card__crm-state ${connected ? "dealer-card__crm-state--on" : ""}`}>
+                          <span className="dealer-card__crm-dot" />
+                          {connected ? "Connected to CRM" : "No CRM connected"}
+                        </span>
+                        <span className="dealer-card__open">
+                          View details <ChevronRight size={15} />
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           )}
 
           <Pagination
@@ -572,7 +754,7 @@ export default function DealerListPage() {
             noun="dealer"
             onPageChange={(p) => setPageIndex(p - 1)}
             pageSize={pageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            pageSizeOptions={view === "grid" ? CARD_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS}
             onPageSizeChange={handlePageSizeChange}
           />
           <DealerDetailsOffcanvas dealer={selectedDealer} onClose={() => setSelectedDealer(null)} />

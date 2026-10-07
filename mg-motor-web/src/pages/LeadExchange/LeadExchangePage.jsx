@@ -680,6 +680,17 @@ export default function LeadExchangePage() {
         </div>
       ) : (
         <div className="lead-exchange__panel" key="list">
+          {loadError && (
+            <Alert
+              variant="error"
+              action={{ label: "Retry", onClick: loadLeads }}
+              onClose={() => setLoadError(null)}
+            >
+              {loadError}
+            </Alert>
+          )}
+
+          <div className="lead-exchange__toolbar">
           <div className="lead-exchange__header">
             <div className="lead-exchange__path-toggle" role="tablist" aria-label="Filter by outcome">
               {PATH_FILTER_OPTIONS.map((option) => {
@@ -733,18 +744,18 @@ export default function LeadExchangePage() {
             </div>
           </div>
 
-          {loadError && (
-            <Alert
-              variant="error"
-              action={{ label: "Retry", onClick: loadLeads }}
-              onClose={() => setLoadError(null)}
-            >
-              {loadError}
-            </Alert>
-          )}
-
-          <div className="lead-exchange__filters">
-            <div className="lead-exchange__filters-row">
+            <div className="lead-exchange__filters">
+              <div className="lead-exchange__filters-main">
+              <div className="lead-exchange__search">
+                <input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    resetPage();
+                  }}
+                  placeholder="Search by customer, email, mobile, dealer, or vehicle…"
+                />
+              </div>
               <Dropdown
                 ariaLabel="Filter by status"
                 value={statusFilter}
@@ -772,7 +783,9 @@ export default function LeadExchangePage() {
                 onChange={handleSortChange}
                 options={sortDropdownOptions}
               />
+              </div>
 
+              <div className="lead-exchange__filters-foot">
               <label className="lead-exchange__switch">
                 <input
                   type="checkbox"
@@ -787,43 +800,7 @@ export default function LeadExchangePage() {
                 </span>
                 Show removed
               </label>
-
-              <div className="lead-exchange__view-toggle" role="group" aria-label="Switch view">
-                <button
-                  type="button"
-                  className={view === "grid" ? "lead-exchange__view-btn--active" : ""}
-                  onClick={() => changeView("grid")}
-                  aria-label="Grid view"
-                  aria-pressed={view === "grid"}
-                  title="Grid view"
-                >
-                  <LayoutGrid size={16} strokeWidth={2} />
-                </button>
-                <button
-                  type="button"
-                  className={view === "list" ? "lead-exchange__view-btn--active" : ""}
-                  onClick={() => changeView("list")}
-                  aria-label="List view"
-                  aria-pressed={view === "list"}
-                  title="List view"
-                >
-                  <List size={16} strokeWidth={2} />
-                </button>
-              </div>
-            </div>
-
-            <div className="lead-exchange__filters-row lead-exchange__filters-row--end">
-              <div className="lead-exchange__search">
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    resetPage();
-                  }}
-                  placeholder="Search by customer, email, mobile, dealer, or vehicle…"
-                />
-              </div>
-
+                <div className="lead-exchange__filters-foot-end">
               {/* Column visibility only applies to the list/table view —
                   the grid view's cards show a fixed field set, so this
                   control would do nothing there. */}
@@ -852,6 +829,30 @@ export default function LeadExchangePage() {
                   )}
                 </div>
               )}
+              <div className="lead-exchange__view-toggle" role="group" aria-label="Switch view">
+                <button
+                  type="button"
+                  className={view === "grid" ? "lead-exchange__view-btn--active" : ""}
+                  onClick={() => changeView("grid")}
+                  aria-label="Grid view"
+                  aria-pressed={view === "grid"}
+                  title="Grid view"
+                >
+                  <LayoutGrid size={16} strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  className={view === "list" ? "lead-exchange__view-btn--active" : ""}
+                  onClick={() => changeView("list")}
+                  aria-label="List view"
+                  aria-pressed={view === "list"}
+                  title="List view"
+                >
+                  <List size={16} strokeWidth={2} />
+                </button>
+              </div>
+                </div>
+              </div>
             </div>
           </div>
 
