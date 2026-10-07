@@ -1902,3 +1902,76 @@
   outline: none;
   filter: brightness(1.1);
 }
+
+/* ---------- Header: compact single row ----------
+   Dealer name + code (with the connection message beside the code), the
+   Dealer Portal / External CRM switch and the status badges all share one
+   short row, so the form below keeps as much room as possible. */
+
+.dealer-crm-config__detail-header {
+  gap: var(--space-2) var(--space-4);
+  padding-bottom: var(--space-2);
+}
+
+.dealer-crm-config__detail-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-3);
+  margin-top: 2px;
+}
+
+.dealer-crm-config__header-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+}
+
+.dealer-crm-config__header-note--done {
+  color: var(--color-success);
+  font-weight: var(--fw-medium);
+}
+
+.dealer-crm-config__header-mode {
+  flex: 0 0 auto;
+  width: 330px;
+  max-width: 100%;
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-toggle {
+  gap: var(--space-2);
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-card {
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-text strong {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.dealer-crm-config__header-mode .dealer-crm-config__mode-text small {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .dealer-crm-config__header-mode {
+    width: 100%;
+  }
+}

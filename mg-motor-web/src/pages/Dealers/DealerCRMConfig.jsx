@@ -1250,13 +1250,71 @@ export default function DealerCRMConfig() {
                   </span>
                   <div>
                     <h2>{selectedDealer.dealer_name}</h2>
-                    <p className="dealer-crm-config__detail-code">{selectedDealer.dealer_code}</p>
+                    <div className="dealer-crm-config__detail-sub">
+                      <span className="dealer-crm-config__detail-code">{selectedDealer.dealer_code}</span>
+                      {!configLoading && isExternalCrm && (
+                        <span
+                          className={`dealer-crm-config__header-note ${
+                            isConnectionVerified ? "dealer-crm-config__header-note--done" : ""
+                          }`}
+                        >
+                          {isConnectionVerified ? <CheckCircle2 size={13} /> : <ShieldCheck size={13} />}
+                          {isConnectionVerified
+                            ? "Connected. This dealer's leads will now sync automatically."
+                            : "Fill in the CRM details below, then test the connection to activate syncing."}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {/* NEW: simplified to just Connected / Not Connected —
                     the granular ACTIVE/CONFIGURING/ERROR/etc vocabulary
                     is still visible in the Activity Log per-row, just not
                     duplicated here at the top. */}
+                {!configLoading && (
+                  <div className="dealer-crm-config__header-mode">
+        <div className="dealer-crm-config__mode-toggle" role="radiogroup" aria-label="Integration type">
+          <label
+            className={`dealer-crm-config__mode-card ${
+              config.integration_type === "PORTAL" ? "dealer-crm-config__mode--active" : ""
+            }`}
+          >
+            <input
+              type="radio"
+              name="integration_type"
+              checked={config.integration_type === "PORTAL"}
+              onChange={() => handleConfigChange("integration_type", "PORTAL")}
+            />
+            <span className="dealer-crm-config__mode-icon">
+              <Store size={18} />
+            </span>
+            <span className="dealer-crm-config__mode-text" title="Standard Catalyst portal, no setup needed">
+              <strong>Dealer Portal</strong>
+              <small>Standard Catalyst portal, no setup needed</small>
+            </span>
+          </label>
+          <label
+            className={`dealer-crm-config__mode-card ${
+              config.integration_type === "EXTERNAL_CRM" ? "dealer-crm-config__mode--active" : ""
+            }`}
+          >
+            <input
+              type="radio"
+              name="integration_type"
+              checked={config.integration_type === "EXTERNAL_CRM"}
+              onChange={() => handleConfigChange("integration_type", "EXTERNAL_CRM")}
+            />
+            <span className="dealer-crm-config__mode-icon">
+              <Plug size={18} />
+            </span>
+            <span className="dealer-crm-config__mode-text" title="Sync leads with the dealer's own CRM">
+              <strong>External CRM</strong>
+              <small>Sync leads with the dealer's own CRM</small>
+            </span>
+          </label>
+        </div>
+                  </div>
+                )}
                 <div className="dealer-crm-config__detail-status">
                   {selectedDealer.region && <Badge tone="info">{selectedDealer.region}</Badge>}
                   {isExternalCrm && <Badge tone="neutral">{CRM_TYPE_LABELS[config.crm_type] || "External CRM"}</Badge>}
@@ -1318,47 +1376,6 @@ export default function DealerCRMConfig() {
                 <>
                   {tab === "connection" && (
                     <div className="dealer-crm-config__form">
-                      <div className="dealer-crm-config__mode-toggle" role="radiogroup" aria-label="Integration type">
-                        <label
-                          className={`dealer-crm-config__mode-card ${
-                            config.integration_type === "PORTAL" ? "dealer-crm-config__mode--active" : ""
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="integration_type"
-                            checked={config.integration_type === "PORTAL"}
-                            onChange={() => handleConfigChange("integration_type", "PORTAL")}
-                          />
-                          <span className="dealer-crm-config__mode-icon">
-                            <Store size={18} />
-                          </span>
-                          <span className="dealer-crm-config__mode-text">
-                            <strong>Dealer Portal</strong>
-                            <small>Standard Catalyst portal, no setup needed</small>
-                          </span>
-                        </label>
-                        <label
-                          className={`dealer-crm-config__mode-card ${
-                            config.integration_type === "EXTERNAL_CRM" ? "dealer-crm-config__mode--active" : ""
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="integration_type"
-                            checked={config.integration_type === "EXTERNAL_CRM"}
-                            onChange={() => handleConfigChange("integration_type", "EXTERNAL_CRM")}
-                          />
-                          <span className="dealer-crm-config__mode-icon">
-                            <Plug size={18} />
-                          </span>
-                          <span className="dealer-crm-config__mode-text">
-                            <strong>External CRM</strong>
-                            <small>Sync leads with the dealer's own CRM</small>
-                          </span>
-                        </label>
-                      </div>
-
                       {config.integration_type === "PORTAL" ? (
                         <p className="dealer-crm-config__portal-note">
                           This dealer uses the standard Catalyst dealer portal. No further configuration is needed —
@@ -1366,20 +1383,6 @@ export default function DealerCRMConfig() {
                         </p>
                       ) : (
                         <>
-                          <div className={`dealer-crm-config__progress ${isConnectionVerified ? "dealer-crm-config__progress--done" : ""}`}>
-                            {isConnectionVerified ? (
-                              <>
-                                <CheckCircle2 size={16} />
-                                <span>Connected. This dealer's leads will now sync automatically.</span>
-                              </>
-                            ) : (
-                              <>
-                                <ShieldCheck size={16} />
-                                <span>Fill in the CRM details below, then test the connection to activate syncing.</span>
-                              </>
-                            )}
-                          </div>
-
                           <div className="dealer-crm-config__section-title">CRM details</div>
 
                           <div className="dealer-crm-config__field-row">
