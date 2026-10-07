@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
+import PathBadge from "../PathBadge/PathBadge";
 import Badge from "../Badge/Badge";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
@@ -558,7 +559,7 @@ export function LogsTab({ activity }) {
                   </div>
                   <span className="dd-log__dir">
                     <Dir size={12} /> {inbound ? "Dealer CRM → MG" : "MG → Dealer CRM"}
-                    {log.happy_unhappy_path_name ? ` · ${log.happy_unhappy_path_name}` : ""}
+                    {log.happy_unhappy_path_name ? <PathBadge name={log.happy_unhappy_path_name} /> : null}
                   </span>
                   {!ok && log.error_message && <p className="dd-log__error">{log.error_message}</p>}
                   <time>{fmtDateTime(log.created_at || log.CREATEDTIME)}</time>

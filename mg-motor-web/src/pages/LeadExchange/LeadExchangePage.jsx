@@ -13,6 +13,8 @@ import {
   Eye,
   RefreshCw,
   AlertTriangle,
+  Smile,
+  Frown,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
@@ -24,6 +26,7 @@ import useUrlSearch from "../../hooks/useUrlSearch";
 import Skeleton from "../../ui/Skeleton/Skeleton";
 import Pagination from "../../ui/Pagination/Pagination";
 import { DetailSkeleton } from "../../ui/Skeleton/PageSkeletons";
+import PathBadge from "../../ui/PathBadge/PathBadge";
 import LeadDetailView from "./LeadDetailView";
 import EmptyState from "../../common/EmptyState/EmptyState";
 import OutOfOrderEventsOffcanvas from "./components/OutOfOrderEventsOffcanvas";
@@ -675,6 +678,8 @@ export default function LeadExchangePage() {
                     }`}
                     onClick={() => handlePathFilterChange(option.value)}
                   >
+                    {option.value === "happy" && <Smile size={15} />}
+                    {option.value === "unhappy" && <Frown size={15} />}
                     {option.label}
                     <span className="lead-exchange__path-pill-count">{count}</span>
                   </button>
@@ -850,7 +855,6 @@ export default function LeadExchangePage() {
                   // Removed leads are soft-deleted upstream; labelling them
                   // with an integration path would imply live activity.
                   const pathLabel = removed ? "" : classification.label;
-                  const pathTone = classification.path === "unhappy" ? "unhappy" : "happy";
                   const tone = removed
                     ? "neutral"
                     : isDuplicate
@@ -913,17 +917,12 @@ export default function LeadExchangePage() {
                       <div className="lead-card__chips">
                         {isNew && <span className="lead-card__chip lead-card__chip--new">New</span>}
                         {isDuplicate && (
-                          <span className="lead-card__chip lead-card__chip--duplicate">
+                          <PathBadge name="Happy 3" title="Duplicate lead linked">
                             Duplicate · Happy 3
-                          </span>
+                          </PathBadge>
                         )}
                         {!isDuplicate && pathLabel && (
-                          <span
-                            className={`lead-card__chip lead-card__chip--path-${pathTone}`}
-                            title={`Integration path: ${pathLabel}`}
-                          >
-                            {pathLabel}
-                          </span>
+                          <PathBadge name={pathLabel} title={`Integration path: ${pathLabel}`} />
                         )}
                         {row.lead_source && (
                           <span className="lead-card__chip lead-card__chip--source">
@@ -1096,7 +1095,7 @@ function OutOfOrderEventsPanel() {
             <h3 id="ooo-panel-title" className="ooo-panel__title">
               Dealer updates awaiting an MG enquiry
             </h3>
-            <span className="ooo-panel__path-pill">Unhappy 7</span>
+            <PathBadge name="Unhappy 7" />
           </div>
           <p className="ooo-panel__subtitle">
             Out-of-order events: the dealer CRM sent an update for a record with no linked MG

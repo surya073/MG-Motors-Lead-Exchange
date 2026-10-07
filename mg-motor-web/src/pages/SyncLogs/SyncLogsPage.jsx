@@ -16,6 +16,8 @@ import {
   Clock,
   Hash,
   Zap,
+  Smile,
+  Frown,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { syncDealersService, syncLeadsService } from "../../services/api/syncService";
@@ -23,6 +25,7 @@ import useUrlSearch from "../../hooks/useUrlSearch";
 import Table from "../../ui/Table/Table";
 import Pagination from "../../ui/Pagination/Pagination";
 import Badge from "../../ui/Badge/Badge";
+import PathBadge from "../../ui/PathBadge/PathBadge";
 import CloseButton from "../../ui/CloseButton/CloseButton";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
@@ -426,16 +429,14 @@ const shortText = (text, max = 78) =>
 
 function ScenarioBadge({ scenario, showCount = true }) {
   const { path, number, label } = scenario.info;
-  const { color } = scenario.info;
   return (
-    <span
-      className={`sync-logs__scenario-badge ${scenario.guessed ? "sync-logs__scenario-badge--guessed" : ""}`}
-      style={{ backgroundColor: color.bg, color: color.text }}
+    <PathBadge
+      path={path}
+      number={number}
+      count={showCount ? scenario.count : undefined}
+      guessed={scenario.guessed}
       title={scenario.guessed ? `${label} (estimated from log data)` : label}
-    >
-      {path === "happy" ? "Happy" : "Unhappy"} {number}
-      {showCount && scenario.count > 1 ? ` ×${scenario.count}` : ""}
-    </span>
+    />
   );
 }
 
@@ -877,6 +878,8 @@ export default function SyncLogsPage() {
               }`}
               onClick={() => handlePathFilterChange(option.value)}
             >
+              {option.value === "happy" && <Smile size={15} />}
+              {option.value === "unhappy" && <Frown size={15} />}
               {option.label}
               <span className="sync-logs__path-pill-count">{count}</span>
             </button>

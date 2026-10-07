@@ -27,6 +27,7 @@ import {
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
 import Table from "../../ui/Table/Table";
+import PathBadge from "../../ui/PathBadge/PathBadge";
 import Badge from "../../ui/Badge/Badge";
 import Dropdown from "../../ui/Dropdown/Dropdown";
 import Skeleton from "../../ui/Skeleton/Skeleton";
@@ -393,12 +394,7 @@ function LogDetailOffcanvas({ row, onClose }) {
               </Badge>
             ) : (
               <>
-                <span
-                  className="dealer-crm-config__scenario-badge"
-                  style={{ backgroundColor: scenario.color.bg, color: scenario.color.text }}
-                >
-                  {scenario.path === "happy" ? "Happy" : "Unhappy"} {scenario.number}
-                </span>
+                <PathBadge path={scenario.path} number={scenario.number} />
                 <p className="dealer-crm-config__offcanvas-scenario-label">{scenario.label}</p>
               </>
             )}
@@ -450,6 +446,15 @@ function LogDetailOffcanvas({ row, onClose }) {
       </div>
     </div>
   );
+}
+
+/**
+ * Chevron step bar colours: the active step is green, a step that is
+ * already complete is blue, and everything else stays grey.
+ */
+function tabStepClass(key, activeTab, completed) {
+  if (key === activeTab) return "dealer-crm-config__tab--active";
+  return completed[key] ? "dealer-crm-config__tab--info" : "";
 }
 
 export default function DealerCRMConfig() {
@@ -627,6 +632,7 @@ export default function DealerCRMConfig() {
     setTestResult(null);
     setSaveSuccess(false);
     setTab("connection");
+    setLogs([]);
     try {
       const result = await dealerCrmIntegrationService.getIntegration(dealer.dealer_code);
       // setConfig({ ...EMPTY_CONFIG, ...(result?.integration || {}) });
@@ -645,6 +651,12 @@ export default function DealerCRMConfig() {
       );
       setEditingFieldRows(new Set());
       setEditingStatusRows(new Set());
+      // Quietly preload the activity log so its step can show blue without
+      // the user opening the tab first.
+      dealerCrmIntegrationService
+        .getLogs(dealer.dealer_code)
+        .then((logResult) => setLogs(logResult?.logs || []))
+        .catch(() => {});
     } catch (err) {
       if (err?.response?.status === 404) {
         setConfig(EMPTY_CONFIG);
@@ -949,12 +961,7 @@ export default function DealerCRMConfig() {
         }
         return (
           <div className="dealer-crm-config__scenario-cell">
-            <span
-              className="dealer-crm-config__scenario-badge"
-              style={{ backgroundColor: scenario.color.bg, color: scenario.color.text }}
-            >
-              {scenario.path === "happy" ? "Happy" : "Unhappy"} {scenario.number}
-            </span>
+            <PathBadge path={scenario.path} number={scenario.number} />
             <span className="dealer-crm-config__scenario-desc">{scenario.label}</span>
           </div>
         );
@@ -1002,6 +1009,17 @@ export default function DealerCRMConfig() {
   const isConnectionVerified = isExternalCrm && CONNECTED_STATUSES.includes(config.status);
   const mappingsLocked = isExternalCrm && !isConnectionVerified;
   const isTopConnected = CONNECTED_STATUSES.includes(config.status);
+
+  const stepCompleted = {
+    connection: isTopConnected,
+    fields:
+      fieldMappings.length > 0 &&
+      fieldMappings.every((m) => !m.required || String(m.target_field || "").trim() !== ""),
+    status:
+      statusMappings.length > 0 &&
+      statusMappings.every((m) => String(m.target_status || "").trim() !== ""),
+    logs: logs.length > 0,
+  };
 
   const showMaskedCredentials = hasStoredCredential && !editingCredentials;
 
@@ -1248,15 +1266,19 @@ export default function DealerCRMConfig() {
                 </div>
               </div>
 
-              <div className="dealer-crm-config__tabs">
+              <div className="dealer-crm-config__tabs" role="tablist">
                 <button
-                  className={tab === "connection" ? "dealer-crm-config__tab--active" : ""}
+                  className={tabStepClass("connection", tab, stepCompleted)}
+                  role="tab"
+                  aria-selected={tab === "connection"}
                   onClick={() => handleTabChange("connection")}
                 >
                   <ShieldCheck size={14} /> Connection
                 </button>
                 <button
-                  className={tab === "fields" ? "dealer-crm-config__tab--active" : ""}
+                  className={tabStepClass("fields", tab, stepCompleted)}
+                  role="tab"
+                  aria-selected={tab === "fields"}
                   onClick={() => !mappingsLocked && handleTabChange("fields")}
                   disabled={!isExternalCrm}
                   title={mappingsLocked ? "Test the connection successfully first to unlock field mapping" : undefined}
@@ -1264,7 +1286,9 @@ export default function DealerCRMConfig() {
                   {mappingsLocked ? <Lock size={13} /> : <ArrowLeftRight size={14} />} Field Mapping
                 </button>
                 <button
-                  className={tab === "status" ? "dealer-crm-config__tab--active" : ""}
+                  className={tabStepClass("status", tab, stepCompleted)}
+                  role="tab"
+                  aria-selected={tab === "status"}
                   onClick={() => !mappingsLocked && handleTabChange("status")}
                   disabled={!isExternalCrm}
                   title={mappingsLocked ? "Test the connection successfully first to unlock status mapping" : undefined}
@@ -1272,7 +1296,9 @@ export default function DealerCRMConfig() {
                   {mappingsLocked ? <Lock size={13} /> : <ListChecks size={14} />} Status Mapping
                 </button>
                 <button
-                  className={tab === "logs" ? "dealer-crm-config__tab--active" : ""}
+                  className={tabStepClass("logs", tab, stepCompleted)}
+                  role="tab"
+                  aria-selected={tab === "logs"}
                   onClick={() => handleTabChange("logs")}
                 >
                   <ScrollText size={14} /> Activity Log

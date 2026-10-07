@@ -1,0 +1,70 @@
+/* =========================================================
+   PATH BADGE — Happy (smile) / Unhappy (frown) scenario pill.
+   Colours come from the per-scenario --scenario-* tokens, set
+   on the element as --pb-bg / --pb-fg by PathBadge.jsx.
+   ========================================================= */
+
+.path-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 10px 3px 4px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--pb-fg) 30%, transparent);
+  background: linear-gradient(
+    135deg,
+    var(--pb-bg),
+    color-mix(in srgb, var(--pb-bg) 55%, transparent)
+  );
+  color: var(--pb-fg);
+  font-size: 11.5px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  vertical-align: middle;
+}
+
+.path-badge__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pb-fg) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pb-fg) 22%, transparent);
+}
+
+.path-badge__count {
+  padding-left: 6px;
+  margin-left: 1px;
+  border-left: 1px solid color-mix(in srgb, var(--pb-fg) 30%, transparent);
+  font-weight: var(--fw-bold);
+  opacity: 0.85;
+}
+
+/* Medium: lead cards, detail hero, overview cards */
+.path-badge--md {
+  gap: 8px;
+  padding: 4px 14px 4px 5px;
+  font-size: var(--fs-sm);
+}
+
+.path-badge--md .path-badge__face {
+  width: 24px;
+  height: 24px;
+}
+
+/* Estimated from log data (not stored on the record) */
+.path-badge--guessed {
+  border-style: dashed;
+}
+
+/* The lead's current scenario inside a journey */
+.path-badge--current {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pb-fg) 28%, transparent);
+}

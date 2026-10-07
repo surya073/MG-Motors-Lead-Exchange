@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Store, Hash, Clock, AlertTriangle, Link2 } from "lucide-react";
 import Badge from "../../../ui/Badge/Badge";
+import PathBadge from "../../../ui/PathBadge/PathBadge";
 import CloseButton from "../../../ui/CloseButton/CloseButton";
 import "./OutOfOrderEventsOffcanvas.css";
 
@@ -58,7 +59,7 @@ export default function OutOfOrderEventsOffcanvas({ open, onClose, events, heldC
           <div className="ooo-offcanvas__header-text">
             <div className="ooo-offcanvas__title-row">
               <h2>Out-of-Order Events</h2>
-              <span className="ooo-offcanvas__path-pill">Unhappy 7</span>
+              <PathBadge name="Unhappy 7" size="md" />
             </div>
             <p>
               {events.length === 0

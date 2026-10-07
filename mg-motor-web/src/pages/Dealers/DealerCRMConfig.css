@@ -1818,3 +1818,87 @@
     transform: none;
   }
 }
+
+/* ---------- Tabs: chevron step bar (pipeline-stage style) ---------- */
+
+.dealer-crm-config__tabs {
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  overflow-x: auto;
+  /* Stays pinned to the top of the scrolling detail panel. The solid
+     background (and padding instead of margin) stops content showing
+     through around the chevrons while it scrolls underneath. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0;
+  padding: var(--space-3) 0;
+  background: var(--color-bg-elevated);
+}
+
+.dealer-crm-config__tabs button {
+  --chevron: 14px;
+  position: relative;
+  flex: 1 1 0;
+  min-width: max-content;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 calc(var(--chevron) + 14px) 0 calc(var(--chevron) + 10px);
+  margin-left: calc(var(--chevron) * -1 + 4px);
+  border: 0;
+  border-radius: 0;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-semibold);
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--chevron)) 0,
+    100% 50%,
+    calc(100% - var(--chevron)) 100%,
+    0 100%,
+    var(--chevron) 50%
+  );
+  transition: background-color var(--transition-fast) var(--ease-premium),
+    color var(--transition-fast) var(--ease-premium);
+}
+
+.dealer-crm-config__tabs button:first-child {
+  margin-left: 0;
+  padding-left: 16px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  clip-path: polygon(0 0, calc(100% - var(--chevron)) 0, 100% 50%, calc(100% - var(--chevron)) 100%, 0 100%);
+}
+
+.dealer-crm-config__tabs button:last-child {
+  padding-right: 16px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, var(--chevron) 50%);
+}
+
+.dealer-crm-config__tabs button:hover:not(:disabled):not(.dealer-crm-config__tab--active) {
+  background: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.dealer-crm-config__tabs .dealer-crm-config__tab--done {
+  background: var(--color-success);
+  color: #fff;
+}
+
+.dealer-crm-config__tabs .dealer-crm-config__tab--info {
+  background: var(--color-info);
+  color: #fff;
+}
+
+.dealer-crm-config__tabs .dealer-crm-config__tab--active {
+  background: var(--color-success) !important;
+  color: #fff !important;
+  box-shadow: none;
+  border-bottom: 0 !important;
+}
+
+.dealer-crm-config__tabs button:focus-visible {
+  outline: none;
+  filter: brightness(1.1);
+}

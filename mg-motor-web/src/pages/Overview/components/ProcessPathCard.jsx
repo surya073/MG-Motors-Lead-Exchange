@@ -1,4 +1,5 @@
 import ProgressRing from "./ProgressRing";
+import PathBadge from "../../../ui/PathBadge/PathBadge";
 import "./paths.css";
 
 /**
@@ -115,7 +116,7 @@ export default function ProcessPathCard({ scenario, meta, shareOfCategory, deale
     >
       <div className="process-path-card__top">
         <div className="process-path-card__badge-group">
-          <StatusChip type={tone}>{scenario.name}</StatusChip>
+          <PathBadge name={scenario.name} size="md" />
           {meta?.trigger && <span className="process-path-card__trigger">{meta.trigger}</span>}
         </div>
         <div className="process-path-card__count-group">

@@ -17,6 +17,7 @@ import {
 import mgLogo from "../../assets/images/mg-logo-single.png";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
 import CloseButton from "../../ui/CloseButton/CloseButton";
+import PathBadge from "../../ui/PathBadge/PathBadge";
 import { CompactListSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import "./LeadDetailView.css";
 
@@ -398,11 +399,7 @@ function ActivityTimeline({ timeline, loading }) {
           <div className="lead-detail__timeline-title-row">
             <p className="lead-detail__timeline-title">{scenario.label}</p>
             {scenario.id && (
-              <span
-                className={`lead-detail__timeline-badge lead-detail__timeline-badge--${scenario.tone}`}
-              >
-                {scenario.id}
-              </span>
+              <PathBadge name={scenario.id} />
             )}
           </div>
           {detailText && <p className="lead-detail__timeline-detail">{detailText}</p>}
@@ -617,19 +614,7 @@ function PathChips({ paths, currentId }) {
     <div className="lead-detail__path-chips">
       {paths.map((p) => {
         const isCurrent = p.id === currentId;
-        const Icon = p.type === "happy" ? CheckCircleIcon : AlertCircleIcon;
-        return (
-          <span
-            key={p.id}
-            className={`lead-detail__path-chip lead-detail__path-chip--${p.type} ${
-              isCurrent ? "lead-detail__path-chip--current" : ""
-            }`}
-            title={p.message}
-          >
-            <Icon />
-            {p.id}
-          </span>
-        );
+        return <PathBadge key={p.id} name={p.id} current={isCurrent} size="md" title={p.message} />;
       })}
     </div>
   );
@@ -654,9 +639,7 @@ function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
           <div className="lead-detail__journey-chips">
             {journeyPaths.map((p, idx) => (
               <span key={p.id} className="lead-detail__journey-step">
-                <span className={`lead-detail__journey-chip lead-detail__journey-chip--${p.type}`} title={p.message}>
-                  {p.id}
-                </span>
+                <PathBadge name={p.id} title={p.message} />
                 {idx < journeyPaths.length - 1 && (
                   <ArrowRightIcon size={12} className="lead-detail__journey-arrow" />
                 )}
@@ -667,7 +650,7 @@ function IntegrationPathCard({ path, journeyPaths, failureDetail }) {
       )}
 
       <div className="lead-detail__path-card-body">
-        <span className={`lead-detail__path-id lead-detail__path-id--${path.type}`}>{path.id}</span>
+        <PathBadge name={path.id} size="md" className="lead-detail__path-id" />
 
         <div className="lead-detail__path-card-text">
           <p className="lead-detail__path-card-title">{path.title}</p>

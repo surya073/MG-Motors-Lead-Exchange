@@ -7,6 +7,7 @@ import { ROUTES } from "../../constants/routes.constants";
 // still owned by Overview.jsx (its path cards need it too), re-used here
 // only for the error-type filter dropdown below.
 import { SCENARIO_META } from "../Overview/Overview";
+import PathBadge from "../../ui/PathBadge/PathBadge";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import Pagination from "../../ui/Pagination/Pagination";
 import { Alert } from "../../ui/Alerts/Alerts";
@@ -244,7 +245,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
                       <td>{log.customerName || log.leadId || "—"}</td>
                       <td>{log.integration || "—"}</td>
                       <td>
-                        {log.scenarioCode || "—"}
+                        {log.scenarioCode ? <PathBadge name={log.scenarioCode} /> : "—"}
                         {severity && (
                           <span className={`status-pill status-pill--${severity.tone}`} style={{ marginLeft: 6 }}>
                             {severity.label}
