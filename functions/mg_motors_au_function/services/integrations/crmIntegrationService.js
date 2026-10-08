@@ -1017,7 +1017,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
  * fixed by leadSyncService.js / zohoCrmService.js, not admin-configurable.
  */
 const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
-  dealer_code: 'Dealer_Code',
+  dealer_code: 'Franchise_Code',
   // customer_name is deliberately ABSENT — it is a derived field, not a
   // real one. fetchOemLeads reads First_Name/Last_Name and
   // mapCrmRecordToLeadRow joins them; there is no Customer_Name field on
@@ -1027,7 +1027,7 @@ const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
   mobile_number: 'Mobile',
   email_address: 'Email',
   vehicle_model: 'Enquiry_Model',
-  lead_source: 'Enquiry_Source',
+  lead_source: 'Lead_Source',
   lead_status: 'Lead_Status',
   // dealer_remarks is deliberately ABSENT — verified against live CRM
   // field metadata, MG's Leads module has no Dealer_Remarks field. Zoho
@@ -1035,23 +1035,25 @@ const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
   // entry turned any dealer remarks update into a hard Unhappy 4.
   // Needs an MG mapping decision ('Description' is the natural home)
   // before it can be re-enabled.
-  enquiry_status: 'Enquiry_Status',
-  nature_of_enquiry: 'Nature_of_Enquiry',
+  // enquiry_status is deliberately ABSENT — MG OEM's "Enquiry Status" is
+  // Lead_Status, already written via lead_status above.
+  nature_of_enquiry: 'Nature_of_enquiry',
   purchase_classification: 'Purchase_Classification',
   enquiry_outcome: 'Enquiry_Outcome',
   lead_department: 'Lead_Department',
   franchise: 'Franchise',
-  enquiry_id: 'Enquiry_ID',
-  customer_message: 'Customer_Message',
-  accept_privacy_policy: 'Accept_Privacy_Policy',
-  receive_marketing_updates: 'Receive_Marketing_Updates',
+  // enquiry_id is deliberately ABSENT — Enq_ID is an Auto Number (read-only).
+  customer_message: 'Message',
+  accept_privacy_policy: 'Accept_Privacy_Polic',
+  receive_marketing_updates: 'Receive_Offers_Updates',
   postcode: 'Postcode',
   unit_suite: 'Unit_Suite',
   enquiry_model: 'Enquiry_Model',
-  enquiry_variant: 'Enquiry_Variant',
+  enquiry_variant: 'Variant',
   enquiry_powertrain: 'Enquiry_Powertrain',
-  chat_transcript: 'Chat_Transcript',
-  dealer_rejected_reason: 'Dealer_Rejected_Reason',
+  chat_transcript: 'Chat_Trascript',
+  // dealer_rejected_reason is deliberately ABSENT — the MG OEM Leads module has
+  // no Dealer_Rejected_Reason field and Zoho rejects unknown names on write.
 };
 
 function toZohoApiFields(internalFieldsObject) {

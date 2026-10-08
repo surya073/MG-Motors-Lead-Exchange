@@ -9,18 +9,16 @@ const DEALERS_TABLE = 'dealers';
 
 function mapCrmRecordToDealerRow(crmRecord) {
   return {
-    dealer_code: crmRecord.Dealer_Code,
-    // Name (the record's standard title field) is what actually changes
-    // when a dealer is renamed in Zoho — Dealer_Name is a separate custom
-    // field kept only as a fallback. See zohoCrmService.js's
-    // DEALER_MASTER_FIELDS comment for the full explanation.
-    dealer_name: crmRecord.Name || crmRecord.Dealer_Name || '',
+    // Dealer_Code is a Number field on the MG OEM Dealers module; the
+    // dealers table (and every lookup keyed on it) holds it as text.
+    dealer_code: String(crmRecord.Dealer_Code ?? ''),
+    dealer_name: crmRecord.Name || '',
     phone_number: crmRecord.Phone_Number || '',
-    email_address: crmRecord.Email_Address || '',
-    region: crmRecord.Region || '',
-    state: crmRecord.State || '',
-    city: crmRecord.City || '',
-    status: crmRecord.Status || '',
+    email_address: crmRecord.Email || '',
+    region: crmRecord.Dealer_Region || '',
+    state: crmRecord.Dealer_State || '',
+    city: crmRecord.City_Suburb || '',
+    status: crmRecord.Dealer_Stage || '',
     crm_record_id: crmRecord.id || '',
   };
 }
@@ -80,11 +78,12 @@ async function syncDealers(catalystApp, { trigger = 'Manual', triggeredBy = 'Sys
         throw new Error('CRM record missing Dealer_Code — skipped');
       }
 
-      seenDealerCodes.add(crmRecord.Dealer_Code);
+      const dealerCode = String(crmRecord.Dealer_Code);
+      seenDealerCodes.add(dealerCode);
 
       const mappedRow = mapCrmRecordToDealerRow(crmRecord);
       const now = toCatalystDateTime();
-      const existingRow = existingDealersByCode.get(crmRecord.Dealer_Code);
+      const existingRow = existingDealersByCode.get(dealerCode);
 
       if (!existingRow) {
         await table.insertRow({ ...mappedRow, last_synced_at: now, sync_status: 'Synced' });

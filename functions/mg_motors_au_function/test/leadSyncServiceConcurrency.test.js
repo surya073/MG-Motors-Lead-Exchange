@@ -120,12 +120,12 @@ function buildValidCrmRecord(overrides = {}) {
     Email: 'john.smith@example.com',
     Postcode: '3000',
     Enquiry_Model: 'MG3',
-    Enquiry_Variant: '',
-    Nature_of_Enquiry: 'Test Drive',
-    Enquiry_Source: 'Website',
+    Variant: '',
+    Nature_of_enquiry: 'Test Drive',
+    Lead_Source: 'Website',
     Lead_Status: 'Not Contacted',
-    Dealer_Code: 'AU100',
-    Accept_Privacy_Policy: true,
+    Franchise_Code: 'AU100',
+    Accept_Privacy_Polic: true,
     Created_Time: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
@@ -169,8 +169,8 @@ test('Test 1 — same dealer: two concurrent syncLeads() cannot both process a n
   zohoAuthService._resetForTests();
   mockOauth(t);
 
-  const recordA = buildValidCrmRecord({ id: '8001', First_Name: 'Alice', Dealer_Code: 'AU100' });
-  const recordB = buildValidCrmRecord({ id: '8002', First_Name: 'Bob', Dealer_Code: 'AU100' });
+  const recordA = buildValidCrmRecord({ id: '8001', First_Name: 'Alice', Franchise_Code: 'AU100' });
+  const recordB = buildValidCrmRecord({ id: '8002', First_Name: 'Bob', Franchise_Code: 'AU100' });
 
   // Invocation A's fetch resolves immediately; invocation B's resolves a
   // few ms later — just enough ordering to make A reliably reach (and
@@ -225,8 +225,8 @@ test('Test 2 — different dealers: concurrent syncs for different dealers are n
   zohoAuthService._resetForTests();
   mockOauth(t);
 
-  const recordA = buildValidCrmRecord({ id: '9001', First_Name: 'Alice', Dealer_Code: 'AU100' });
-  const recordB = buildValidCrmRecord({ id: '9002', First_Name: 'Bob', Dealer_Code: 'AU200' });
+  const recordA = buildValidCrmRecord({ id: '9001', First_Name: 'Alice', Franchise_Code: 'AU100' });
+  const recordB = buildValidCrmRecord({ id: '9002', First_Name: 'Bob', Franchise_Code: 'AU200' });
 
   let fetchCall = 0;
   t.mock.method(axios, 'get', async () => {
@@ -335,12 +335,12 @@ test('Test 5 — claim release: a later sync can process another new lead for th
 
   const catalystApp = buildFakeCatalystApp({ existingLeads: [] });
 
-  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '4001', Dealer_Code: 'AU100' })]]);
+  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '4001', Franchise_Code: 'AU100' })]]);
   const firstResult = await leadSyncService.syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
   assert.equal(firstResult.recordsInserted, 1);
   assert.equal(catalystApp._claimsByKey.size, 0, 'the claim must be released after the first run completes');
 
-  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '4002', Dealer_Code: 'AU100' })]]);
+  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '4002', Franchise_Code: 'AU100' })]]);
   const secondResult = await leadSyncService.syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
 
   assert.equal(secondResult.recordsInserted, 1, 'a later, non-overlapping sync for the same dealer must not be blocked by a stale claim');
@@ -358,7 +358,7 @@ test('Test 6 — failure release: the claim is not left permanently held if proc
   // insertRow throw — inside the claimed closure, before dispatch, so the
   // throw propagates through withOutboundSyncClaim's try/finally.
   mockOemFetchSequence(t, [[
-    buildValidCrmRecord({ id: '5001', First_Name: 'TRIGGER_INSERT_FAILURE', Last_Name: '', Dealer_Code: 'AU100' }),
+    buildValidCrmRecord({ id: '5001', First_Name: 'TRIGGER_INSERT_FAILURE', Last_Name: '', Franchise_Code: 'AU100' }),
   ]]);
 
   const firstResult = await leadSyncService.syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
@@ -372,7 +372,7 @@ test('Test 6 — failure release: the claim is not left permanently held if proc
   }));
   t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async () => ({ ok: true, scenarioCode: 'Happy 1' }));
 
-  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '5002', Dealer_Code: 'AU100' })]]);
+  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '5002', Franchise_Code: 'AU100' })]]);
   const secondResult = await leadSyncService.syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
 
   assert.equal(secondResult.recordsInserted, 1, 'a later sync for the same dealer must succeed normally after the earlier failure released its claim');
@@ -381,7 +381,7 @@ test('Test 6 — failure release: the claim is not left permanently held if proc
 test('Test 7 — existing DUPLICATE_LINKED + OEM edit guard remains intact', async (t) => {
   zohoAuthService._resetForTests();
   mockOauth(t);
-  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '1001', Last_Name: 'Smith-Updated', Dealer_Code: 'AU100' })]]);
+  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '1001', Last_Name: 'Smith-Updated', Franchise_Code: 'AU100' })]]);
 
   const getIntegrationSpy = t.mock.method(crmIntegrationService, 'getIntegrationByDealerCode', async () => {
     throw new Error('must not be called for a DUPLICATE_LINKED lead');
@@ -407,7 +407,7 @@ test('Test 7 — existing DUPLICATE_LINKED + OEM edit guard remains intact', asy
 test('Test 8 — exhausted retries: a genuinely long-held claim is safely deferred, not crashed or force-processed', async (t) => {
   zohoAuthService._resetForTests();
   mockOauth(t);
-  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '6001', Dealer_Code: 'AU100' })]]);
+  mockOemFetchSequence(t, [[buildValidCrmRecord({ id: '6001', Franchise_Code: 'AU100' })]]);
 
   const catalystApp = buildFakeCatalystApp({ existingLeads: [] });
   // Pre-seed a claim for this dealer that never gets released during the

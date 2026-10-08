@@ -9,7 +9,7 @@ const logger = require('../utils/logger');
 const router = express.Router();
 
 /**
- * Transforms raw Zoho CRM Dealer_Master records into the app's clean
+ * Transforms raw Zoho CRM Dealers records into the app's clean
  * response shape. Kept as a pure function, separate from the route
  * handler, so dealerSyncService.js reuses the exact same mapping when
  * writing into the Catalyst Datastore `dealers` table.
@@ -17,21 +17,18 @@ const router = express.Router();
 function mapCrmDealerToResponse(crmRecord) {
   return {
     crm_id: crmRecord.id,
-    dealer_code: crmRecord.Dealer_Code,
-    // Name is the record's standard title field — the one that actually
-    // changes on a rename. See zohoCrmService.js's DEALER_MASTER_FIELDS
-    // comment.
-    dealer_name: crmRecord.Name || crmRecord.Dealer_Name,
+    dealer_code: String(crmRecord.Dealer_Code ?? ''),
+    dealer_name: crmRecord.Name,
     phone: crmRecord.Phone_Number || '',
-    email: crmRecord.Email_Address || '',
-    region: crmRecord.Region || '',
+    email: crmRecord.Email || '',
+    region: crmRecord.Dealer_Region || '',
   };
 }
 
 /**
  * GET /crm/dealers
  * -----------------------------------------------------------------------
- * Fetch-only: pulls Dealer_Master from Zoho CRM, maps to the app's clean
+ * Fetch-only: pulls Dealers from Zoho CRM, maps to the app's clean
  * shape, and returns it. No Catalyst Datastore writes here.
  */
 router.get('/crm/dealers', async (req, res) => {

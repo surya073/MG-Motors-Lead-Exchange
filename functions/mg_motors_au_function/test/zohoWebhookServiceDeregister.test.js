@@ -33,9 +33,9 @@ function buildFakeCatalystApp({ existingRows = [] }) {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
         if (sql.includes('FROM webhook_channels')) {
-          if (sql.includes("module_name = 'Dealer_Master,Leads'")) {
+          if (sql.includes("module_name = 'Dealers,Leads'")) {
             return existingRows
-              .filter((r) => r.module_name === 'Dealer_Master,Leads')
+              .filter((r) => r.module_name === 'Dealers,Leads')
               .map((r) => ({ webhook_channels: r }));
           }
           const dealerMatch = /dealer_code = '([^']*)'/.exec(sql);
@@ -98,7 +98,7 @@ test('registerWatchChannels: deregisters the existing OEM channel BEFORE registe
   });
 
   const catalystApp = buildFakeCatalystApp({
-    existingRows: [{ channel_id: '111', module_name: 'Dealer_Master,Leads' }],
+    existingRows: [{ channel_id: '111', module_name: 'Dealers,Leads' }],
   });
 
   await zohoWebhookService.registerWatchChannels(catalystApp);
@@ -120,7 +120,7 @@ test('registerWatchChannels: identifies the OEM channel via module_name, never v
   // only the OEM one must ever be targeted.
   const catalystApp = buildFakeCatalystApp({
     existingRows: [
-      { channel_id: 'oem-channel', module_name: 'Dealer_Master,Leads' },
+      { channel_id: 'oem-channel', module_name: 'Dealers,Leads' },
       { channel_id: 'dealer-channel', module_name: 'Leads', dealer_code: 'AU777' },
     ],
   });
@@ -153,7 +153,7 @@ test('registerDealerWatchChannel: deregistration behavior is unchanged — still
 
   const catalystApp = buildFakeCatalystApp({
     existingRows: [
-      { channel_id: 'oem-channel', module_name: 'Dealer_Master,Leads' },
+      { channel_id: 'oem-channel', module_name: 'Dealers,Leads' },
       { channel_id: 'old-dealer-channel', module_name: 'Leads', dealer_code: 'AU888' },
     ],
   });
@@ -185,7 +185,7 @@ test('registerWatchChannels: still succeeds normally when there is no prior OEM 
   assert.ok(result.channelId);
   assert.ok(result.expiresAt);
   assert.equal(catalystApp._insertedRows.length, 1);
-  assert.equal(catalystApp._insertedRows[0].module_name, 'Dealer_Master,Leads');
+  assert.equal(catalystApp._insertedRows[0].module_name, 'Dealers,Leads');
   assert.equal(catalystApp._insertedRows[0].dealer_code, undefined, 'the OEM row must still never carry a dealer_code, exactly as before this fix');
 });
 
@@ -199,7 +199,7 @@ test('registerWatchChannels: existing error handling is intact — a failed dere
   });
 
   const catalystApp = buildFakeCatalystApp({
-    existingRows: [{ channel_id: 'stale-channel', module_name: 'Dealer_Master,Leads' }],
+    existingRows: [{ channel_id: 'stale-channel', module_name: 'Dealers,Leads' }],
   });
 
   const result = await zohoWebhookService.registerWatchChannels(catalystApp);

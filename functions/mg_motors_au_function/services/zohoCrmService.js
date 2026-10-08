@@ -23,15 +23,18 @@ const DEALER_MASTER_FIELDS = [
   // where Name is somehow blank. See dealerSyncService.js/
   // dealerSyncRoutes.js/dealerInviteService.js for where this matters.
   'Name',
-  'Dealer_Name',
   'Dealer_Code',
   'Phone_Number',
-  'Email_Address',
-  'Region',
-  'State',
-  'City',
-  'Status',
+  'Email',
+  'Dealer_Region',
+  'Dealer_State',
+  'City_Suburb',
+  'Dealer_Stage',
 ];
+
+// MG OEM org (live metadata, 2026-10-08): the dealer module's API name is
+// "Dealers" (label "ANZ Dealer"). The trial org called it Dealer_Master.
+const DEALERS_MODULE = 'Dealers';
 
 const CRM_PAGE_SIZE = 200; // Zoho CRM's max allowed per_page
 
@@ -54,7 +57,7 @@ async function fetchDealerMaster() {
   while (moreRecords) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/Dealer_Master`, {
+      response = await axios.get(`${apiDomain}/crm/v8/${DEALERS_MODULE}`, {
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
         },
@@ -65,7 +68,7 @@ async function fetchDealerMaster() {
         },
       });
     } catch (err) {
-      logger.error('zohoCrmService', 'Dealer_Master fetch failed', err);
+      logger.error('zohoCrmService', 'Dealers fetch failed', err);
       throw new Error(
         `Zoho CRM API call failed: ${err.response?.data?.message || err.message}`
       );
@@ -83,39 +86,42 @@ async function fetchDealerMaster() {
 
 const OEM_LEADS_FIELDS = [
   'Created_Time',
-  'Dealer_Code',
+  // MG OEM org: "ANZ Dealer Code" (label) is api_name Franchise_Code.
+  'Franchise_Code',
   'Last_Name',
   'First_Name',
   'Mobile',
   'Email',
   'Enquiry_Model',
-  'Enquiry_Source',
-  'Enquiry_Status',
+  // MG OEM org: label "Enquiry Source" is api_name Lead_Source and label
+  // "Enquiry Status" is Lead_Status — there is no Enquiry_Source or
+  // Enquiry_Status field.
+  'Lead_Source',
   'Lead_Status',
   // Lead_Status_Modified_Time is the real api_name — 'Last_Status_Update'
   // does not exist on this module. Zoho silently DROPS unknown names from
   // the `fields` param rather than erroring, so the old value came back
   // absent on every record and last_status_update was permanently blank.
-  'Lead_Status_Modified_Time',
+  'Last_Status_Changed',
   // REMOVED, verified absent from the Leads module:
   //   'Assigned_Date'   — no equivalent field exists.
   //   'Dealer_Remarks'  — no equivalent field exists. The nearest home is
   //                       the standard 'Description' textarea, but that is
   //                       an MG mapping decision, not one to make silently.
-  'Nature_of_Enquiry',
+  'Nature_of_enquiry',
   'Purchase_Classification',
   'Enquiry_Outcome',
   'Lead_Department',
   'Franchise',
-  'Enquiry_ID',
-  'Customer_Message',
-  'Accept_Privacy_Policy',
-  'Receive_Marketing_Updates',
+  'Enq_ID',
+  'Message',
+  'Accept_Privacy_Polic',
+  'Receive_Offers_Updates',
   'Postcode',
   'Unit_Suite',
-  'Enquiry_Variant',
+  'Variant',
   'Enquiry_Powertrain',
-  'Chat_Transcript',
+  'Chat_Trascript',
   // Zoho silently DROPS unknown names from `fields` rather than erroring
   // (same class of bug as Lead_Status_Modified_Time above) — this name was
   // simply missing from the allowlist, so every fetch came back with this

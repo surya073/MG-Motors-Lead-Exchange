@@ -32,7 +32,7 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
     const moduleName = req.body?.module;
     const catalystApp = catalyst.initialize(req);
 
-    if (moduleName === 'Dealer_Master') {
+    if (moduleName === 'Dealers') {
       const result = await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
       return res.status(200).json({ received: true, result });
     } else if (moduleName === 'Leads') {

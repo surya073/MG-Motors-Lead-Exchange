@@ -94,7 +94,7 @@ function toCatalystDateTimeFromCrm(crmDateString) {
 function mapCrmRecordToLeadRow(crmRecord) {
   
   return {
-    dealer_code: crmRecord.Dealer_Code || '',
+    dealer_code: crmRecord.Franchise_Code || '',
     customer_name: [crmRecord.First_Name, crmRecord.Last_Name].filter(Boolean).join(' ') || '',
     // Normalized once here, at the point the number enters the system, so
     // every downstream consumer (dealer CRM push, UI display, duplicate
@@ -106,7 +106,7 @@ function mapCrmRecordToLeadRow(crmRecord) {
     mobile_number: pathPolicy.normalizePhone(crmRecord.Mobile) || '',
     email_address: crmRecord.Email || '',
     vehicle_model: crmRecord.Enquiry_Model || '',
-    lead_source: crmRecord.Enquiry_Source || '',
+    lead_source: crmRecord.Lead_Source || '',
     lead_status: crmRecord.Lead_Status || '',
     // `Assigned_Date` does not exist in MG CRM. The local column is used as
     // the immutable enquiry-submission timestamp for the 15-minute duplicate
@@ -116,26 +116,27 @@ function mapCrmRecordToLeadRow(crmRecord) {
     // Last_Status_Update and Dealer_Remarks reads referenced fields that do
     // not exist on the Leads module and were silently undefined — verified
     // against live field metadata.
-    last_status_update: toCatalystDateTimeFromCrm(crmRecord.Lead_Status_Modified_Time),
+    last_status_update: toCatalystDateTimeFromCrm(crmRecord.Last_Status_Changed),
     crm_record_id: crmRecord.id || '',
 
     // New fields
-    enquiry_status: crmRecord.Enquiry_Status || '',
-    nature_of_enquiry: crmRecord.Nature_of_Enquiry || '',
+    // MG OEM has no separate Enquiry_Status; its "Enquiry Status" label is Lead_Status.
+    enquiry_status: crmRecord.Lead_Status || '',
+    nature_of_enquiry: crmRecord.Nature_of_enquiry || '',
     purchase_classification: crmRecord.Purchase_Classification || '',
     enquiry_outcome: crmRecord.Enquiry_Outcome || '',
     lead_department: crmRecord.Lead_Department || '',
     franchise: crmRecord.Franchise || '',
-    enquiry_id: crmRecord.Enquiry_ID || '',
-    customer_message: crmRecord.Customer_Message || '',
-    accept_privacy_policy: crmRecord.Accept_Privacy_Policy ?? false,
-    receive_marketing_updates: crmRecord.Receive_Marketing_Updates ?? false,
+    enquiry_id: crmRecord.Enq_ID || '',
+    customer_message: crmRecord.Message || '',
+    accept_privacy_policy: crmRecord.Accept_Privacy_Polic ?? false,
+    receive_marketing_updates: crmRecord.Receive_Offers_Updates ?? false,
     postcode: crmRecord.Postcode || '',
     unit_suite: crmRecord.Unit_Suite || '',
     enquiry_model: crmRecord.Enquiry_Model || '',
-    enquiry_variant: crmRecord.Enquiry_Variant || '',
+    enquiry_variant: crmRecord.Variant || '',
     enquiry_powertrain: crmRecord.Enquiry_Powertrain || '',
-    chat_transcript: crmRecord.Chat_Transcript || '',
+    chat_transcript: crmRecord.Chat_Trascript || '',
     // Written back to MG's own CRM as Dealer_Rejected_Reason (see
     // INTERNAL_FIELD_TO_ZOHO_API_FIELD in crmIntegrationService.js, and the
     // Unhappy 9 handling in processResolvedInboundLead that populates it

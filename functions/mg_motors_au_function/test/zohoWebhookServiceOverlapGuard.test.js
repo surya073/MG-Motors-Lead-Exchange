@@ -34,8 +34,8 @@ function buildFakeCatalystApp({ existingRows = [] } = {}) {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
         if (sql.includes('FROM webhook_channels')) {
-          if (sql.includes("module_name = 'Dealer_Master,Leads'")) {
-            return existingRows.filter((r) => r.module_name === 'Dealer_Master,Leads').map((r) => ({ webhook_channels: r }));
+          if (sql.includes("module_name = 'Dealers,Leads'")) {
+            return existingRows.filter((r) => r.module_name === 'Dealers,Leads').map((r) => ({ webhook_channels: r }));
           }
           const dealerMatch = /dealer_code = '([^']*)'/.exec(sql);
           if (dealerMatch) {

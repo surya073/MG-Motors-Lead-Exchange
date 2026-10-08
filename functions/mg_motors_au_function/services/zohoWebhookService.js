@@ -57,7 +57,7 @@ async function registerWatchChannelsInternal(catalystApp) {
         // so Zoho never had anything to fire notifications for, which is
         // why lead changes only ever showed up via manual sync while
         // Dealer_Master (a real module name) synced live via webhook.
-        events: ['Dealer_Master.all', 'Leads.all'],
+        events: ['Dealers.all', 'Leads.all'],
         notify_url: buildNotifyUrl(),
         token: deriveZohoWatchToken(webhookToken),
         channel_expiry: channelExpiryStr,
@@ -90,7 +90,7 @@ async function registerWatchChannelsInternal(catalystApp) {
   const table = catalystApp.datastore().table('webhook_channels');
   await table.insertRow({
     channel_id: channelId,
-    module_name: 'Dealer_Master,Leads',
+    module_name: 'Dealers,Leads',
     registered_at: toCatalystDateTime(new Date()),
     expires_at: toCatalystDateTime(expiryDate),
   });
@@ -133,7 +133,7 @@ function buildDealerNotifyUrl(dealerCode) {
  * `dealerCode`: a dealer's code to scope to that dealer's own channel
  * (identical behavior to before this was generalized), or null/undefined
  * for the single shared OEM channel. OEM rows are matched via
- * module_name = 'Dealer_Master,Leads' — the fixed value only
+ * module_name = 'Dealers,Leads' — the fixed value only
  * registerWatchChannels ever writes — rather than an empty/absent
  * dealer_code, since every dealer row's module_name is always the
  * different fixed value 'Leads' (written only by
@@ -144,7 +144,7 @@ function buildDealerNotifyUrl(dealerCode) {
 async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, apiDomain) {
   const whereClause = dealerCode
     ? `dealer_code = '${dealerCode}'`
-    : `module_name = 'Dealer_Master,Leads'`;
+    : `module_name = 'Dealers,Leads'`;
   const existing = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM webhook_channels WHERE ${whereClause} ORDER BY CREATEDTIME DESC LIMIT 1`
   );

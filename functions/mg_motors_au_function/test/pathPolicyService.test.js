@@ -166,7 +166,7 @@ test('CRM Created_Time supplies duplicate timing without inventing Assigned_Date
     First_Name: 'Alex',
     Last_Name: 'Morgan',
     Created_Time: '2026-09-23T10:00:00+00:00',
-    Lead_Status_Modified_Time: '2026-09-23T10:05:00+00:00',
+    Last_Status_Changed: '2026-09-23T10:05:00+00:00',
   });
   assert.equal(mapped.assigned_date, '2026-09-23 10:00:00');
   assert.equal(mapped.last_status_update, '2026-09-23 10:05:00');

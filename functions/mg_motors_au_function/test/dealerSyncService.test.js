@@ -29,33 +29,22 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 // changed. Confirmed directly against the live Zoho field list (Setup >
 // Dealer_Master > Fields), not guessed.
 
-test('mapCrmRecordToDealerRow: prefers Name (the field Zoho actually edits on rename) over the stale Dealer_Name custom field', () => {
+test('mapCrmRecordToDealerRow: prefers Name (the field Zoho actually edits on rename) (Dealers module has no separate Dealer_Name)', () => {
   const crmRecord = {
     Name: 'MG Fusion Testing1',
-    Dealer_Name: 'MG Melbourne Central', // stale — never updated by Zoho on rename
     Dealer_Code: 'AU004',
     Phone_Number: '0398765432',
-    Email_Address: 'au004@example.com',
-    Region: 'VIC',
-    State: 'VIC',
-    City: 'Melbourne',
-    Status: 'Active',
+    Email: 'au004@example.com',
+    Dealer_Region: 'VIC',
+    Dealer_State: 'VIC',
+    City_Suburb: 'Melbourne',
+    Dealer_Stage: 'Active',
     id: '12345',
   };
 
   const row = mapCrmRecordToDealerRow(crmRecord);
 
   assert.equal(row.dealer_name, 'MG Fusion Testing1', 'the current record title (Name) must win, not the stale custom field');
-});
-
-test('mapCrmRecordToDealerRow: falls back to Dealer_Name when Name is somehow blank', () => {
-  const row = mapCrmRecordToDealerRow({
-    Name: '',
-    Dealer_Name: 'Legacy Dealer Name',
-    Dealer_Code: 'AU999',
-  });
-
-  assert.equal(row.dealer_name, 'Legacy Dealer Name');
 });
 
 test('syncDealers: a dealer rename in Zoho (Name field) is detected and applied end-to-end', async (t) => {
@@ -82,14 +71,13 @@ test('syncDealers: a dealer rename in Zoho (Name field) is detected and applied 
     data: {
       data: [{
         Name: 'MG Fusion Testing1', // renamed in Zoho
-        Dealer_Name: 'MG Melbourne Central', // unchanged custom field — the trap
         Dealer_Code: 'AU004',
         Phone_Number: '0398765432',
-        Email_Address: 'au004@example.com',
-        Region: 'VIC',
-        State: 'VIC',
-        City: 'Melbourne',
-        Status: 'Active',
+        Email: 'au004@example.com',
+        Dealer_Region: 'VIC',
+        Dealer_State: 'VIC',
+        City_Suburb: 'Melbourne',
+        Dealer_Stage: 'Active',
         id: '12345',
       }],
       info: { more_records: false },
