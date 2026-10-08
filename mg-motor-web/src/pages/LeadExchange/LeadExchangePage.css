@@ -627,38 +627,37 @@
   z-index: 1;
 }
 
-/* Status tab, flush with the top of the card, centered — with smooth
-   concave "notch" curves on both ends where it merges into the card's flat
-   top edge, instead of a pill/rectangle/angled-cut tag. Positioned
-   absolutely (floats above the header, which gets top padding below to
-   leave room for it) rather than taking up its own row.
+/* Status banner: an "architectural" tab hanging from the card's top edge.
+   Its sides flare outward in smooth concave "wings" that melt into the top
+   edge, its bottom corners are rounded, and it carries a soft glow in the
+   status color (passed in as --lead-status-color — an inline `style` prop
+   can't target a pseudo-element directly).
 
-   The banner element itself only positions the TEXT — its own background
-   stays transparent. ::before is the colored shape: the status color
-   (passed in as the --lead-status-color custom property, since an inline
-   `style` prop can't target a pseudo-element directly) fills the box, and
-   two radial-gradient "patches" — card-bg colored, 12px radius, centered
-   exactly on the box's own bottom corners — punch the concave notches into
-   that fill in the same single layer. ::before sits at z-index -1 *within*
-   the banner's own stacking context (the banner is position:absolute, so
-   it has one), so it renders behind the status text but never behind the
-   rest of the card. */
+   Layout of the box: 14px wing | tab body | 14px wing. ::before is the
+   body (rounded bottom + glow); ::after paints the two wings as quarter
+   fillets — color outside a 14px circle centered on the wing tile's inner
+   bottom corner, transparent inside it. Both sit at z-index -1 inside the
+   banner's own stacking context (it is position:absolute), so they render
+   behind the text but never behind the rest of the card. */
 .lead-card__status-banner {
+  --banner-wing: 12px;
   position: absolute;
   top: 0;
   left: 50%;
   transform: translateX(-50%);
   z-index: 3;
   display: inline-flex;
-  padding: 4px 20px;
+  align-items: center;
+  padding: 4px calc(var(--banner-wing) + 8px) 5px;
   text-align: center;
-  font-size: 9px;
+  font-size: 10px;
+  line-height: 1.3;
   font-weight: var(--fw-bold, 700);
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #fff;
   white-space: nowrap;
-  max-width: calc(100% - var(--space-6, 48px));
+  max-width: calc(100% - var(--space-4, 16px));
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -666,12 +665,26 @@
 .lead-card__status-banner::before {
   content: "";
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: var(--banner-wing);
+  right: var(--banner-wing);
   z-index: -1;
+  border-radius: 0 0 10px 10px;
   background-color: var(--lead-status-color);
+}
+
+.lead-card__status-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--banner-wing);
+  z-index: -1;
   background-image:
-    radial-gradient(circle 12px at 0 100%, var(--color-bg-elevated) 99%, transparent 100%),
-    radial-gradient(circle 12px at 100% 100%, var(--color-bg-elevated) 99%, transparent 100%);
+    radial-gradient(circle var(--banner-wing) at 0 100%, transparent calc(var(--banner-wing) - 0.5px), var(--lead-status-color) var(--banner-wing)),
+    radial-gradient(circle var(--banner-wing) at 100% 100%, transparent calc(var(--banner-wing) - 0.5px), var(--lead-status-color) var(--banner-wing));
+  background-size: var(--banner-wing) var(--banner-wing);
+  background-position: left top, right top;
   background-repeat: no-repeat;
 }
 
@@ -691,7 +704,7 @@
   gap: var(--space-3);
   /* Extra top padding clears the absolutely-positioned status banner
      floating above it (see .lead-card__status-banner). */
-  padding: 26px var(--space-3) var(--space-2);
+  padding: 30px var(--space-3) var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -1023,7 +1036,7 @@
   }
 
   .lead-card__header {
-    padding: 28px var(--space-3) var(--space-2);
+    padding: 30px var(--space-3) var(--space-2);
   }
 
   .lead-card__avatar {
