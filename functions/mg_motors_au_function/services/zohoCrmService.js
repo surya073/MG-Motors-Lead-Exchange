@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const { getZohoConfig } = require('../config/env');
+const { getZohoConfig, getLeadSyncSince } = require('../config/env');
 const { getAccessToken } = require('./zohoAuthService');
 const logger = require('../utils/logger');
 
@@ -133,20 +133,26 @@ const OEM_LEADS_FIELDS = [
 
 
 /**
- * Fetches ALL OEM_Leads records from Zoho CRM, paging through
- * info.more_records until exhausted. Previously fetched only page 1 —
- * with default per_page behavior returning 100 records, this silently
- * dropped any leads beyond the first 100 (e.g. 102 in CRM, 100 synced).
+ * Fetches OEM Leads from Zoho CRM. Zoho v8 refuses `page` beyond the first
+ * 2000 records ("You can only get the first 2000 records without using
+ * page_token param"), so after page 1 this follows info.next_page_token.
+ *
+ * With LEAD_SYNC_SINCE set it walks newest-first and stops at the first lead
+ * created before the cutoff — the MG org holds ~72k historical leads that
+ * must not be mirrored. Records are always returned oldest-first so Happy 3
+ * (keep the earliest enquiry, link the later repeat) is unaffected.
  */
 async function fetchOemLeads() {
   const { apiDomain } = getZohoConfig();
   const accessToken = await getAccessToken();
+  const since = getLeadSyncSince();
 
   const allRecords = [];
-  let page = 1;
+  let pageToken = null;
   let moreRecords = true;
+  let reachedCutoff = false;
 
-  while (moreRecords) {
+  while (moreRecords && !reachedCutoff) {
     let response;
     try {
       response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
@@ -155,13 +161,10 @@ async function fetchOemLeads() {
         },
         params: {
           fields: OEM_LEADS_FIELDS.join(','),
-          page,
           per_page: CRM_PAGE_SIZE,
-          // Happy 3 is directional: keep the earliest enquiry and link the
-          // later exact repeat. Explicit ordering avoids API/default-ID order
-          // deciding which record is treated as the original.
           sort_by: 'Created_Time',
-          sort_order: 'asc',
+          sort_order: since ? 'desc' : 'asc',
+          ...(pageToken ? { page_token: pageToken } : {}),
         },
       });
     } catch (err) {
@@ -172,14 +175,19 @@ async function fetchOemLeads() {
     }
 
     const records = response.data?.data || [];
-    allRecords.push(...records);
+    for (const record of records) {
+      if (since && new Date(record.Created_Time) < since) {
+        reachedCutoff = true;
+        break;
+      }
+      allRecords.push(record);
+    }
 
-    moreRecords = Boolean(response.data?.info?.more_records);
-
-    page += 1;
+    pageToken = response.data?.info?.next_page_token || null;
+    moreRecords = Boolean(response.data?.info?.more_records) && Boolean(pageToken);
   }
 
-  return allRecords;
+  return since ? allRecords.reverse() : allRecords;
 }
 
 /**

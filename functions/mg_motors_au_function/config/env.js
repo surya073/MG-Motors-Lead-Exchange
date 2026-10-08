@@ -30,6 +30,22 @@ function getZohoConfig() {
 }
 
 /**
+ * Optional lower bound (ISO 8601, e.g. 2026-10-08T00:00:00+11:00) on the OEM
+ * lead Created_Time that lead sync pulls. MG's OEM org holds ~72k historical
+ * leads that must not be mirrored or pushed to dealers; unset means "all
+ * leads". Returns a Date or null.
+ */
+function getLeadSyncSince() {
+  const raw = (process.env.LEAD_SYNC_SINCE || '').trim();
+  if (!raw) return null;
+  const since = new Date(raw);
+  if (Number.isNaN(since.getTime())) {
+    throw new Error(`Invalid LEAD_SYNC_SINCE "${raw}" — expected an ISO 8601 date/time`);
+  }
+  return since;
+}
+
+/**
  * Kept as a SEPARATE function from getZohoConfig() deliberately — this
  * key is only needed by integrationAuthService.js when a dealer's
  * EXTERNAL_CRM integration actually saves/reads a credential. Bundling
@@ -73,4 +89,4 @@ function getAiAssistantConfig() {
   };
 }
 
-module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig };
+module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig, getLeadSyncSince };

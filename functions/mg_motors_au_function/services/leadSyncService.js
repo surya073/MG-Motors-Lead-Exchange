@@ -1,6 +1,7 @@
 'use strict';
 
 const { fetchOemLeads, updateOemLead } = require('./zohoCrmService');
+const { getLeadSyncSince } = require('../config/env');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
@@ -698,8 +699,11 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
     }
   }
 
-  // Soft-delete pass — same reasoning as dealerSyncService.
-  for (const [crmId, existingRow] of existingLeadsByCrmId) {
+  // Soft-delete pass — same reasoning as dealerSyncService. Skipped when a
+  // LEAD_SYNC_SINCE window is active: the fetch is then deliberately partial,
+  // so "not seen" no longer means "gone from the CRM".
+  const fetchIsWindowed = Boolean(getLeadSyncSince());
+  for (const [crmId, existingRow] of fetchIsWindowed ? [] : existingLeadsByCrmId) {
     if (!seenCrmIds.has(crmId) && existingRow.sync_status !== 'Removed') {
       try {
         await table.updateRow({
