@@ -23,7 +23,7 @@ const MAX_BATCH_ROWS = 500;
 // How many queued failures trigger an immediate consolidated email.
 const BATCH_SIZE = (() => {
   const configured = Number(process.env.ALERT_BATCH_SIZE);
-  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 10;
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 100;
 })();
 
 // How long a failure may sit in the queue before it is sent as part of a

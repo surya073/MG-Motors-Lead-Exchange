@@ -26,7 +26,7 @@ Configure these Catalyst environment variables before deployment:
 - `INTEGRATION_ALERT_FROM_EMAIL`: verified Catalyst sender.
 - `INTEGRATION_ALERT_TO_EMAILS`: comma-separated MG and FI Digital immediate-alert recipients.
 - `DAILY_ERROR_REPORT_TO_EMAILS`: comma-separated 12pm report recipients.
-- `ALERT_BATCH_SIZE=10` (10 is also the default): integration failures are queued into the `integration_alert_queue` datastore table (technical/reference fields only — no customer PII) and sent as one consolidated email once this many are pending.
+- `ALERT_BATCH_SIZE=100` (100 is also the default; max useful value is 500, the queue read cap): integration failures are queued into the `integration_alert_queue` datastore table (technical/reference fields only — no customer PII) and sent as one consolidated email once this many are pending.
 - `ALERT_BATCH_WINDOW_MINUTES=30` (30 is also the default): if fewer than `ALERT_BATCH_SIZE` failures are queued, whatever is pending is still sent as one consolidated email once the oldest of them has waited this long. Flushed from the `/cron/fast-recover` sweep, so that cron must stay scheduled for window-based flushing to happen. Provision the `integration_alert_queue` table (columns `scenario_code`, `scenario_message`, `priority_for`, `dealer_code`, `lead_id`, `reason`, all string — the column is `priority_for`, not `priority`, since `priority` is a reserved word in Catalyst Data Store) before enabling this in an environment.
 - `DUPLICATE_WINDOW_MINUTES=15` (15 is also the default).
 - `UNHAPPY_3_ESCALATION_WINDOW_MINUTES=1440` or omit it in production.

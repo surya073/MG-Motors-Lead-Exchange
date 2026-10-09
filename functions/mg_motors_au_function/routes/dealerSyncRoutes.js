@@ -8,6 +8,10 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+// Per-instance guard: overlapping manual syncs race on the same crm_record_id
+// inserts ("Duplicate value for crm_record_id") and double-dispatch leads.
+let leadSyncRunning = false;
+
 /**
  * Transforms raw Zoho CRM Dealers records into the app's clean
  * response shape. Kept as a pure function, separate from the route
@@ -97,6 +101,10 @@ router.post('/sync/dealers', async (req, res) => {
  * crm_record_id, and logs the run to sync_logs.
  */
 router.post('/sync/leads', async (req, res) => {
+  if (leadSyncRunning) {
+    return res.status(409).json({ success: false, error: 'A lead sync is already running. Wait for it to finish.' });
+  }
+  leadSyncRunning = true;
   try {
     const catalystApp = res.locals.catalystApp;
     const currentUser = res.locals.currentUser; // FIXED
@@ -110,6 +118,8 @@ router.post('/sync/leads', async (req, res) => {
   } catch (err) {
     logger.error('dealerSyncRoutes', 'POST /sync/leads failed', err);
     res.status(502).json({ success: false, error: err.message });
+  } finally {
+    leadSyncRunning = false;
   }
 });
 
