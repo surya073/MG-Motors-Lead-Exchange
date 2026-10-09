@@ -24,7 +24,8 @@ const app = express();
 
 app.use('/', webhookRoutes);
 
-app.use(express.json({ limit: '20mb' }));
+// strict:false so a bare `null` body (an empty POST sent as JSON) is accepted instead of 400.
+app.use(express.json({ limit: '20mb', strict: false }));
 
 app.use('/', cronRoutes);
 

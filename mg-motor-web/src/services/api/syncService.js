@@ -7,12 +7,12 @@ import axiosInstance from "./axiosInstance";
 const SYNC_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function syncDealersService() {
-  const { data } = await axiosInstance.post("/mg_motors_au_function/sync/dealers", null, { timeout: SYNC_TIMEOUT_MS });
+  const { data } = await axiosInstance.post("/mg_motors_au_function/sync/dealers", {}, { timeout: SYNC_TIMEOUT_MS });
   return data;
 }
 
 export async function syncLeadsService() {
-  const { data } = await axiosInstance.post("/mg_motors_au_function/sync/leads", null, { timeout: SYNC_TIMEOUT_MS });
+  const { data } = await axiosInstance.post("/mg_motors_au_function/sync/leads", {}, { timeout: SYNC_TIMEOUT_MS });
   return data;
 }
 
