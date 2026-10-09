@@ -171,6 +171,35 @@ const AU008_VERIFIED_STATUS_MAPPINGS = [
   { source_status: "Pre-Qualified", target_status: "Pre-Qualified" },
 ];
 
+// Fusion AMS-Pro Lead API (data/lead-api-mg-motors-openapi.yaml). Dotted
+// targets are expanded into the nested body by fusionSdAdapter. Fusion has
+// no dealer-code or consent field: `campaign` carries the dealer code and
+// `privacy` is an ignored key that only satisfies the required mapping.
+const FUSION_DEFAULT_FIELD_MAPPINGS = [
+  { source_field: "enquiry_id", target_field: "refID", data_type: "string", required: true },
+  { source_field: "customer_name", target_field: "contact.firstName", data_type: "string", required: true },
+  { source_field: "mobile_number", target_field: "contact.phone", data_type: "string", required: true },
+  { source_field: "email_address", target_field: "contact.email", data_type: "string", required: true },
+  { source_field: "postcode", target_field: "contact.areaCode", data_type: "string", required: true },
+  { source_field: "vehicle_model", target_field: "requirement.model", data_type: "string", required: true },
+  { source_field: "nature_of_enquiry", target_field: "enquiryType", data_type: "string", required: true },
+  { source_field: "lead_source", target_field: "leadSource", data_type: "string", required: true },
+  { source_field: "dealer_code", target_field: "campaign", data_type: "string", required: true },
+  { source_field: "accept_privacy_policy", target_field: "privacy", data_type: "boolean", required: true },
+  { source_field: "lead_status", target_field: "enquiryStatus", data_type: "string", required: true },
+  { source_field: "receive_marketing_updates", target_field: "contact.optinEmail", data_type: "boolean", required: false },
+  { source_field: "dealer_rejected_reason", target_field: "lostReason", data_type: "string", required: false },
+];
+
+// Fusion's enquiryStatus accepts Open, Won, Delivered, Lost, Prospect Lost.
+// Only the unambiguous pairs are preset: MG has no Won/Delivered equivalent,
+// so mapping Contacted/Contact in Future there would falsely mark deals won.
+const FUSION_DEFAULT_STATUS_MAPPINGS = [
+  { source_status: "Not Contacted", target_status: "Open" },
+  { source_status: "Lost", target_status: "Lost" },
+  { source_status: "Not Qualified", target_status: "Prospect Lost" },
+];
+
 const EMPTY_CONFIG = {
   integration_type: "PORTAL",
   crm_type: "GENERIC_REST",
@@ -745,6 +774,20 @@ export default function DealerCRMConfig() {
     // Deliberately drop ROWIDs: the backend safely upserts these canonical
     // pairs first, then removes the old reversed/duplicate AU008 rows.
     setStatusMappings(AU008_VERIFIED_STATUS_MAPPINGS.map((mapping) => ({ ...mapping })));
+    setEditingStatusRows(new Set());
+  };
+
+  // ROWIDs are dropped on purpose (same as the AU008 map): the backend
+  // inserts the new set first, then deletes the stale rows.
+  const applyFusionDefaultFieldMap = () => {
+    setSaveSuccess(false);
+    setFieldMappings(FUSION_DEFAULT_FIELD_MAPPINGS.map((mapping) => ({ ...mapping })));
+    setEditingFieldRows(new Set());
+  };
+
+  const applyFusionDefaultStatusMap = () => {
+    setSaveSuccess(false);
+    setStatusMappings(FUSION_DEFAULT_STATUS_MAPPINGS.map((mapping) => ({ ...mapping })));
     setEditingStatusRows(new Set());
   };
 
@@ -1760,6 +1803,18 @@ export default function DealerCRMConfig() {
                           Tell us which field in the dealer's CRM matches each of our fields, so lead details line up
                           correctly on both sides.
                         </p>
+                        {isFusionSd && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={applyFusionDefaultFieldMap}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
+                          >
+                            <ShieldCheck size={14} />
+                            Load Fusion default map
+                          </button>
+                        )}
                         <div className="dealer-crm-config__mapping-header">
                           <span>Our Field</span>
                           <span />
@@ -1909,6 +1964,19 @@ export default function DealerCRMConfig() {
                           >
                             <ShieldCheck size={14} />
                             Load verified AU008 map
+                          </button>
+                        )}
+
+                        {isFusionSd && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={applyFusionDefaultStatusMap}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
+                          >
+                            <ShieldCheck size={14} />
+                            Load Fusion default map
                           </button>
                         )}
 
