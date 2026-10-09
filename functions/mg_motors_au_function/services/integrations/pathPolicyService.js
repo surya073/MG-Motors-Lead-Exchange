@@ -108,6 +108,10 @@ const REQUIRED_DELIVERY_MAPPING_FIELDS = Object.freeze([
   'lead_status',
 ]);
 
+// Mappings for these must still exist (the status field is needed to
+// translate inbound dealer statuses), but an empty VALUE is allowed.
+const OPTIONAL_DELIVERY_VALUE_FIELDS = Object.freeze(['vehicle_model', 'lead_status']);
+
 // Verified from MG's live Leads.Lead_Status metadata on 2026-09-23.
 // At the final dealer -> MG boundary, holding a newly-added value until
 // review is safer than losing the event to Zoho's INVALID_DATA response.
@@ -305,17 +309,14 @@ function validateLeadForDelivery(lead) {
   if (!isValidAustralianPostcode(lead.postcode)) {
     issues.push(validationIssue('postcode', 'Must be a valid four-digit Australian postcode', lead.postcode));
   }
-  if (!normalizeText(lead.vehicle_model || lead.enquiry_model || lead.enquiry_variant)) {
-    issues.push(validationIssue('vehicle_model', 'An enquiry model or variant is required', lead.vehicle_model));
-  }
+  // vehicle_model and lead_status are deliberately NOT delivery-blocking:
+  // MG's OEM CRM receives enquiries without a model or status, and those
+  // must still reach the dealer. See OPTIONAL_DELIVERY_VALUE_FIELDS.
   if (!normalizeText(lead.nature_of_enquiry)) {
     issues.push(validationIssue('nature_of_enquiry', 'Nature of enquiry is required', lead.nature_of_enquiry));
   }
   if (!normalizeText(lead.lead_source)) {
     issues.push(validationIssue('lead_source', 'Inquiry source is required', lead.lead_source));
-  }
-  if (!normalizeText(lead.lead_status)) {
-    issues.push(validationIssue('lead_status', 'Lead status is required', lead.lead_status));
   }
 
   const consent = resolveBoolean(lead.accept_privacy_policy);
@@ -482,6 +483,7 @@ module.exports = {
   isWaitingForDealerActionStatus,
   isValidEmail,
   isValidAustralianMobile,
+  OPTIONAL_DELIVERY_VALUE_FIELDS,
   validateLeadForDelivery,
   duplicateFingerprint,
   isBusinessDuplicate,

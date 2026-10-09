@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeStatus } = require('./pathPolicyService');
+const { normalizeStatus, OPTIONAL_DELIVERY_VALUE_FIELDS } = require('./pathPolicyService');
 
 /**
  * leadMappingService.js
@@ -27,7 +27,11 @@ function mapZohoLeadToExternal(zohoLead, fieldMappings, { excludeSourceFields = 
   fieldMappings.forEach((mapping) => {
     if (excluded.has(mapping.source_field)) return;
     const value = zohoLead[mapping.source_field];
-    if ((value === undefined || value === null || value === '') && isTrue(mapping.required)) {
+    const isEmpty = value === undefined || value === null || value === '';
+    // Optional values are omitted when empty rather than sent as '' (which a
+    // dealer picklist would reject) or treated as a missing required field.
+    if (isEmpty && OPTIONAL_DELIVERY_VALUE_FIELDS.includes(mapping.source_field)) return;
+    if (isEmpty && isTrue(mapping.required)) {
       missingRequired.push(mapping.source_field);
       return;
     }

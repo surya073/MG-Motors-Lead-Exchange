@@ -250,3 +250,18 @@ test('ownership protects contact fields and never blanks an MG value', () => {
   assert.deepEqual(result.conflicts.map((item) => item.field), ['mobile_number']);
   assert.deepEqual(result.ignored.map((item) => item.field), ['postcode']);
 });
+
+test('vehicle_model and lead_status are not delivery-blocking, and omitted from the outbound payload when empty', () => {
+  const lead = validLead({ vehicle_model: '', enquiry_variant: '', lead_status: '' });
+  const validation = policy.validateLeadForDelivery(lead);
+  assert.equal(validation.valid, true);
+  assert.deepEqual(validation.issues, []);
+
+  const { mapZohoLeadToExternal } = require('../services/integrations/leadMappingService');
+  const payload = mapZohoLeadToExternal(lead, [
+    { source_field: 'vehicle_model', target_field: 'requirement.model', required: true },
+    { source_field: 'lead_status', target_field: 'enquiryStatus', required: true },
+    { source_field: 'customer_name', target_field: 'contact.firstName', required: true },
+  ]);
+  assert.deepEqual(payload, { 'contact.firstName': 'Alex Morgan' });
+});
