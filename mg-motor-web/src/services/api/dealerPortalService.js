@@ -13,6 +13,14 @@ export const dealerPortalService = {
     return data;
   },
 
+  // One page of the dealer's leads, searched / filtered / sorted on the server.
+  // Params: page (1-based), pageSize, search, status, sortKey, sortDir,
+  // includeSummary. Resolves { leads, pagination, summary?, dealerCode }.
+  async myLeadsPage(params = {}) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/dealer/leads", { params });
+    return data;
+  },
+
   async myLeadsSummary() {
     const { data } = await axiosInstance.get("/mg_motors_au_function/dealer/leads/summary");
     return data.summary;

@@ -3,8 +3,10 @@
 const express = require('express');
 const {
   resolveDealerCodeForUser,
-  getLeadsForDealer,
-  summarizeLeadsByStatus,
+  getAllLeadsForDealer,
+  getDealerLeadsPage,
+  getDealerLeadCounts,
+  getDealerLeadSummary,
   getOwnedLead,
 } = require('../services/leadAccessService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
@@ -53,7 +55,21 @@ async function requireDealerCode(req, res) {
 /**
  * GET /dealer/leads
  * -----------------------------------------------------------------------
- * Step 4/5: returns only the logged-in dealer's own leads. Path uses a
+ * Step 4/5: returns only the logged-in dealer's own leads. The dealer is
+ * ALWAYS the one resolved from the session by requireDealerCode(); any
+ * dealerCode sent by the client is ignored, so one dealer can never request
+ * another's leads.
+ *
+ * With `page` and/or `pageSize` it returns one page, searched, filtered and
+ * sorted in the database: query params search, status, sortKey
+ * (customer_name | vehicle_model | lead_status | last_status_update), sortDir
+ * (asc | desc), includeSummary. The response keeps `leads` and `dealerCode` and
+ * adds `pagination` ({ page, pageSize, total, totalPages, hasMore }) and, with
+ * includeSummary=true, `summary` ({ total, byStatus }) for the KPI cards.
+ *
+ * Without either param it returns every lead (read completely — a bare ZCQL
+ * SELECT silently stops at 100 rows), with `total` and a `truncated` flag if
+ * the safety bound was hit. Path uses a
  * /dealer/leads prefix (not /leads/my) specifically to avoid colliding
  * with the legacy admin route app.get('/leads/:rowId', ...) already
  * registered in index.js — Express matches routes in registration order,
@@ -65,8 +81,31 @@ router.get('/dealer/leads', async (req, res) => {
     const dealerCode = await requireDealerCode(req, res);
     if (!dealerCode) return;
 
-    const leads = await getLeadsForDealer(res.locals.catalystApp, dealerCode);
-    res.status(200).json({ success: true, dealerCode, leads });
+    const catalystApp = res.locals.catalystApp;
+
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const { leads, pagination } = await getDealerLeadsPage(catalystApp, dealerCode, {
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+        search: req.query.search,
+        status: req.query.status,
+        sortKey: req.query.sortKey,
+        sortDir: req.query.sortDir,
+      });
+      const summary = String(req.query.includeSummary).toLowerCase() === 'true'
+        ? await getDealerLeadCounts(catalystApp, dealerCode)
+        : undefined;
+      return res.status(200).json({
+        success: true,
+        dealerCode,
+        leads,
+        pagination,
+        ...(summary ? { summary } : {}),
+      });
+    }
+
+    const { leads, truncated, total } = await getAllLeadsForDealer(catalystApp, dealerCode);
+    res.status(200).json({ success: true, dealerCode, leads, total, ...(truncated ? { truncated: true } : {}) });
   } catch (err) {
     logger.error('dealerLeadRoutes', 'GET /dealer/leads failed', err);
     res.status(502).json({ success: false, error: err.message });
@@ -84,8 +123,8 @@ router.get('/dealer/leads/summary', async (req, res) => {
     const dealerCode = await requireDealerCode(req, res);
     if (!dealerCode) return;
 
-    const leads = await getLeadsForDealer(res.locals.catalystApp, dealerCode);
-    const summary = summarizeLeadsByStatus(leads);
+    // COUNT … GROUP BY in the database — exact however many leads the dealer has.
+    const summary = await getDealerLeadSummary(res.locals.catalystApp, dealerCode);
     res.status(200).json({ success: true, dealerCode, summary });
   } catch (err) {
     logger.error('dealerLeadRoutes', 'GET /dealer/leads/summary failed', err);

@@ -344,9 +344,14 @@ async function resolveDealerCodeForUser(catalystApp, catalystUserId) {
 }
 
 async function getMyLeads(catalystApp, dealerCode, { leadStatus } = {}) {
-  const leads = await leadAccessService.getLeadsForDealer(catalystApp, dealerCode);
-  const filtered = leadStatus ? leads.filter((l) => l.lead_status === leadStatus) : leads;
-  return { count: filtered.length, leads: filtered.slice(0, 30).map(toCompactLead) };
+  // One page of 30 plus an exact total, both restricted to this dealer in the
+  // database — not "every lead, then filter" (which also stopped at 100 rows).
+  const { leads, pagination } = await leadAccessService.getDealerLeadsPage(catalystApp, dealerCode, {
+    status: leadStatus,
+    page: 1,
+    pageSize: 30,
+  });
+  return { count: pagination.total, leads: leads.map(toCompactLead) };
 }
 
 module.exports = {

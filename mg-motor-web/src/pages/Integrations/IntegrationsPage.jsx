@@ -222,6 +222,12 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
         <p className="overview__empty-note">No integration activity found for the selected filters.</p>
       ) : (
         <>
+          {/* A page is not the report: say how many events match in total. */}
+          <p className="panel-card__meta error-report__scope">
+            Showing {(page - 1) * (data.pageSize || 25) + 1}–{(page - 1) * (data.pageSize || 25) + data.logs.length} of{" "}
+            {(data.total || 0).toLocaleString()} matching events (page {page} of {totalPages}). The total counts every
+            matching event for these filters, not only this page.
+          </p>
           <div className="integrations-page__table-wrap">
             <table>
               <thead>

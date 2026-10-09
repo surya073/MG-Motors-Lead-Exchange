@@ -3,12 +3,22 @@
 const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
 const { guardSweep } = require('./sweepOverlapGuard');
+const { tailWindow, countFrom } = require('./sweepWindow');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const STATUS_MAPPINGS_TABLE = 'integration_status_mappings';
 const MAX_ROWS_TO_SCAN = 200;
+// Each sweep reads the oldest HEAD rows and a rotating TAIL slice (see
+// sweepWindow.js). Rows that stay FAILED — awaiting a mapping, backed off,
+// waiting for a dealer record — are not rewritten, so a fixed "oldest 200"
+// window fills up with them and newer failures are never examined; the live
+// data already holds 1,252 such rows.
+const HEAD_ROWS = MAX_ROWS_TO_SCAN / 2;
+const TAIL_ROWS = MAX_ROWS_TO_SCAN - HEAD_ROWS;
+const REPLAY_CANDIDATE_WHERE =
+  "WHERE happy_unhappy_path_name IN ('Unhappy 4', 'Unhappy 7', 'Unhappy 9') AND status = 'FAILED'";
 const MAX_REPLAYS_PER_SWEEP = 20;
 
 // Added for the 200+ dealer concurrency audit: MAX_REPLAYS_PER_SWEEP alone
@@ -141,10 +151,32 @@ function latest(values) {
  *   - a replay that is still failing is silent (no new log, no new alert);
  *     the original Unhappy 4 stays the single open record.
  */
-async function runInboundReplaySweepInternal(catalystApp) {
-  const queuedRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${INTEGRATION_LOGS_TABLE} WHERE happy_unhappy_path_name IN ('Unhappy 4', 'Unhappy 7', 'Unhappy 9') AND status = 'FAILED' ORDER BY CREATEDTIME ASC LIMIT 0, ${MAX_ROWS_TO_SCAN}`
+async function selectReplayCandidates(catalystApp, now = Date.now()) {
+  // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
+  const slice = (offset, size) =>
+    catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE} ORDER BY CREATEDTIME ASC, ROWID ASC LIMIT ${offset + 1}, ${size}`
+    );
+
+  const head = await slice(0, HEAD_ROWS);
+  if (head.length < HEAD_ROWS) return head;
+
+  const total = countFrom(
+    await catalystApp.zcql().executeZCQLQuery(
+      `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE}`
+    ),
+    INTEGRATION_LOGS_TABLE
   );
+  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now });
+  if (!tail) return head;
+
+  const tailRows = await slice(tail.offset, TAIL_ROWS);
+  const seen = new Set(head.map((r) => r[INTEGRATION_LOGS_TABLE].ROWID));
+  return [...head, ...tailRows.filter((r) => !seen.has(r[INTEGRATION_LOGS_TABLE].ROWID))];
+}
+
+async function runInboundReplaySweepInternal(catalystApp) {
+  const queuedRows = await selectReplayCandidates(catalystApp);
   const results = {
     queued: queuedRows.length,
     leads: 0,
@@ -322,4 +354,4 @@ async function runInboundReplaySweepInternal(catalystApp) {
 // sweepOverlapGuard.js. Exported name/signature unchanged.
 const runInboundReplaySweep = guardSweep('inboundReplaySweep', runInboundReplaySweepInternal);
 
-module.exports = { runInboundReplaySweep };
+module.exports = { runInboundReplaySweep, _test: { selectReplayCandidates, HEAD_ROWS, TAIL_ROWS } };

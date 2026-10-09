@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpDown, SquarePen, LayoutGrid, List, Car, Megaphone, Phone, Mail, Calendar, Eye } from "lucide-react";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import Table from "../../ui/Table/Table";
@@ -120,7 +120,12 @@ function MyLeadCardSkeleton() {
 export default function MyLeadsPage() {
   const { showAlert } = useAlerts();
 
+  // `leads` is only the CURRENT PAGE — searched, filtered and sorted by the
+  // server for this dealer. `total` is the number of leads matching the
+  // search/filter; `counts` are the dealer's overall KPI figures.
   const [leads, setLeads] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({ total: 0, byStatus: {} });
   const [dealerCode, setDealerCode] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -139,26 +144,63 @@ export default function MyLeadsPage() {
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(() => (view === "grid" ? CARD_PAGE_SIZE_OPTIONS[0] : 10));
 
-  const loadLeads = async () => {
+  // Search runs on the server, so wait for a pause in typing.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Only the newest request may update the page.
+  const requestSeq = useRef(0);
+  const summaryLoaded = useRef(false);
+
+  // Loads the page described by the current search, filter, sort and page.
+  // The KPI counts only change when leads do, so they are fetched on the first
+  // load, a manual retry, and after a lead is saved — not on every page turn.
+  const loadLeads = async ({ refreshSummary = false } = {}) => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setLoadError(null);
     try {
-      const result = await dealerPortalService.myLeads();
+      const result = await dealerPortalService.myLeadsPage({
+        page: pageIndex + 1,
+        pageSize,
+        search: debouncedSearch,
+        status: statusFilter,
+        sortKey: sortKey || undefined,
+        sortDir: sortKey ? sortDir : undefined,
+        includeSummary: refreshSummary || !summaryLoaded.current,
+      });
+      if (seq !== requestSeq.current) return;
+
+      const { total: matching, totalPages } = result.pagination;
+      if (result.leads.length === 0 && matching > 0 && pageIndex > 0) {
+        // The page no longer exists (e.g. leads changed): step back.
+        setPageIndex(Math.max(0, totalPages - 1));
+        return;
+      }
       setLeads(result.leads);
+      setTotal(matching);
       setDealerCode(result.dealerCode);
+      if (result.summary) {
+        setCounts(result.summary);
+        summaryLoaded.current = true;
+      }
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       const message = err?.response?.data?.error || "Couldn't load your leads. Try again.";
       setLoadError(message);
       showAlert("error", message, { title: "Load failed" });
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pageIndex, pageSize, debouncedSearch, statusFilter, sortKey, sortDir]);
 
   const changeView = (next) => {
     setView(next);
@@ -169,43 +211,17 @@ export default function MyLeadsPage() {
     setPageIndex(0);
   };
 
-  // Computed client-side from the single leads fetch above, rather than
-  // a separate call to /dealer/leads/summary — same counts, one request.
-  const summary = useMemo(() => {
-    const counts = { total: leads.length };
-    STATUS_CARDS.forEach(({ key }) => {
-      counts[key] = leads.filter((l) => l.lead_status === key).length;
-    });
-    return counts;
-  }, [leads]);
+  // KPI cards: the dealer's overall figures from the server (not limited by
+  // the search/filter, and exact however many leads the dealer has).
+  const summary = {
+    total: counts.total,
+    ...Object.fromEntries(STATUS_CARDS.map(({ key }) => [key, counts.byStatus?.[key] || 0])),
+  };
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    let rows = leads.filter((l) => {
-      const matchesSearch =
-        !term ||
-        [l.customer_name, l.email_address, l.mobile_number, l.vehicle_model]
-          .filter(Boolean)
-          .some((field) => field.toLowerCase().includes(term));
-      const matchesStatus = !statusFilter || l.lead_status === statusFilter;
-      return matchesSearch && matchesStatus;
-    });
-
-    if (sortKey) {
-      rows = [...rows].sort((a, b) => {
-        const av = a[sortKey] ?? "";
-        const bv = b[sortKey] ?? "";
-        const cmp = String(av).localeCompare(String(bv));
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-    }
-
-    return rows;
-  }, [leads, search, statusFilter, sortKey, sortDir]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  // The server already searched, filtered, sorted and paged.
+  const pageRows = leads;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
-  const pageRows = filtered.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
 
   const resetPage = () => setPageIndex(0);
 
@@ -253,6 +269,9 @@ export default function MyLeadsPage() {
   const handleSaved = (updatedLead) => {
     setLeads((prev) => prev.map((l) => (l.ROWID === updatedLead.ROWID ? { ...l, ...updatedLead } : l)));
     setActiveLead(null);
+    // A status change moves the KPI counts and may move the lead out of the
+    // current filter, so re-read the page and the counts from the server.
+    loadLeads({ refreshSummary: true });
     showAlert("success", `${updatedLead.customer_name || "Lead"} updated successfully.`);
   };
 
@@ -302,7 +321,7 @@ export default function MyLeadsPage() {
       {loadError && (
         <Alert
           variant="error"
-          action={{ label: "Retry", onClick: loadLeads }}
+          action={{ label: "Retry", onClick: () => loadLeads({ refreshSummary: true }) }}
           onClose={() => setLoadError(null)}
         >
           {loadError}
@@ -467,7 +486,7 @@ export default function MyLeadsPage() {
       <Pagination
         page={currentPage + 1}
         pageCount={pageCount}
-        total={filtered.length}
+        total={total}
         noun="lead"
         onPageChange={(p) => setPageIndex(p - 1)}
         pageSize={pageSize}

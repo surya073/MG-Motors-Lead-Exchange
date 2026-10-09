@@ -202,16 +202,6 @@ function cellText(value) {
   return value && String(value).trim() ? value : "—";
 }
 
-// Latest of the lead's known timestamps — used to sort "recently active"
-// leads (added OR updated) to the top. Catalyst datetime strings are
-// fixed-width, so plain string comparison sorts them correctly.
-function lastActivityAt(lead) {
-  return [lead.MODIFIEDTIME, lead.last_status_update, lead.CREATEDTIME]
-    .filter(Boolean)
-    .map(String)
-    .reduce((latest, value) => (value > latest ? value : latest), "");
-}
-
 function initialsFor(name) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
@@ -274,7 +264,11 @@ export default function LeadExchangePage() {
   const isViewUser = user?.appRole === APP_ROLES.VIEW_USER;
   const viewOnlyTitle = isViewUser ? "View-only access" : undefined;
 
+  // `leads` is only the CURRENT PAGE, already filtered and sorted by the
+  // server; `total` and `facets` describe the whole matching set.
   const [leads, setLeads] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [syncing, setSyncing] = useState(false);
@@ -307,15 +301,30 @@ export default function LeadExchangePage() {
   // /lead-exchange/:leadId re-resolves the same lead from the URL, and
   // navigating to the bare /lead-exchange list (e.g. via the sidebar) can
   // never leave a stale detail view showing, since there is no id to match.
+  // The list only holds one page, so a lead that is not on it is fetched by
+  // id from the server.
+  const [fetchedDetail, setFetchedDetail] = useState({ id: null, lead: null, done: false });
   const detail = useMemo(() => {
     if (!leadId) return null;
     return (
       leads.find((l) => String(l.ROWID) === String(leadId)) ||
       leads.find((l) => l.crm_record_id && String(l.crm_record_id) === String(leadId)) ||
-      null
+      (fetchedDetail.id === leadId ? fetchedDetail.lead : null)
     );
-  }, [leadId, leads]);
-  const detailNotFound = Boolean(leadId) && !loading && !detail;
+  }, [leadId, leads, fetchedDetail]);
+  const detailNotFound = Boolean(leadId) && fetchedDetail.id === leadId && fetchedDetail.done && !detail;
+
+  useEffect(() => {
+    if (!leadId) return undefined;
+    let cancelled = false;
+    adminDashboardService
+      .getLead(leadId)
+      .then((lead) => !cancelled && setFetchedDetail({ id: leadId, lead, done: true }))
+      .catch(() => !cancelled && setFetchedDetail({ id: leadId, lead: null, done: true }));
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId]);
 
   const [visibleColumns, setVisibleColumns] = useState(() =>
     Object.fromEntries(ALL_COLUMNS.map((c) => [c.key, c.defaultVisible]))
@@ -323,25 +332,63 @@ export default function LeadExchangePage() {
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const columnMenuRef = useRef(null);
 
-  const loadLeads = async () => {
+  // Search is sent to the server, so wait for a pause in typing instead of
+  // querying on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Only the newest request may update the page: a slow earlier response
+  // must never overwrite the result of a later filter/page change.
+  const requestSeq = useRef(0);
+
+  // Loads the page described by the current filters, sort and page. Facets
+  // (dropdown options, Happy/Unhappy counts) are global, so they are fetched
+  // on the first load and on an explicit refresh / sync, not on every page.
+  const loadLeads = async ({ refreshFacets = false } = {}) => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setLoadError(null);
     try {
-      const result = await adminDashboardService.listLeads();
-      setLeads(result);
+      const result = await adminDashboardService.listLeadsPage({
+        page: pageIndex + 1,
+        pageSize,
+        search: debouncedSearch,
+        status: statusFilter,
+        dealerCode: dealerFilter,
+        path: pathFilter,
+        scenario: scenarioFilter,
+        showRemoved,
+        sortBy,
+        includeFacets: refreshFacets || !facets,
+      });
+      if (seq !== requestSeq.current) return;
+
+      const { total: matching, totalPages } = result.pagination;
+      if (result.leads.length === 0 && matching > 0 && pageIndex > 0) {
+        // The page no longer exists (e.g. leads were removed): step back.
+        setPageIndex(Math.max(0, totalPages - 1));
+        return;
+      }
+      setLeads(result.leads);
+      setTotal(matching);
+      if (result.facets) setFacets(result.facets);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       const message = err?.response?.data?.error || "Couldn't load leads. Try again.";
       setLoadError(message);
       showAlert("error", message, { title: "Load failed" });
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadLeads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pageIndex, pageSize, debouncedSearch, statusFilter, dealerFilter, pathFilter, scenarioFilter, showRemoved, sortBy]);
 
   useEffect(() => {
     if (!columnMenuOpen) return undefined;
@@ -366,7 +413,7 @@ export default function LeadExchangePage() {
           title: "Sync complete",
         }
       );
-      await loadLeads();
+      await loadLeads({ refreshFacets: true });
     } catch (err) {
       showAlert("error", err?.response?.data?.error || "Sync failed. Try again.", {
         title: "Sync failed",
@@ -394,17 +441,12 @@ export default function LeadExchangePage() {
     setPageIndex(0);
   };
 
-  const statuses = useMemo(
-    () => [...new Set(leads.map((l) => l.lead_status).filter(Boolean))].sort(),
-    [leads]
+  // Filter options are global (not just this page), supplied by the server.
+  const statuses = useMemo(() => facets?.statuses || [], [facets]);
+  const dealerOptions = useMemo(
+    () => (facets?.dealers || []).map((d) => [d.code, d.name]),
+    [facets]
   );
-  const dealerOptions = useMemo(() => {
-    const map = new Map();
-    leads.forEach((l) => {
-      if (l.dealer_code) map.set(l.dealer_code, l.dealer_name);
-    });
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [leads]);
 
   const statusDropdownOptions = useMemo(
     () => [{ value: "", label: "All statuses" }, ...statuses.map((s) => ({ value: s, label: s }))],
@@ -424,11 +466,7 @@ export default function LeadExchangePage() {
   // statusDropdownOptions/dealerDropdownOptions above) — never a
   // hardcoded list, so it can't offer a scenario with zero matching leads.
   const scenarioDropdownOptions = useMemo(() => {
-    const labels = new Set();
-    leads.forEach((l) => {
-      const label = classifyLeadWithDuplicate(l, leads).label;
-      if (label) labels.add(label);
-    });
+    const labels = new Set(facets?.scenarios || []);
     // A path reached from an Overview card may have no leads at all — keep
     // it selectable so the dropdown still shows what is being filtered.
     if (scenarioFilter) labels.add(scenarioFilter);
@@ -436,7 +474,7 @@ export default function LeadExchangePage() {
       { value: "", label: "All paths" },
       ...[...labels].sort(compareScenarioLabels).map((label) => ({ value: label, label })),
     ];
-  }, [leads, scenarioFilter]);
+  }, [facets, scenarioFilter]);
 
   const sortDropdownOptions = useMemo(
     () => [
@@ -449,67 +487,14 @@ export default function LeadExchangePage() {
 
   // Counts for the toggle labels, computed pre-pathFilter so switching
   // segments doesn't make its own count disappear.
-  const pathCounts = useMemo(() => {
-    const counts = { happy: 0, unhappy: 0 };
-    leads.forEach((l) => {
-      const classification = classifyLeadWithDuplicate(l, leads);
-      counts[classification.path] += 1;
-    });
-    return counts;
-  }, [leads]);
+  const pathCounts = facets?.pathCounts || { happy: 0, unhappy: 0 };
+  const totalLeadCount = facets?.total ?? total;
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return leads.filter((l) => {
-      const matchesSearch =
-        !term ||
-        [l.customer_name, l.email_address, l.mobile_number, l.dealer_name, l.vehicle_model]
-          .filter(Boolean)
-          .some((field) => field.toLowerCase().includes(term));
-      const matchesStatus = !statusFilter || l.lead_status === statusFilter;
-      const matchesDealer = !dealerFilter || l.dealer_code === dealerFilter;
-      const classification = classifyLeadWithDuplicate(l, leads);
-      const matchesPath = pathFilter === "all" || classification.path === pathFilter;
-      const matchesScenario = !scenarioFilter || classification.label === scenarioFilter;
-      const matchesRemoved = showRemoved || l.sync_status !== "Removed";
-      return matchesSearch && matchesStatus && matchesDealer && matchesPath && matchesScenario && matchesRemoved;
-    });
-  }, [leads, search, statusFilter, dealerFilter, pathFilter, scenarioFilter, showRemoved]);
-
-  // Applied after filtering, before pagination, so "recently added"
-  // and "alphabetical" both operate on the same filtered set and the
-  // first page always reflects the chosen order.
-  const sorted = useMemo(() => {
-    const rows = [...filtered];
-    if (sortBy === "alpha") {
-      rows.sort((a, b) =>
-        (a.customer_name || "").localeCompare(b.customer_name || "", undefined, {
-          sensitivity: "base",
-        })
-      );
-    } else {
-      // "recent" (default) — a lead that was just updated (e.g. a dealer
-      // status change) should bubble to the top just like a brand-new
-      // lead would, not stay buried under its original creation order.
-      // MODIFIEDTIME/last_status_update/CREATEDTIME are all Catalyst
-      // fixed-width datetime strings, so the latest one string-compares
-      // correctly without parsing. Falls back to ROWID, then
-      // assigned_date, if none of those are present.
-      rows.sort((a, b) => {
-        const activityDiff = lastActivityAt(b).localeCompare(lastActivityAt(a));
-        if (activityDiff !== 0) return activityDiff;
-        const aId = Number(a.ROWID);
-        const bId = Number(b.ROWID);
-        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return bId - aId;
-        return (b.assigned_date || "").localeCompare(a.assigned_date || "");
-      });
-    }
-    return rows;
-  }, [filtered, sortBy]);
-
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  // Search, filters and sort run on the server before paging, so the page
+  // the server returned is exactly what is shown.
+  const pageRows = leads;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(pageIndex, pageCount - 1);
-  const pageRows = sorted.slice(currentPage * pageSize, currentPage * pageSize + pageSize);
 
   const resetPage = () => setPageIndex(0);
 
@@ -539,7 +524,7 @@ export default function LeadExchangePage() {
   const pathFilterActive = Boolean(scenarioFilter) || pathFilter !== "all";
   const showPathEmpty =
     !loading &&
-    filtered.length === 0 &&
+    total === 0 &&
     pathFilterActive &&
     !search.trim() &&
     !statusFilter &&
@@ -683,7 +668,7 @@ export default function LeadExchangePage() {
           {loadError && (
             <Alert
               variant="error"
-              action={{ label: "Retry", onClick: loadLeads }}
+              action={{ label: "Retry", onClick: () => loadLeads({ refreshFacets: true }) }}
               onClose={() => setLoadError(null)}
             >
               {loadError}
@@ -699,7 +684,7 @@ export default function LeadExchangePage() {
                     ? pathCounts.happy
                     : option.value === "unhappy"
                       ? pathCounts.unhappy
-                      : leads.length;
+                      : totalLeadCount;
                 return (
                   <button
                     key={option.value}
@@ -723,7 +708,7 @@ export default function LeadExchangePage() {
             <div className="lead-exchange__header-actions">
               <button
                 className={`lead-exchange__refresh-btn ${loading ? "lead-exchange__refresh-btn--spinning" : ""}`}
-                onClick={loadLeads}
+                onClick={() => loadLeads({ refreshFacets: true })}
                 disabled={loading || syncing}
                 aria-label="Refresh leads"
                 title="Reload the lead list — recently added or updated leads show first"
@@ -1050,7 +1035,7 @@ export default function LeadExchangePage() {
           <Pagination
             page={currentPage + 1}
             pageCount={pageCount}
-            total={sorted.length}
+            total={total}
             noun="lead"
             onPageChange={(p) => setPageIndex(p - 1)}
             pageSize={pageSize}

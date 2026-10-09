@@ -4,6 +4,11 @@ const logger = require('../utils/logger');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 
 const DEALERS_TABLE = 'dealers';
+const stats = require('./dashboardStatsService');
+const { mapWithConcurrency } = require('../utils/concurrency');
+
+const INVITE_SYNC_CONCURRENCY = 5;
+
 const LEADS_TABLE = 'leads';
 const SYNC_LOGS_TABLE = 'sync_logs';
 const MAPPING_TABLE = 'dealer_user_mapping';
@@ -39,7 +44,12 @@ async function getAllRows(catalystApp, tableName) {
   let offset = 0;
 
   while (true) {
-    const query = `SELECT * FROM ${tableName} LIMIT ${offset}, ${ZCQL_PAGE_SIZE}`;
+    // ZCQL's LIMIT offset is effectively 1-based (`LIMIT 0,n` and `LIMIT 1,n`
+    // return the same rows), so a plain 0-based offset re-reads the last row of
+    // page 1 and makes any table over one page over-count by one. offset + 1 is
+    // a true 0-based offset.
+    // ORDER BY ROWID gives the pages a stable total order to walk.
+    const query = `SELECT * FROM ${tableName} ORDER BY ROWID ASC LIMIT ${offset + 1}, ${ZCQL_PAGE_SIZE}`;
     const result = await catalystApp.zcql().executeZCQLQuery(query);
     const rows = result.map((row) => row[tableName]);
     allRows.push(...rows);
@@ -54,16 +64,22 @@ async function getAllRows(catalystApp, tableName) {
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations'; // NEW — used by findDuplicateLeadMappings below
 
-async function getAllDealersWithLeadCounts(catalystApp) {
-  const dealers = await getAllRows(catalystApp, DEALERS_TABLE);
-  const leads = await getAllRows(catalystApp, LEADS_TABLE);
-  const integrations = await getAllRows(catalystApp, DEALER_INTEGRATIONS_TABLE);
-
-  const leadCountByDealerCode = {};
-  leads.forEach((lead) => {
-    const code = lead.dealer_code;
-    leadCountByDealerCode[code] = (leadCountByDealerCode[code] || 0) + 1;
+/** Total leads per dealer_code, from the database (COUNT … GROUP BY) — no lead rows are read. */
+async function leadCountsByDealerCode(catalystApp) {
+  const rows = await stats.leadCountsByDealerAndStatus(catalystApp);
+  const totals = {};
+  rows.forEach((row) => {
+    totals[row.dealer_code] = (totals[row.dealer_code] || 0) + row.count;
   });
+  return totals;
+}
+
+async function getAllDealersWithLeadCounts(catalystApp) {
+  const [dealers, leadCountByDealerCode, integrations] = await Promise.all([
+    getAllRows(catalystApp, DEALERS_TABLE),
+    leadCountsByDealerCode(catalystApp),
+    getAllRows(catalystApp, DEALER_INTEGRATIONS_TABLE),
+  ]);
 
   // dealer_integrations.status carries the real CRM connection state
   // (ACTIVE/CONNECTED/CONFIGURING/ERROR/NOT_CONFIGURED) — separate from
@@ -132,6 +148,20 @@ function summarizeLeadsByStatus(leads) {
 }
 
 /**
+ * summarizeLeadsByStatus() for pre-aggregated counts: [{ lead_status, count }].
+ * Same result shape, computed from COUNT … GROUP BY output instead of rows.
+ */
+function summarizeStatusCounts(statusCounts) {
+  const summary = { total: 0, new: 0, contacted: 0, test_drive: 0, quotation: 0, delivered: 0, lost: 0 };
+  statusCounts.forEach(({ lead_status: status, count }) => {
+    summary.total += count;
+    const key = LEAD_STATUS_KEYS[status];
+    if (key) summary[key] += count;
+  });
+  return summary;
+}
+
+/**
  * Groups leads by their ACTUAL current MG Lead_Status value (see
  * VERIFIED-CRM-FACTS.md / pathPolicyService.js's MG_LEAD_STATUS_VALUES),
  * for the Overview dashboard's "Lead status distribution" donut.
@@ -187,6 +217,33 @@ function summarizeLeadsByRealStatus(leads) {
 }
 
 /**
+ * summarizeLeadsByRealStatus() for pre-aggregated counts of NON-removed leads:
+ * [{ lead_status, count }]. Every lead lands somewhere (unrecognised or blank
+ * statuses go to 'other'), so the segments always sum to `total`.
+ */
+function summarizeRealStatusCounts(activeStatusCounts) {
+  const summary = { total: 0, other: 0 };
+  REAL_STATUS_GROUPS.forEach((group) => { summary[group.key] = 0; });
+  activeStatusCounts.forEach(({ lead_status: status, count }) => {
+    summary.total += count;
+    const key = REAL_STATUS_KEY_BY_VALUE[status];
+    if (key) summary[key] += count;
+    else summary.other += count;
+  });
+  return summary;
+}
+
+/** { dealer_code: [{ lead_status, count }] } from dealer × status counts. */
+function groupCountsByDealer(dealerStatusCounts) {
+  const byDealer = new Map();
+  dealerStatusCounts.forEach((row) => {
+    if (!byDealer.has(row.dealer_code)) byDealer.set(row.dealer_code, []);
+    byDealer.get(row.dealer_code).push({ lead_status: row.lead_status, count: row.count });
+  });
+  return byDealer;
+}
+
+/**
  * Splits dealers by their CRM-synced status field. sync_status
  * 'Removed' means CRM no longer returns this dealer (see
  * dealerSyncService.js's soft-delete pass) — kept separate from the
@@ -208,18 +265,18 @@ function summarizeDealerStatus(dealers) {
 }
 
 async function getDealerPerformance(catalystApp) {
-  const dealers = await getAllRows(catalystApp, DEALERS_TABLE);
-  const leads = await getAllRows(catalystApp, LEADS_TABLE);
+  const [dealers, dealerStatusCounts] = await Promise.all([
+    getAllRows(catalystApp, DEALERS_TABLE),
+    stats.leadCountsByDealerAndStatus(catalystApp),
+  ]);
+  const countsByDealer = groupCountsByDealer(dealerStatusCounts);
 
-  return dealers.map((dealer) => {
-    const dealerLeads = leads.filter((l) => l.dealer_code === dealer.dealer_code);
-    return {
-      dealer_code: dealer.dealer_code,
-      dealer_name: dealer.dealer_name,
-      region: dealer.region,
-      ...summarizeLeadsByStatus(dealerLeads),
-    };
-  });
+  return dealers.map((dealer) => ({
+    dealer_code: dealer.dealer_code,
+    dealer_name: dealer.dealer_name,
+    region: dealer.region,
+    ...summarizeStatusCounts(countsByDealer.get(dealer.dealer_code) || []),
+  }));
 }
 
 /**
@@ -256,6 +313,33 @@ function getTopDealers(dealers, leads, limit = 5) {
 }
 
 /**
+ * getTopDealers() computed from pre-aggregated dealer × status counts instead
+ * of lead rows. Identical ranking and output: synced (non-removed) dealers,
+ * most leads first, delivered-lead conversion rate as the tie-break, dealers
+ * with no leads excluded.
+ */
+function getTopDealersFromCounts(dealers, dealerStatusCounts, limit = 5) {
+  const countsByDealer = groupCountsByDealer(dealerStatusCounts);
+
+  return dealers
+    .filter((d) => d.sync_status !== 'Removed')
+    .map((dealer) => {
+      const statusSummary = summarizeStatusCounts(countsByDealer.get(dealer.dealer_code) || []);
+      return {
+        dealer_code: dealer.dealer_code,
+        name: dealer.dealer_name,
+        region: dealer.region,
+        total_leads: statusSummary.total,
+        delivered: statusSummary.delivered,
+        conversion_rate: statusSummary.total > 0 ? Math.round((statusSummary.delivered / statusSummary.total) * 100) : 0,
+      };
+    })
+    .filter((d) => d.total_leads > 0)
+    .sort((a, b) => b.total_leads - a.total_leads || b.conversion_rate - a.conversion_rate)
+    .slice(0, limit);
+}
+
+/**
  * Real activity feed built only from sync_logs. Deliberately does NOT
  * synthesize lead-status-change events ("lead marked delivered", "new
  * dealer onboarded") — the leads/dealers tables have no updated_at or
@@ -279,31 +363,49 @@ function buildActivityTimeline(syncLogs, limit = 8) {
 }
 
 async function getSyncLogs(catalystApp, { limit = 50 } = {}) {
-  const logs = await getAllRows(catalystApp, SYNC_LOGS_TABLE);
-  return logs
-    .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
-    .slice(0, limit);
+  // Newest-first by start_time, read as a bounded page — never the whole table.
+  return stats.recentSyncLogs(catalystApp, limit);
 }
 
+/** Overall lead counts by status bucket — backs GET /admin/leads/summary. */
+async function getLeadStatusSummary(catalystApp) {
+  return summarizeStatusCounts(await stats.leadCountsByStatus(catalystApp));
+}
+
+const ACTIVITY_TIMELINE_LIMIT = 8;
+const RECENT_SYNC_LOG_LIMIT = 5;
+
 async function getDashboardSummary(catalystApp) {
-  const [dealers, leads, syncLogs] = await Promise.all([
+  // Every figure below is a database-side COUNT / GROUP BY (or a bounded
+  // "newest N" read), so this costs the same at 1,000 leads or 1,000,000.
+  const [dealers, dealerStatusCounts, activeStatusCounts, syncLogs] = await Promise.all([
     getAllRows(catalystApp, DEALERS_TABLE),
-    getAllRows(catalystApp, LEADS_TABLE),
-    getAllRows(catalystApp, SYNC_LOGS_TABLE),
+    stats.leadCountsByDealerAndStatus(catalystApp),
+    stats.leadCountsByStatus(catalystApp, { excludeRemoved: true }),
+    stats.recentSyncLogs(catalystApp, Math.max(ACTIVITY_TIMELINE_LIMIT, RECENT_SYNC_LOG_LIMIT)),
   ]);
 
-  const recentSyncLogs = syncLogs
+  // All leads by status, summed across dealers (a lead with no dealer is still a lead).
+  const statusTotals = new Map();
+  dealerStatusCounts.forEach(({ lead_status: status, count }) => {
+    statusTotals.set(status, (statusTotals.get(status) || 0) + count);
+  });
+  const leadStatusSummary = summarizeStatusCounts(
+    [...statusTotals.entries()].map(([lead_status, count]) => ({ lead_status, count }))
+  );
+
+  const recentSyncLogs = [...syncLogs]
     .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
-    .slice(0, 5);
+    .slice(0, RECENT_SYNC_LOG_LIMIT);
 
   return {
     totalDealers: dealers.length,
-    totalLeads: leads.length,
-    leadStatusSummary: summarizeLeadsByStatus(leads),
-    leadStatusBreakdown: summarizeLeadsByRealStatus(leads), // NEW — backs the Overview donut
+    totalLeads: leadStatusSummary.total,
+    leadStatusSummary,
+    leadStatusBreakdown: summarizeRealStatusCounts(activeStatusCounts), // NEW — backs the Overview donut
     dealerStatusSummary: summarizeDealerStatus(dealers),
-    topDealers: getTopDealers(dealers, leads),
-    activityTimeline: buildActivityTimeline(syncLogs),
+    topDealers: getTopDealersFromCounts(dealers, dealerStatusCounts),
+    activityTimeline: buildActivityTimeline(syncLogs, ACTIVITY_TIMELINE_LIMIT),
     recentSyncLogs,
   };
 }
@@ -366,8 +468,11 @@ async function syncInviteStatus(catalystApp, mappingRow) {
 async function getDealerInvitationStatus(catalystApp, crmDealers) {
   const mappingRows = await getAllRows(catalystApp, MAPPING_TABLE);
 
-  const syncedRows = await Promise.all(
-    mappingRows.map((row) => syncInviteStatus(catalystApp, row))
+  // One Catalyst user lookup per invited dealer: a few at a time, not hundreds at once.
+  const syncedRows = await mapWithConcurrency(
+    mappingRows,
+    INVITE_SYNC_CONCURRENCY,
+    (row) => syncInviteStatus(catalystApp, row)
   );
 
   const mappedByDealerCode = new Map();
@@ -402,16 +507,6 @@ async function getDealerInvitationStatus(catalystApp, crmDealers) {
 // dealerReconciliationService.js's parseSystemTimestamp. Reproduced
 // locally here rather than importing that module, to keep this
 // read-only reporting file independent of the integration pipeline.
-const PROJECT_UTC_OFFSET = '+05:30';
-const INTEGRATION_LOGS_HARD_CAP = 5000; // safety cap per health/report fetch — see fetchFilteredIntegrationLogs
-
-function parseCatalystTimestamp(value) {
-  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?::(\d{1,3}))?$/.exec(String(value || '').trim());
-  if (!match) return null;
-  const parsed = new Date(`${match[1]}T${match[2]}.${(match[3] || '0').padStart(3, '0')}${PROJECT_UTC_OFFSET}`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 function toDateOnly(value) {
   const raw = String(value || '').trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
@@ -419,48 +514,6 @@ function toDateOnly(value) {
 
 function safeQuoteForZcqlLocal(value) {
   return String(value).replace(/'/g, "''");
-}
-
-/**
- * Fetches integration_logs rows matching the given filters, newest
- * first. Dates are matched in JS against the parsed CREATEDTIME rather
- * than in the ZCQL WHERE clause — the same approach
- * dailyErrorReportService.js already uses for this exact table, since
- * this codebase does not otherwise rely on ZCQL string-comparing
- * CREATEDTIME across formats/timezones. Paging stops once a full page's
- * oldest row is already before the requested fromDate, so a bounded
- * date range does not require scanning the whole table.
- */
-async function fetchFilteredIntegrationLogs(catalystApp, { fromDate, toDate, dealerCode, scenarioCode, status } = {}) {
-  const from = toDateOnly(fromDate);
-  const to = toDateOnly(toDate);
-  const fromMs = from ? new Date(`${from}T00:00:00${PROJECT_UTC_OFFSET}`).getTime() : null;
-  const toMs = to ? new Date(`${to}T23:59:59${PROJECT_UTC_OFFSET}`).getTime() : null;
-
-  const rows = [];
-  let offset = 0;
-  while (offset < INTEGRATION_LOGS_HARD_CAP) {
-    const query = `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ORDER BY CREATEDTIME DESC LIMIT ${offset}, ${ZCQL_PAGE_SIZE}`;
-    const result = await catalystApp.zcql().executeZCQLQuery(query);
-    const batch = result.map((row) => row[INTEGRATION_LOGS_TABLE]);
-    if (batch.length === 0) break;
-
-    batch.forEach((row) => {
-      const at = parseCatalystTimestamp(row.CREATEDTIME);
-      if (fromMs != null && (!at || at.getTime() < fromMs)) return;
-      if (toMs != null && at && at.getTime() > toMs) return;
-      if (dealerCode && row.dealer_code !== dealerCode) return;
-      if (scenarioCode && row.happy_unhappy_path_name !== scenarioCode) return;
-      if (status && row.status !== status) return;
-      rows.push(row);
-    });
-
-    const oldestInBatch = parseCatalystTimestamp(batch[batch.length - 1]?.CREATEDTIME);
-    if (batch.length < ZCQL_PAGE_SIZE) break;
-    if (fromMs != null && oldestInBatch && oldestInBatch.getTime() < fromMs) break;
-    offset += ZCQL_PAGE_SIZE;
-  }
-  return rows;
 }
 
 /** Chunked crm_record_id -> customer_name lookup, for readable error rows. */
@@ -498,14 +551,27 @@ async function fetchDealerNamesByCodes(catalystApp, dealerCodes) {
  * Every row is a real integration_logs entry; nothing here is synthesized.
  */
 async function getIntegrationLogs(catalystApp, {
-  fromDate, toDate, dealerCode, scenarioCode, status, page = 1, pageSize = 25,
+  fromDate, toDate, dealerCode, scenarioCode, status, integration, page = 1, pageSize = 25,
 } = {}) {
-  const rows = await fetchFilteredIntegrationLogs(catalystApp, { fromDate, toDate, dealerCode, scenarioCode, status });
-  const total = rows.length;
-  const pageNum = Math.max(1, Number(page) || 1);
-  const size = Math.min(200, Math.max(1, Number(pageSize) || 25));
-  const start = (pageNum - 1) * size;
-  const pageRows = rows.slice(start, start + size);
+  const pageNum = Math.max(1, Math.floor(Number(page)) || 1);
+  const requestedSize = Math.floor(Number(pageSize));
+  const size = requestedSize >= 1 ? Math.min(200, requestedSize) : 25; // junk or non-positive -> default
+
+  // Every filter is applied in the database before any row is fetched, and
+  // `total` is a COUNT over the same filters — the complete number of matching
+  // events however far back they go, not the size of a capped sample.
+  const { rows: pageRows, total } = await stats.integrationLogsPage(
+    catalystApp,
+    {
+      fromDate: toDateOnly(fromDate),
+      toDate: toDateOnly(toDate),
+      dealerCode,
+      scenarioName: scenarioCode,
+      status,
+      direction: integration,
+    },
+    { page: pageNum, pageSize: size }
+  );
 
   const [leadNames, dealerNames] = await Promise.all([
     fetchLeadNamesByIds(catalystApp, pageRows.map((r) => r.zoho_lead_id)),
@@ -531,7 +597,20 @@ async function getIntegrationLogs(catalystApp, {
     status: row.status || null,
   }));
 
-  return { logs, total, page: pageNum, pageSize: size, truncated: total >= INTEGRATION_LOGS_HARD_CAP };
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  return {
+    logs,
+    // `logs` is ONE PAGE; `total` is the complete count of matching events.
+    total,
+    page: pageNum,
+    pageSize: size,
+    totalPages,
+    hasMore: (pageNum - 1) * size + logs.length < total,
+    scope: 'page',
+    totalIsComplete: true,
+    // Kept for existing clients: a count is never capped any more.
+    truncated: false,
+  };
 }
 
 /**
@@ -580,7 +659,7 @@ function summarizeScenarios(logs) {
  * crmIntegrationService — the same data LeadDetailView.jsx already
  * renders for a single lead's timeline.
  */
-function summarizeDuplicates(happy3Logs) {
+function summarizeDuplicates(happy3Logs, totals = {}) {
   const records = happy3Logs.map((log) => {
     let link = null;
     try {
@@ -598,9 +677,11 @@ function summarizeDuplicates(happy3Logs) {
       gapMinutes: link?.gap_minutes ?? null,
     };
   });
+  // `totals` carries the database-side count / distinct-dealer figures when only
+  // the newest rows were read; with none supplied they are derived from `records`.
   return {
-    total: records.length,
-    dealersAffected: new Set(records.map((r) => r.dealerCode).filter(Boolean)).size,
+    total: totals.total ?? records.length,
+    dealersAffected: totals.dealersAffected ?? new Set(records.map((r) => r.dealerCode).filter(Boolean)).size,
     recent: records.slice(0, 20),
   };
 }
@@ -632,7 +713,7 @@ function summarizeDuplicates(happy3Logs) {
  * doesn't match the pattern is excluded from the average/max rather
  * than treated as 0.
  */
-function summarizeSla(unhappy10Logs, deliveredCount) {
+function summarizeSla(unhappy10Logs, deliveredCount, totalBreaches = unhappy10Logs.length) {
   const durations = [];
   const breaches = unhappy10Logs.map((log) => {
     const match = /SLA age\s+(\d+)\s*min/i.exec(log.error_message || '');
@@ -648,7 +729,7 @@ function summarizeSla(unhappy10Logs, deliveredCount) {
   });
 
   const monitored = deliveredCount;
-  const breachedCount = unhappy10Logs.length;
+  const breachedCount = totalBreaches;
   const met = Math.max(0, monitored - breachedCount);
 
   return {
@@ -671,30 +752,47 @@ function summarizeSla(unhappy10Logs, deliveredCount) {
  * field here is a direct count of real rows.
  */
 async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode } = {}) {
-  const [dealers, allLeads, logs] = await Promise.all([
-    getAllRows(catalystApp, DEALERS_TABLE),
-    getAllRows(catalystApp, LEADS_TABLE),
-    fetchFilteredIntegrationLogs(catalystApp, { fromDate, toDate, dealerCode }),
-  ]);
-
   const from = toDateOnly(fromDate);
   const to = toDateOnly(toDate);
-  const leadsInRange = allLeads.filter((lead) => {
-    if (dealerCode && lead.dealer_code !== dealerCode) return false;
-    if (!from && !to) return true;
-    const created = String(lead.CREATEDTIME || '').slice(0, 10);
-    if (from && created < from) return false;
-    if (to && created > to) return false;
-    return true;
-  });
+  const filters = { fromDate: from, toDate: to, dealerCode };
 
-  const scenarioBreakdown = summarizeScenarios(logs);
+  // Lead counts and the Happy/Unhappy path figures are database-side aggregates
+  // over the same date range / dealer filter; no lead or log row is read just
+  // to be counted.
+  const [dealers, leadStatusCounts, scenarios, totalEvents] = await Promise.all([
+    getAllRows(catalystApp, DEALERS_TABLE),
+    stats.leadCountsByStatus(catalystApp, filters),
+    stats.scenarioStats(catalystApp, filters),
+    stats.totalLogEvents(catalystApp, filters),
+  ]);
+
+  const scenarioBreakdown = scenarios
+    .map((entry) => ({
+      name: entry.name,
+      type: /^happy/i.test(entry.name) ? 'happy' : 'unhappy',
+      message: entry.message,
+      count: entry.count,
+      dealersAffected: entry.dealers.size,
+      lastOccurrence: entry.lastOccurrence,
+    }))
+    .sort((a, b) => b.count - a.count);
   const happyPaths = scenarioBreakdown.filter((s) => s.type === 'happy');
   const unhappyPaths = scenarioBreakdown.filter((s) => s.type === 'unhappy');
 
-  const deliveredCount = logs.filter((l) => ['Happy 1', 'Happy 4'].includes(l.happy_unhappy_path_name)).length;
-  const duplicates = summarizeDuplicates(logs.filter((l) => l.happy_unhappy_path_name === 'Happy 3'));
-  const sla = summarizeSla(logs.filter((l) => l.happy_unhappy_path_name === 'Unhappy 10'), deliveredCount);
+  const scenarioNamed = (name) => scenarios.find((entry) => entry.name === name);
+  const deliveredCount = ['Happy 1', 'Happy 4'].reduce((sum, name) => sum + (scenarioNamed(name)?.count || 0), 0);
+
+  const duplicateEntry = scenarioNamed('Happy 3');
+  const duplicates = summarizeDuplicates(
+    duplicateEntry ? await stats.recentScenarioRows(catalystApp, filters, 'Happy 3', 20) : [],
+    { total: duplicateEntry?.count || 0, dealersAffected: duplicateEntry?.dealers.size || 0 }
+  );
+
+  const breachEntry = scenarioNamed('Unhappy 10');
+  const breachRows = breachEntry
+    ? await stats.scenarioRows(catalystApp, filters, 'Unhappy 10')
+    : { rows: [], truncated: false };
+  const sla = summarizeSla(breachRows.rows, deliveredCount, breachEntry?.count || 0);
 
   // Dealer health, scoped to the same range: a dealer counts as "active
   // in range" when it has at least one SUCCESS integration_logs event
@@ -705,12 +803,10 @@ async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode
   const scopedDealers = dealerCode ? dealers.filter((d) => d.dealer_code === dealerCode) : dealers;
   let dealerHealth;
   if (from || to) {
-    const activeDealerCodes = new Set(
-      logs.filter((l) => l.status === 'SUCCESS' && l.dealer_code).map((l) => l.dealer_code)
-    );
-    const errorDealerCodes = new Set(
-      logs.filter((l) => l.status === 'FAILED' && l.dealer_code).map((l) => l.dealer_code)
-    );
+    const [activeDealerCodes, errorDealerCodes] = await Promise.all([
+      stats.dealersWithLogStatus(catalystApp, filters, 'SUCCESS'),
+      stats.dealersWithLogStatus(catalystApp, filters, 'FAILED'),
+    ]);
     const nonRemoved = scopedDealers.filter((d) => d.sync_status !== 'Removed');
     dealerHealth = {
       total: nonRemoved.length,
@@ -730,7 +826,7 @@ async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode
     };
   }
 
-  const leadStatusSummary = summarizeLeadsByStatus(leadsInRange);
+  const leadStatusSummary = summarizeStatusCounts(leadStatusCounts);
   const successfulExchanges = happyPaths.reduce((sum, s) => sum + s.count, 0);
   const failedExchanges = unhappyPaths.reduce((sum, s) => sum + s.count, 0);
 
@@ -743,14 +839,16 @@ async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode
     sla,
     dealerHealth,
     exchangeHealth: {
-      totalEvents: logs.length,
+      totalEvents,
       successfulExchanges,
       failedExchanges,
       successRate: (successfulExchanges + failedExchanges) > 0
         ? Math.round((successfulExchanges / (successfulExchanges + failedExchanges)) * 100)
         : 0,
     },
-    truncated: logs.length >= INTEGRATION_LOGS_HARD_CAP,
+    // Only the SLA breach list is read row by row (its average duration is
+    // parsed from each row's message); true when that read hit its cap.
+    truncated: breachRows.truncated,
   };
 }
 
@@ -820,6 +918,10 @@ module.exports = {
   summarizeDealerStatus,
   getDealerPerformance,
   getTopDealers,
+  getTopDealersFromCounts,
+  getLeadStatusSummary,
+  summarizeStatusCounts,
+  summarizeRealStatusCounts,
   buildActivityTimeline,
   getSyncLogs,
   getDashboardSummary,

@@ -25,6 +25,29 @@ export const adminDashboardService = {
     return data.leads;
   },
 
+  // One page of leads, filtered and sorted on the server (Lead Exchange page).
+  // Returns { leads, pagination: { page, pageSize, total, totalPages, hasMore },
+  // facets? } — facets (statuses, dealers, Happy/Unhappy counts, scenarios) come
+  // back only when includeFacets is true.
+  async listLeadsPage(params = {}) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/leads", { params });
+    return { leads: data.leads, pagination: data.pagination, facets: data.facets };
+  },
+
+  // A single lead by ROWID or crm_record_id, for the detail view when the lead
+  // is not on the page currently loaded. Resolves null if it does not exist.
+  async getLead(id) {
+    try {
+      const { data } = await axiosInstance.get(
+        `/mg_motors_au_function/admin/leads/detail/${encodeURIComponent(id)}`
+      );
+      return data.lead;
+    } catch (err) {
+      if (err?.response?.status === 404) return null;
+      throw err;
+    }
+  },
+
   // Unhappy 7: dealer records whose update arrived before an MG enquiry
   // was linked. They have no MG lead, so they are listed separately.
   async listOutOfOrderEvents() {

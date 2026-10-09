@@ -12,6 +12,8 @@ const logger = require('../utils/logger');
 const integrationAlertService = require('../services/integrations/integrationAlertService');
 const integrationAlertBatchService = require('../services/integrations/integrationAlertBatchService');
 const alertContext = require('../services/integrations/alertContext');
+const { syncModifiedLeads } = require('../services/leadSyncService');
+const dashboardStats = require('../services/dashboardStatsService');
 
 // Background sweeps: alerts they raise are recorded but not emailed (see
 // alertContext.js). The daily report and test alert are not wrapped.
@@ -72,6 +74,11 @@ const DEALER_WEBHOOK_RENEWAL_CONCURRENCY = (() => {
   return Number.isFinite(configured) && configured >= 1 ? Math.min(configured, 10) : 6;
 })();
 
+// Time the fast-recover request aims to finish within (Catalyst documents 30 s
+// for Advanced I/O functions) and the least the SLA stage is always allowed.
+const FAST_RECOVER_BUDGET_MS = 25000;
+const SLA_MIN_SLICE_MS = 5000;
+
 const router = express.Router();
 
 // Protected by a shared secret (Catalyst env var CRON_SECRET), NOT user auth —
@@ -94,6 +101,25 @@ router.post('/cron/renew-webhook', async (req, res) => {
   }
 });
 
+// Recovery for missed/failed Lead webhooks: re-reads only the OEM leads modified
+// since the last clean run (Zoho If-Modified-Since). Schedule alongside the
+// other sweeps; a quiet period costs one 304 call and writes no sync_logs row.
+router.post('/cron/sync-modified-leads', async (req, res) => {
+  const providedSecret = req.headers['x-cron-secret'];
+  if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const catalystApp = catalyst.initialize(req);
+    const result = await syncModifiedLeads(catalystApp, { triggeredBy: 'Cron' });
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('cronRoutes', 'Cron sync-modified-leads failed', err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
 router.post('/cron/renew-dealer-webhooks', async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
   if (!providedSecret || providedSecret !== process.env.CRON_SECRET) {
@@ -102,10 +128,15 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
 
   try {
     const catalystApp = catalyst.initialize(req);
-    const rows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM dealer_integrations WHERE integration_type = 'EXTERNAL_CRM' AND crm_type = 'ZOHO_CRM'`
+    // Read completely in ordered pages: a bare SELECT silently stops at 300
+    // rows, which would leave any dealer beyond that without a webhook renewal.
+    const integrations = await dashboardStats.selectEveryRow(
+      catalystApp,
+      'dealer_integrations',
+      "WHERE integration_type = 'EXTERNAL_CRM' AND crm_type = 'ZOHO_CRM'",
+      'ORDER BY ROWID ASC',
+      5000
     );
-    const integrations = rows.map((r) => r.dealer_integrations);
 
     const results = [];
     const renewOne = async (integration) => {
@@ -183,6 +214,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
   }
 
   try {
+    const fastRecoverStartedAt = Date.now();
     const catalystApp = catalyst.initialize(req);
     const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
       ignoreSchedule: true,
@@ -203,7 +235,12 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
     // Unhappy 10 SLA check in the same pass (window and dealer scope come
     // from DEALER_ACTION_SLA_MINUTES / DEALER_ACTION_SLA_DEALERS).
     try {
-      results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp);
+      // fast-recover shares one HTTP request (Advanced I/O functions are limited
+      // to 30 s) with the stages above, so the SLA stage is given what is left
+      // of the request's budget — but never less than a small floor, so it is
+      // not starved when the earlier stages are busy.
+      const slaDeadline = Math.max(fastRecoverStartedAt + FAST_RECOVER_BUDGET_MS, Date.now() + SLA_MIN_SLICE_MS);
+      results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp, new Date(), { deadline: slaDeadline });
     } catch (slaErr) {
       logger.error('cronRoutes', 'SLA check within fast recovery failed', slaErr);
       results.slaCheck = { error: slaErr.message };

@@ -190,6 +190,103 @@ async function fetchOemLeads() {
   return since ? allRecords.reverse() : allRecords;
 }
 
+const LEADS_BY_IDS_CHUNK = 100; // Zoho's max `ids` per Get Records call
+
+/** True when `record` was created before the LEAD_SYNC_SINCE cutoff. */
+function isBeforeLeadSyncWindow(record, since) {
+  if (!since) return false;
+  const created = new Date(record.Created_Time);
+  return !Number.isNaN(created.getTime()) && created < since;
+}
+
+function sortByCreatedTimeAsc(records) {
+  return records.sort((a, b) => new Date(a.Created_Time) - new Date(b.Created_Time));
+}
+
+/**
+ * Fetches only the given Leads records (webhook path). Zoho silently omits
+ * ids that no longer exist, so a missing record is simply absent from the
+ * result. Records created before LEAD_SYNC_SINCE are dropped, exactly as the
+ * full fetch never returns them. Oldest-first, so Happy 3 (earliest enquiry
+ * is the original) behaves the same as in a full sync.
+ */
+async function fetchOemLeadsByIds(ids) {
+  const { apiDomain } = getZohoConfig();
+  const accessToken = await getAccessToken();
+  const since = getLeadSyncSince();
+  const unique = [...new Set((ids || []).map(String).filter(Boolean))];
+
+  const records = [];
+  for (let i = 0; i < unique.length; i += LEADS_BY_IDS_CHUNK) {
+    let response;
+    try {
+      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+        headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
+        params: {
+          fields: OEM_LEADS_FIELDS.join(','),
+          ids: unique.slice(i, i + LEADS_BY_IDS_CHUNK).join(','),
+        },
+      });
+    } catch (err) {
+      logger.error('zohoCrmService', 'OEM_Leads fetch-by-ids failed', err);
+      throw new Error(
+        `Zoho CRM API call failed: ${err.response?.data?.message || err.message}`
+      );
+    }
+    records.push(...(response.data?.data || []));
+  }
+
+  return sortByCreatedTimeAsc(records.filter((record) => !isBeforeLeadSyncWindow(record, since)));
+}
+
+/**
+ * Fetches Leads modified at/after `modifiedSince` (a Date) using Zoho's
+ * If-Modified-Since header, following page_token. Zoho answers 304 with no
+ * body when nothing changed, which is an empty result, not an error. Used
+ * for webhook recovery and for notifications that carry no record ids.
+ */
+async function fetchOemLeadsModifiedSince(modifiedSince) {
+  const { apiDomain } = getZohoConfig();
+  const accessToken = await getAccessToken();
+  const since = getLeadSyncSince();
+  const header = modifiedSince.toISOString().replace(/\.\d+Z$/, '+00:00');
+
+  const records = [];
+  let pageToken = null;
+  let moreRecords = true;
+
+  while (moreRecords) {
+    let response;
+    try {
+      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${accessToken}`,
+          'If-Modified-Since': header,
+        },
+        params: {
+          fields: OEM_LEADS_FIELDS.join(','),
+          per_page: CRM_PAGE_SIZE,
+          sort_by: 'Modified_Time',
+          sort_order: 'asc',
+          ...(pageToken ? { page_token: pageToken } : {}),
+        },
+      });
+    } catch (err) {
+      if (err.response?.status === 304) break;
+      logger.error('zohoCrmService', 'OEM_Leads modified-since fetch failed', err);
+      throw new Error(
+        `Zoho CRM API call failed: ${err.response?.data?.message || err.message}`
+      );
+    }
+
+    records.push(...(response.data?.data || []));
+    pageToken = response.data?.info?.next_page_token || null;
+    moreRecords = Boolean(response.data?.info?.more_records) && Boolean(pageToken);
+  }
+
+  return sortByCreatedTimeAsc(records.filter((record) => !isBeforeLeadSyncWindow(record, since)));
+}
+
 /**
  * Pushes approved fields to a single Leads record in MG Zoho CRM.
  * Dealer_Remarks is deliberately not supported: live metadata confirms
@@ -287,4 +384,11 @@ async function fetchFieldPicklistValues(moduleApiName, fieldApiName) {
   }));
 }
 
-module.exports = { fetchDealerMaster, fetchOemLeads, updateOemLead, fetchFieldPicklistValues };
+module.exports = {
+  fetchDealerMaster,
+  fetchOemLeads,
+  fetchOemLeadsByIds,
+  fetchOemLeadsModifiedSince,
+  updateOemLead,
+  fetchFieldPicklistValues,
+};

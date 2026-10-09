@@ -12,6 +12,7 @@ const { notifyAdmins } = require('../notificationService');
 const { buildLeadChangeNotification } = require('../leadChangeNotificationService');
 const oemCrmService = require('../zohoCrmService');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
+const dashboardStats = require('../dashboardStatsService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 
 const DEALERS_TABLE = 'dealers';
@@ -2124,13 +2125,15 @@ async function testConnection(catalystApp, integration) {
 }
 
 async function getLeadActivityTimeline(catalystApp, crmRecordId) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${INTEGRATION_LOGS_TABLE} WHERE zoho_lead_id = '${safeQuoteForZcql(crmRecordId)}' ORDER BY CREATEDTIME ASC`
+  // Read in full, in ordered pages: a bare SELECT silently stops at 300 rows,
+  // which would cut off the newest events of a lead that was retried many times.
+  const rows = await dashboardStats.selectEveryRow(
+    catalystApp,
+    INTEGRATION_LOGS_TABLE,
+    `WHERE zoho_lead_id = '${safeQuoteForZcql(crmRecordId)}'`,
+    'ORDER BY CREATEDTIME ASC, ROWID ASC'
   );
-  return rows.map((r) => {
-    const log = r[INTEGRATION_LOGS_TABLE];
-    return { ...log, created_at: log.CREATEDTIME };
-  });
+  return rows.map((log) => ({ ...log, created_at: log.CREATEDTIME }));
 }
 
 module.exports = {

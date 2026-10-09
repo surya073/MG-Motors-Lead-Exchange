@@ -1,14 +1,13 @@
 'use strict';
 
 const logger = require('../../utils/logger');
+const stats = require('../dashboardStatsService');
 const integrationAlertService = require('./integrationAlertService');
 const emailTemplates = require('./emailTemplates');
 const pathPolicy = require('./pathPolicyService');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
 const LEADS_TABLE = 'leads';
-const PAGE_SIZE = 200;
-const MAX_ROWS = 2000;
 
 // How many affected leads to name inline per issue before summarising the
 // rest as "+N more". The register wants the affected leads identified by
@@ -30,21 +29,22 @@ function safeQuoteForZcql(value) {
  * plus items resolved or reclassified as Happy during the day".
  */
 async function fetchRecentLogs(catalystApp, cutoffMs) {
-  const logs = [];
-  for (let offset = 0; offset < MAX_ROWS; offset += PAGE_SIZE) {
-    const rows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ORDER BY CREATEDTIME DESC LIMIT ${offset}, ${PAGE_SIZE}`
+  // The window is applied in the database and read in full (up to the bounded
+  // LOG_WINDOW_HARD_CAP). It used to read only the newest 2,000 rows and filter
+  // by time in JavaScript, silently dropping everything older in a busy day.
+  const { rows, truncated, total } = await stats.integrationLogsSince(catalystApp, new Date(cutoffMs));
+  if (truncated) {
+    logger.error(
+      'dailyErrorReportService',
+      `Daily error report window holds ${total} events; only the newest ${rows.length} were read. The report says so.`
     );
-    const batch = rows.map((r) => r[INTEGRATION_LOGS_TABLE]);
-    batch.forEach((log) => {
-      const at = pathPolicy.parseTimestamp(log.CREATEDTIME);
-      if (at && at.getTime() >= cutoffMs) logs.push({ ...log, _at: at });
-    });
-
-    const oldest = pathPolicy.parseTimestamp(batch[batch.length - 1]?.CREATEDTIME);
-    if (batch.length < PAGE_SIZE || (oldest && oldest.getTime() < cutoffMs)) break;
   }
-  return logs;
+  const logs = [];
+  rows.forEach((log) => {
+    const at = pathPolicy.parseTimestamp(log.CREATEDTIME);
+    if (at) logs.push({ ...log, _at: at });
+  });
+  return { logs, truncated, total: truncated ? total : logs.length };
 }
 
 /** Customer names for the affected leads, so the report names people not just ids. */
@@ -132,7 +132,7 @@ function buildIssues(unhappyLogs, resolvedLeadIds) {
 
 async function buildDailyErrorReport(catalystApp) {
   const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-  const logs = await fetchRecentLogs(catalystApp, cutoffMs);
+  const { logs, truncated, total: eventsInWindow } = await fetchRecentLogs(catalystApp, cutoffMs);
 
   const unhappy = logs.filter((l) => /^Unhappy\s+/i.test(l.happy_unhappy_path_name || ''));
 
@@ -163,6 +163,11 @@ async function buildDailyErrorReport(catalystApp) {
     generatedAt: new Date(),
     windowHours: 24,
     totalEvents: unhappy.length,
+    // True only if the 24h window held more events than could be read; the
+    // rendered report then says so instead of presenting itself as complete.
+    truncated,
+    eventsInWindow,
+    eventsRead: logs.length,
     issues,
     openIssues,
     p1Open,
@@ -198,6 +203,13 @@ function renderText(report) {
     `  Total events       ${report.totalEvents}`,
     '',
   ];
+
+  if (report.truncated) {
+    out.push(
+      `NOTE: PARTIAL REPORT - the last 24 hours hold ${report.eventsInWindow} integration events; only the newest ${report.eventsRead} were read.`,
+      ''
+    );
+  }
 
   if (report.openIssues.length === 0) {
     out.push('No open issues. Everything raised in the last 24 hours has recovered.');
@@ -278,6 +290,12 @@ function renderHtml(report) {
   const recovered = report.issues.filter((i) => i.resolvedCount > 0 && i.openLeads.length === 0);
 
   const rowsHtml = [
+    report.truncated
+      ? section(
+        'Partial report',
+        `<div style="font:500 13px/1.6 ${FONT};color:${COLORS.body}">The last 24 hours hold ${e(report.eventsInWindow)} integration events; only the newest ${e(report.eventsRead)} were read, so older issues in this window may be missing.</div>`
+      )
+      : '',
     section('Summary', tiles),
     report.openIssues.length
       ? section('Open issues — most urgent first', report.openIssues.map(issueCard).join(''))

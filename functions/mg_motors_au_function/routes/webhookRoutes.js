@@ -4,7 +4,7 @@ const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
 const { getZohoConfig } = require('../config/env');
 const { syncDealers } = require('../services/dealerSyncService');
-const { syncLeads } = require('../services/leadSyncService');
+const { syncLeadsByIds, syncModifiedLeads } = require('../services/leadSyncService');
 const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
@@ -36,7 +36,13 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
       const result = await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
       return res.status(200).json({ received: true, result });
     } else if (moduleName === 'Leads') {
-      const result = await syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
+      // Zoho's notification names the affected records, so only those are
+      // re-read — never the whole OEM lead history. A notification without
+      // ids falls back to the modified-since sweep rather than a full sync.
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : [];
+      const result = ids.length > 0
+        ? await syncLeadsByIds(catalystApp, ids, { operation: req.body?.operation, trigger: 'Webhook', triggeredBy: 'Zoho CRM' })
+        : await syncModifiedLeads(catalystApp, { triggeredBy: 'Zoho CRM' });
       return res.status(200).json({ received: true, result });
     }
 

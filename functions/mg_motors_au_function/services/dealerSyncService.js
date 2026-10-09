@@ -4,8 +4,10 @@ const { fetchDealerMaster } = require('./zohoCrmService');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
+const dashboardStats = require('./dashboardStatsService');
 
 const DEALERS_TABLE = 'dealers';
+const DEALER_ROW_BOUND = 50000;
 
 function mapCrmRecordToDealerRow(crmRecord) {
   return {
@@ -24,13 +26,12 @@ function mapCrmRecordToDealerRow(crmRecord) {
 }
 
 async function loadExistingDealersByCode(catalystApp) {
-  const query = `SELECT * FROM ${DEALERS_TABLE}`;
-  const result = await catalystApp.zcql().executeZCQLQuery(query);
+  // Every dealer row, read in ordered pages. A bare `SELECT * FROM dealers`
+  // silently stops at 300 rows, so beyond 300 dealers the rest looked "new"
+  // (insert fails on the unique dealer_code) and could never be marked Removed.
+  const rows = await dashboardStats.selectEveryRow(catalystApp, DEALERS_TABLE, '', 'ORDER BY ROWID ASC', DEALER_ROW_BOUND);
   const map = new Map();
-  result.forEach((row) => {
-    const dealer = row[DEALERS_TABLE];
-    map.set(dealer.dealer_code, dealer);
-  });
+  rows.forEach((dealer) => map.set(dealer.dealer_code, dealer));
   return map;
 }
 

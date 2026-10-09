@@ -7,7 +7,7 @@ const { requireSuperAdminRole } = require('../middleware/requireSuperAdminRole')
 const {
   getAllDealersWithLeadCounts,
   getAllLeads,
-  summarizeLeadsByStatus,
+  getLeadStatusSummary,
   getDealerPerformance,
   getSyncLogs,
   getDashboardSummary,
@@ -17,6 +17,7 @@ const {
   findDuplicateLeadMappings, // NEW
 } = require('../services/adminDashboardService');
 const { fetchDealerMaster } = require('../services/zohoCrmService');
+const { getLeadsPage, getLeadByIdentifier } = require('../services/leadListService');
 const { removeDealerUser } = require('../services/dealerInviteService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService'); // NEW
 const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
@@ -46,12 +47,41 @@ router.get('/admin/dealers', requireAdminOrViewRole, async (req, res) => {
   }
 });
 
+/**
+ * GET /admin/leads
+ * -----------------------------------------------------------------------
+ * With `page` and/or `pageSize` this returns ONE page, filtered and sorted in
+ * the database (see leadListService): query params search, status, dealerCode,
+ * path (all|happy|unhappy), scenario, showRemoved, sortBy (recent|alpha),
+ * fromDate, toDate (YYYY-MM-DD), includeFacets. The response keeps the
+ * existing `leads` / `count` fields and adds `pagination` (and `facets`).
+ * Without either param it behaves exactly as before and returns every lead,
+ * which the navbar search and dealer detail tabs still rely on.
+ */
 router.get('/admin/leads', requireAdminOrViewRole, async (req, res) => {
   try {
+    if (req.query.page !== undefined || req.query.pageSize !== undefined) {
+      const result = await getLeadsPage(res.locals.catalystApp, {
+        ...req.query,
+        status: req.query.status ?? req.query.leadStatus,
+        includeFacets: String(req.query.includeFacets).toLowerCase() === 'true',
+      });
+      return res.status(200).json({
+        success: true,
+        count: result.leads.length,
+        leads: result.leads,
+        pagination: result.pagination,
+        ...(result.facets ? { facets: result.facets } : {}),
+      });
+    }
+
     const { dealerCode, leadStatus } = req.query;
     const leads = await getAllLeads(res.locals.catalystApp, { dealerCode, leadStatus });
     res.status(200).json({ success: true, count: leads.length, leads });
   } catch (err) {
+    if (err.code === 'FILTER_TOO_COMPLEX') {
+      return res.status(400).json({ success: false, error: err.message });
+    }
     logger.error('adminDashboardRoutes', 'GET /admin/leads failed', err);
     res.status(502).json({ success: false, error: err.message });
   }
@@ -149,6 +179,19 @@ router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res
  * (:crmRecordId/timeline vs. summary) either order is actually fine —
  * kept here for readability next to the sibling /admin/leads route.
  */
+// One lead by ROWID or crm_record_id — the detail view opens by id from the
+// URL and the lead may not be on the page currently loaded.
+router.get('/admin/leads/detail/:leadId', requireAdminOrViewRole, async (req, res) => {
+  try {
+    const lead = await getLeadByIdentifier(res.locals.catalystApp, req.params.leadId);
+    if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
+    res.status(200).json({ success: true, lead });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', `GET /admin/leads/detail/${req.params.leadId} failed`, err);
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/admin/leads/:crmRecordId/timeline', requireAdminOrViewRole, async (req, res) => {
   try {
     const { crmRecordId } = req.params;
@@ -162,8 +205,8 @@ router.get('/admin/leads/:crmRecordId/timeline', requireAdminOrViewRole, async (
 
 router.get('/admin/leads/summary', requireAdminOrViewRole, async (req, res) => {
   try {
-    const leads = await getAllLeads(res.locals.catalystApp);
-    const summary = summarizeLeadsByStatus(leads);
+    // COUNT … GROUP BY in the database — no lead rows are read.
+    const summary = await getLeadStatusSummary(res.locals.catalystApp);
     res.status(200).json({ success: true, summary });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'GET /admin/leads/summary failed', err);
@@ -209,23 +252,33 @@ router.get('/admin/dashboard-summary', requireAdminOrViewRole, async (req, res) 
  * Errors" table on the Lead Exchange Health dashboard. Query params:
  * fromDate, toDate (YYYY-MM-DD), dealerCode, scenarioCode
  * (happy_unhappy_path_name, e.g. "Unhappy 2"), status (SUCCESS/FAILED),
- * page, pageSize. All optional — with none supplied this returns the
- * most recent integration_logs rows, newest first.
+ * integration (direction, e.g. ZOHO_TO_EXTERNAL_CRM), page, pageSize. All
+ * optional — with none supplied this returns the most recent integration_logs
+ * rows, newest first.
+ *
+ * Every filter runs in the database. `logs` is one page; `total` is the
+ * COMPLETE count of matching events (`totalIsComplete: true`), however old —
+ * never the size of a capped sample. The response also carries `totalPages`,
+ * `hasMore` and `scope: 'page'`.
  */
 router.get('/admin/integration-logs', requireAdminOrViewRole, async (req, res) => {
   try {
-    const { fromDate, toDate, dealerCode, scenarioCode, status, page, pageSize } = req.query;
+    const { fromDate, toDate, dealerCode, scenarioCode, status, integration, page, pageSize } = req.query;
     const result = await getIntegrationLogs(res.locals.catalystApp, {
       fromDate,
       toDate,
       dealerCode,
       scenarioCode,
       status,
+      integration,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
     res.status(200).json({ success: true, ...result });
   } catch (err) {
+    if (err.code === 'FILTER_TOO_COMPLEX') {
+      return res.status(400).json({ success: false, error: err.message });
+    }
     logger.error('adminDashboardRoutes', 'GET /admin/integration-logs failed', err);
     res.status(502).json({ success: false, error: err.message });
   }

@@ -1,16 +1,23 @@
 'use strict';
 
-const { fetchOemLeads, updateOemLead } = require('./zohoCrmService');
+const {
+  fetchOemLeads,
+  fetchOemLeadsByIds,
+  fetchOemLeadsModifiedSince,
+  updateOemLead,
+} = require('./zohoCrmService');
 const { getLeadSyncSince } = require('../config/env');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
+const dashboardStats = require('./dashboardStatsService');
 const { notifyAdmins, notifyUser } = require('./notificationService');
 const crmIntegrationService = require('./integrations/crmIntegrationService'); // NEW
 const pathPolicy = require('./integrations/pathPolicyService');
 const outboundSyncClaimService = require('./integrations/outboundSyncClaimService');
 
 const LEADS_TABLE = 'leads';
+const FULL_SYNC_LEAD_ROW_BOUND = 500000;
 
 /**
  * Renders validation failures so the operator can act on them directly:
@@ -178,21 +185,19 @@ function stripEmptyDateFields(row) {
  * updating.
  */
 async function loadExistingLeadsByCrmId(catalystApp) {
+  // Used only by the full manual sync. Paged in a stable order (ROWID) with a
+  // true 0-based offset: the old loop used an unordered scan with a 1-based
+  // offset, so it re-read a row at the first page boundary and gave the
+  // database no stable order to page through.
+  const rows = await dashboardStats.selectEveryRow(
+    catalystApp,
+    LEADS_TABLE,
+    '',
+    'ORDER BY ROWID ASC',
+    FULL_SYNC_LEAD_ROW_BOUND
+  );
   const map = new Map();
-  let offset = 0;
-
-  while (true) {
-    const query = `SELECT * FROM ${LEADS_TABLE} LIMIT ${offset}, ${ZCQL_PAGE_SIZE}`;
-    const result = await catalystApp.zcql().executeZCQLQuery(query);
-    result.forEach((row) => {
-      const lead = row[LEADS_TABLE];
-      map.set(lead.crm_record_id, lead);
-    });
-
-    if (result.length < ZCQL_PAGE_SIZE) break;
-    offset += ZCQL_PAGE_SIZE;
-  }
-
+  rows.forEach((lead) => map.set(lead.crm_record_id, lead));
   return map;
 }
 
@@ -228,6 +233,64 @@ function findDeliveredBusinessDuplicate(incomingLead, existingLeadsByCrmId) {
     if (pathPolicy.isBusinessDuplicate(incomingLead, candidate)) return candidate;
   }
   return null;
+}
+
+function safeQuoteForZcql(value) {
+  return String(value ?? '').replace(/'/g, "''");
+}
+
+const LEADS_BY_CRM_ID_CHUNK = 50;
+const DUPLICATE_CANDIDATE_LIMIT = 200;
+
+/**
+ * Loads only the Catalyst rows for the given OEM record ids — the incremental
+ * counterpart of loadExistingLeadsByCrmId(), which reads the whole table.
+ */
+async function loadExistingLeadsByCrmIds(catalystApp, crmIds) {
+  const map = new Map();
+  const unique = [...new Set((crmIds || []).map(String).filter(Boolean))];
+  for (let i = 0; i < unique.length; i += LEADS_BY_CRM_ID_CHUNK) {
+    const list = unique.slice(i, i + LEADS_BY_CRM_ID_CHUNK).map((id) => `'${safeQuoteForZcql(id)}'`).join(', ');
+    const result = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id IN (${list})`
+    );
+    result.forEach((row) => map.set(row[LEADS_TABLE].crm_record_id, row[LEADS_TABLE]));
+  }
+  return map;
+}
+
+/**
+ * Duplicate detection needs every lead that could match the incoming one.
+ * isBusinessDuplicate() requires an equal fingerprint (which includes the
+ * normalised mobile number — stored normalised by mapCrmRecordToLeadRow), so
+ * the same mobile is a safe pre-filter and keeps the lookup to a handful of
+ * rows. Without a mobile the fingerprint can only match another blank-mobile
+ * lead of the same dealer and postcode, which is what the fallback selects.
+ * The authoritative check is still isBusinessDuplicate() on the candidates.
+ */
+async function loadDuplicateCandidates(catalystApp, incomingLead) {
+  const mobile = incomingLead.mobile_number;
+  const where = mobile
+    ? `mobile_number = '${safeQuoteForZcql(mobile)}'`
+    : `dealer_code = '${safeQuoteForZcql(incomingLead.dealer_code)}' AND postcode = '${safeQuoteForZcql(incomingLead.postcode)}'`;
+  const result = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEADS_TABLE} WHERE ${where} ORDER BY CREATEDTIME DESC LIMIT 0, ${DUPLICATE_CANDIDATE_LIMIT}`
+  );
+  return result.map((row) => row[LEADS_TABLE]);
+}
+
+/**
+ * Incremental-mode duplicate finder: leads already known in this run (the
+ * loaded records plus anything inserted earlier in the same batch) take
+ * precedence, then the targeted candidate query adds the rest.
+ */
+async function findDuplicateWithTargetedLookup(catalystApp, incomingLead, knownLeadsByCrmId) {
+  const candidates = new Map(knownLeadsByCrmId);
+  const queried = await loadDuplicateCandidates(catalystApp, incomingLead);
+  queried.forEach((row) => {
+    if (!candidates.has(row.crm_record_id)) candidates.set(row.crm_record_id, row);
+  });
+  return findDeliveredBusinessDuplicate(incomingLead, candidates);
 }
 
 function incrementScenario(scenarioCounts, scenarioCode) {
@@ -409,12 +472,41 @@ async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
  * route now, a scheduled Cron job later, with no changes needed here.
  */
 async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'System' } = {}) {
+  // Full synchronisation — kept for manual recovery. Reads every OEM lead in
+  // the LEAD_SYNC_SINCE window and every Catalyst lead row, so it is NOT used
+  // for webhooks (see syncLeadsByIds / syncModifiedLeads).
+  return runLeadSync(catalystApp, {
+    trigger,
+    triggeredBy,
+    loadRecords: () => fetchOemLeads(),
+    loadExisting: () => loadExistingLeadsByCrmId(catalystApp),
+    findDuplicate: async (incoming, existing) => findDeliveredBusinessDuplicate(incoming, existing),
+    // A windowed fetch is deliberately partial: "not seen" != "gone from CRM".
+    removalPass: !getLeadSyncSince(),
+  });
+}
+
+/**
+ * Shared sync engine. The three loaders are the only things that differ
+ * between a full sync and an incremental one; everything after them —
+ * validation, duplicate classification (Happy 3), per-dealer claims, dealer
+ * dispatch, scenario counting, logging — is the single existing code path.
+ */
+async function runLeadSync(catalystApp, {
+  trigger,
+  triggeredBy,
+  loadRecords,
+  loadExisting,
+  findDuplicate,
+  removalPass,
+  skipLogWhenEmpty = false,
+}) {
   const startTime = toCatalystDateTime();
   const table = catalystApp.datastore().table(LEADS_TABLE);
 
   let crmRecords;
   try {
-    crmRecords = await fetchOemLeads();
+    crmRecords = await loadRecords();
   } catch (err) {
     const endTime = toCatalystDateTime();
     await recordSyncRun(catalystApp, {
@@ -425,7 +517,14 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
     throw err;
   }
 
-  const existingLeadsByCrmId = await loadExistingLeadsByCrmId(catalystApp);
+  if (skipLogWhenEmpty && crmRecords.length === 0) {
+    return {
+      status: 'Success', totalRecordsFetched: 0, recordsInserted: 0, recordsUpdated: 0,
+      recordsUnchanged: 0, recordsFailed: 0, recordsRemoved: 0, scenarioCounts: {},
+    };
+  }
+
+  const existingLeadsByCrmId = await loadExisting(crmRecords);
 
   let inserted = 0;
   let updated = 0;
@@ -472,8 +571,21 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
             mappedRow.dealer_code,
             crmRecord.id,
             async () => {
+            // Re-check under the claim. Another instance (a second webhook, the
+            // modified-since sweep, a manual sync) may have inserted this exact
+            // record while this one waited for the claim; inserting again would
+            // hit the unique crm_record_id and be miscounted as a failed record.
+            // The record is already in Catalyst, so there is nothing to insert —
+            // its fields are brought up to date by the next sync of that lead.
+            const alreadyInserted = (await loadExistingLeadsByCrmIds(catalystApp, [crmRecord.id])).get(crmRecord.id);
+            if (alreadyInserted) {
+              existingLeadsByCrmId.set(crmRecord.id, alreadyInserted);
+              unchanged += 1;
+              return;
+            }
+
             const duplicate = validation.valid
-              ? findDeliveredBusinessDuplicate(
+              ? await findDuplicate(
                   { ...mappedRow, CREATEDTIME: crmRecord.Created_Time },
                   existingLeadsByCrmId
                 )
@@ -699,11 +811,11 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
     }
   }
 
-  // Soft-delete pass — same reasoning as dealerSyncService. Skipped when a
-  // LEAD_SYNC_SINCE window is active: the fetch is then deliberately partial,
-  // so "not seen" no longer means "gone from the CRM".
-  const fetchIsWindowed = Boolean(getLeadSyncSince());
-  for (const [crmId, existingRow] of fetchIsWindowed ? [] : existingLeadsByCrmId) {
+  // Soft-delete pass — same reasoning as dealerSyncService. Skipped (see
+  // `removalPass`) for any partial fetch: a LEAD_SYNC_SINCE window or an
+  // incremental run only sees some records, so "not seen" no longer means
+  // "gone from the CRM".
+  for (const [crmId, existingRow] of removalPass ? existingLeadsByCrmId : []) {
     if (!seenCrmIds.has(crmId) && existingRow.sync_status !== 'Removed') {
       try {
         await table.updateRow({
@@ -755,12 +867,139 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
   };
 }
 
+// ---------------------------------------------------------------------------
+// Incremental sync (webhook path)
+// ---------------------------------------------------------------------------
+
+// One incremental job at a time per warm instance. Each job fetches the
+// CURRENT state of its records when its turn starts, so a webhook that
+// arrives while another is running is processed afterwards with fresh data —
+// never concurrently, never from a stale snapshot. Cross-instance races are
+// still closed by the existing per-dealer 'leadSync' claim (new leads) and
+// the outbound claim/fingerprint idempotency (dealer dispatch).
+let incrementalSyncTail = Promise.resolve();
+
+function runIncrementalSerially(job) {
+  const run = incrementalSyncTail.then(job, job);
+  incrementalSyncTail = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Marks local rows Removed for OEM records deleted in Zoho (a delete
+ * notification carries ids but the records can no longer be fetched).
+ */
+async function markLeadsRemoved(catalystApp, crmIds) {
+  const existing = await loadExistingLeadsByCrmIds(catalystApp, crmIds);
+  const table = catalystApp.datastore().table(LEADS_TABLE);
+  let removed = 0;
+  for (const row of existing.values()) {
+    if (row.sync_status === 'Removed') continue;
+    await table.updateRow({ ROWID: row.ROWID, sync_status: 'Removed', last_synced_at: toCatalystDateTime() });
+    removed += 1;
+  }
+  return { status: 'Success', totalRecordsFetched: 0, recordsRemoved: removed };
+}
+
+/**
+ * Webhook entry point: syncs only the OEM records named in the notification.
+ * Because the current record is always re-read from Zoho, duplicate and
+ * out-of-order notifications are harmless — the second pass sees no change.
+ */
+async function syncLeadsByIds(catalystApp, ids, {
+  operation = '',
+  trigger = 'Webhook',
+  triggeredBy = 'Zoho CRM',
+} = {}) {
+  const uniqueIds = [...new Set((ids || []).map(String).filter(Boolean))];
+  if (uniqueIds.length === 0) {
+    return { status: 'Success', totalRecordsFetched: 0, recordsInserted: 0, recordsUpdated: 0, recordsFailed: 0 };
+  }
+
+  return runIncrementalSerially(async () => {
+    if (String(operation).toLowerCase() === 'delete') {
+      return markLeadsRemoved(catalystApp, uniqueIds);
+    }
+    return runLeadSync(catalystApp, {
+      trigger,
+      triggeredBy,
+      loadRecords: () => fetchOemLeadsByIds(uniqueIds),
+      loadExisting: (records) => loadExistingLeadsByCrmIds(catalystApp, records.map((r) => r.id)),
+      findDuplicate: (incoming, known) => findDuplicateWithTargetedLookup(catalystApp, incoming, known),
+      removalPass: false,
+    });
+  });
+}
+
+const INCREMENTAL_TRIGGER = 'Incremental';
+const WATERMARK_OVERLAP_MS = 2 * 60 * 1000; // re-read a little before the last run: clock skew / in-flight edits
+const WATERMARK_FALLBACK_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+function parseCatalystUtc(value) {
+  const parsed = new Date(`${String(value || '').replace(' ', 'T')}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Where the next modified-since sweep resumes. Derived from sync_logs (no new
+ * table): the start time of the latest Incremental run that completed with no
+ * failed record. A run with failures does not advance it, so those records
+ * are re-read next time (re-processing is idempotent: unchanged rows are
+ * skipped). With no prior run it starts 24h back, never before
+ * LEAD_SYNC_SINCE.
+ */
+async function getIncrementalWatermark(catalystApp, now = new Date()) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM sync_logs WHERE sync_trigger = '${INCREMENTAL_TRIGGER}' ORDER BY CREATEDTIME DESC LIMIT 0, 20`
+  );
+  for (const wrapped of rows) {
+    const log = wrapped.sync_logs;
+    if (log.sync_type !== 'Lead_Sync') continue;
+    if (!['Success', 'Partial'].includes(log.status)) continue;
+    if (Number(log.records_failed || 0) !== 0) continue;
+    const startedAt = parseCatalystUtc(log.start_time);
+    if (startedAt) return new Date(startedAt.getTime() - WATERMARK_OVERLAP_MS);
+  }
+  const fallback = new Date(now.getTime() - WATERMARK_FALLBACK_LOOKBACK_MS);
+  const since = getLeadSyncSince();
+  return since && since > fallback ? since : fallback;
+}
+
+/**
+ * Recovery / fallback entry point: syncs every OEM lead modified since the
+ * watermark. Used by the cron sweep (missed or failed webhooks) and when a
+ * notification arrives without record ids. Quiet periods cost one 304 call
+ * and write no sync_logs row.
+ */
+async function syncModifiedLeads(catalystApp, {
+  trigger = INCREMENTAL_TRIGGER,
+  triggeredBy = 'System',
+} = {}) {
+  return runIncrementalSerially(async () => {
+    const watermark = await getIncrementalWatermark(catalystApp);
+    return runLeadSync(catalystApp, {
+      trigger,
+      triggeredBy,
+      loadRecords: () => fetchOemLeadsModifiedSince(watermark),
+      loadExisting: (records) => loadExistingLeadsByCrmIds(catalystApp, records.map((r) => r.id)),
+      findDuplicate: (incoming, known) => findDuplicateWithTargetedLookup(catalystApp, incoming, known),
+      removalPass: false,
+      skipLogWhenEmpty: true,
+    });
+  });
+}
+
 module.exports = {
   syncLeads,
+  syncLeadsByIds,
+  syncModifiedLeads,
   _test: {
     mapCrmRecordToLeadRow,
     hasChanges,
     needsAssignedDateBackfill,
     findDeliveredBusinessDuplicate,
+    loadExistingLeadsByCrmId,
+    getIncrementalWatermark,
+    loadDuplicateCandidates,
   },
 };

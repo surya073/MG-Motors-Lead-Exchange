@@ -2,6 +2,7 @@
 
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
+const { mapWithConcurrency } = require('../utils/concurrency');
 
 const NOTIFICATIONS_TABLE = 'notifications';
 
@@ -50,6 +51,9 @@ async function notifyAdmins(catalystApp, { type, title, message, relatedLeadId, 
 }
 
 const ZCQL_PAGE_SIZE = 200;
+// Bulk row writes (mark all read / clear all) run a few at a time: up to 200 in
+// parallel trips Catalyst's concurrency limit.
+const NOTIFICATION_WRITE_CONCURRENCY = 5;
 
 async function listForUser(catalystApp, { userId, role, maxRows = 50 }) {
   const query = `
@@ -70,10 +74,10 @@ async function markRead(catalystApp, notificationId) {
 async function markAllRead(catalystApp, { userId, role }) {
   const unread = await listForUser(catalystApp, { userId, role, maxRows: ZCQL_PAGE_SIZE });
   const table = catalystApp.datastore().table(NOTIFICATIONS_TABLE);
-  await Promise.all(
-    unread
-      .filter((n) => n.is_read !== true) // boolean comparison, not string
-      .map((n) => table.updateRow({ ROWID: n.ROWID, is_read: true }))
+  await mapWithConcurrency(
+    unread.filter((n) => n.is_read !== true), // boolean comparison, not string
+    NOTIFICATION_WRITE_CONCURRENCY,
+    (n) => table.updateRow({ ROWID: n.ROWID, is_read: true })
   );
 }
 
@@ -94,7 +98,7 @@ async function clearAllForUser(catalystApp, { userId, role }) {
   for (let batch = 0; batch < CLEAR_ALL_MAX_BATCHES; batch += 1) {
     const rows = await listForUser(catalystApp, { userId, role, maxRows: ZCQL_PAGE_SIZE });
     if (rows.length === 0) break;
-    await Promise.all(rows.map((n) => table.deleteRow(n.ROWID)));
+    await mapWithConcurrency(rows, NOTIFICATION_WRITE_CONCURRENCY, (n) => table.deleteRow(n.ROWID));
     deleted += rows.length;
     if (rows.length < ZCQL_PAGE_SIZE) break;
   }

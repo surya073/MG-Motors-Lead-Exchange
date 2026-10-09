@@ -4,6 +4,8 @@ const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
 const pathPolicy = require('./pathPolicyService');
 const { guardSweep } = require('./sweepOverlapGuard');
+const stats = require('../dashboardStatsService');
+const { ROTATION_BUCKET_MS, tailWindow, countFrom } = require('./sweepWindow');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const LEADS_TABLE = 'leads';
@@ -14,7 +16,11 @@ const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 // failing at once. Leads beyond this limit just get picked up on the
 // next sweep.
 const MAX_LEADS_PER_SWEEP = 50;
-const MAX_CANDIDATES_TO_SCAN = 200;
+// Candidates are read as the oldest HEAD_ROWS failing rows plus a TAIL_ROWS slice
+// that rotates over the rest (see sweepWindow.js), so at most this many rows are
+// examined per sweep.
+const HEAD_ROWS = 100;
+const TAIL_ROWS = 100;
 
 // Same proven pattern as dealerReconciliationService.js's
 // RECONCILE_CONCURRENCY (identical formula/default/cap): each candidate
@@ -71,13 +77,40 @@ function safeQuoteForZcql(value) {
  *   should go out, not sit until their individual back-off expires. Default
  *   is false, so existing callers behave exactly as before.
  */
+/**
+ * The failing rows to examine this sweep: the HEAD_ROWS oldest by next_retry_at
+ * (priority unchanged) plus a TAIL_ROWS slice that rotates over the rest, so a
+ * row that is examined but never leaves the set cannot starve the rows behind it.
+ * Read-only: nothing is written to make the rotation work.
+ */
+async function selectRetryCandidates(catalystApp, now = Date.now()) {
+  const where = `WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL')`;
+  // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
+  const slice = (offset, size) =>
+    catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} ${where} ORDER BY next_retry_at ASC, ROWID ASC LIMIT ${offset + 1}, ${size}`
+    );
+
+  const head = await slice(0, HEAD_ROWS);
+  if (head.length < HEAD_ROWS) return head;
+
+  const total = countFrom(
+    await catalystApp.zcql().executeZCQLQuery(`SELECT COUNT(ROWID) FROM ${LEAD_INTEGRATIONS_TABLE} ${where}`),
+    LEAD_INTEGRATIONS_TABLE
+  );
+  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now });
+  if (!tail) return head;
+
+  const tailRows = await slice(tail.offset, TAIL_ROWS);
+  const seen = new Set(head.map((r) => r[LEAD_INTEGRATIONS_TABLE].ROWID));
+  return [...head, ...tailRows.filter((r) => !seen.has(r[LEAD_INTEGRATIONS_TABLE].ROWID))];
+}
+
 async function runOutboundRetrySweepInternal(catalystApp, options) {
   const ignoreSchedule = Boolean(options && options.ignoreSchedule);
-  const now = new Date();
+  const now = new Date(Date.now());
 
-  const dueRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL') ORDER BY next_retry_at ASC LIMIT 0, ${MAX_CANDIDATES_TO_SCAN}`
-  );
+  const dueRows = await selectRetryCandidates(catalystApp, now.getTime());
 
   // `recovered` counts ONLY leads that actually reached the dealer CRM.
   // syncLeadToExternalCrm RETURNS {skipped:true, reason} for a validation
@@ -112,8 +145,7 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
       const leftAt = pathPolicy.parseTimestamp(left.next_retry_at)?.getTime() || 0;
       const rightAt = pathPolicy.parseTimestamp(right.next_retry_at)?.getTime() || 0;
       return leftAt - rightAt;
-    })
-    .slice(0, MAX_LEADS_PER_SWEEP);
+    });
 
   // Unchanged per-lead logic, only extracted into a named function so it
   // can be invoked from bounded concurrent batches below instead of a
@@ -123,12 +155,22 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   // entirely untouched — they live inside that function, not here), same
   // result counting, same error handling (one lead's failure/exception
   // never aborts the sweep).
+  const integrationCache = new Map();
+  const getIntegration = (integrationId) => {
+    if (!integrationCache.has(integrationId)) {
+      integrationCache.set(
+        integrationId,
+        catalystApp.zcql().executeZCQLQuery(
+          `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${integrationId} LIMIT 1`
+        ).then((rows) => (rows.length > 0 ? rows[0][DEALER_INTEGRATIONS_TABLE] : null))
+      );
+    }
+    return integrationCache.get(integrationId);
+  };
+
   const processOne = async (mapping) => {
     try {
-      const integrationRows = await catalystApp.zcql().executeZCQLQuery(
-        `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${mapping.integration_id} LIMIT 1`
-      );
-      const integration = integrationRows.length > 0 ? integrationRows[0][DEALER_INTEGRATIONS_TABLE] : null;
+      const integration = await getIntegration(mapping.integration_id);
 
       const leadRows = await catalystApp.zcql().executeZCQLQuery(
         `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`
@@ -181,8 +223,17 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   // at the batch granularity: the most-overdue leads are always in the
   // earliest batches, exactly mirroring reconciliation's own
   // last_attempted_at-ascending ordering through its identical pattern.
-  for (let index = 0; index < dueNow.length; index += OUTBOUND_RETRY_CONCURRENCY) {
-    await Promise.all(dueNow.slice(index, index + OUTBOUND_RETRY_CONCURRENCY).map(processOne));
+  //
+  // Only rows that are actually ATTEMPTED count against MAX_LEADS_PER_SWEEP. A
+  // dangling mapping (integration removed, lead gone) is deliberately left
+  // as-is, but it is never delivered or rewritten, so it stays at the front of
+  // the queue; if it used up the per-sweep allowance, a few dozen of them would
+  // starve every valid retry behind them. They are examined (two cheap lookups)
+  // and passed over, nothing is written to them, and the sweep carries on.
+  for (let index = 0; index < dueNow.length && results.attempted < MAX_LEADS_PER_SWEEP;) {
+    const size = Math.min(OUTBOUND_RETRY_CONCURRENCY, MAX_LEADS_PER_SWEEP - results.attempted);
+    await Promise.all(dueNow.slice(index, index + size).map(processOne));
+    index += size;
   }
 
   if (options && options.includeRoutingHolds) {
@@ -194,6 +245,8 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
 }
 
 const MAX_ROUTING_HOLDS_PER_SWEEP = 20;
+// Each routable dealer's share of one sweep's budget in the first pass (fairness).
+const ROUTING_HOLDS_PER_DEALER_PER_SWEEP = 5;
 const UNROUTABLE_INTEGRATION_STATUSES = ['NOT_CONFIGURED', 'CONFIGURING', 'DISABLED'];
 
 /**
@@ -213,37 +266,85 @@ const UNROUTABLE_INTEGRATION_STATUSES = ['NOT_CONFIGURED', 'CONFIGURING', 'DISAB
  */
 async function reprocessRoutingHolds(catalystApp) {
   const summary = { candidates: 0, attempted: 0, delivered: 0, stillHeld: 0, errored: 0 };
-  const heldRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${LEADS_TABLE} WHERE sync_status = 'ROUTING_HOLD' ORDER BY MODIFIEDTIME ASC LIMIT 0, ${MAX_ROUTING_HOLDS_PER_SWEEP}`
+
+  // The old version read the 20 OLDEST held leads and skipped any whose dealer
+  // had not been fixed — without touching them. Those 20 therefore stayed the
+  // oldest forever, and a held lead for a dealer that WAS fixed (but sat behind
+  // them) was never looked at: with 147 held leads in the live data, most were
+  // invisible to the sweep. Instead: find the dealers that have held leads
+  // (one aggregate), keep only those whose integration is routable, and read
+  // just the held leads that predate that dealer's last change. A lead that is
+  // attempted either leaves the hold or is re-held (bumping its MODIFIEDTIME
+  // past the integration's), so it drops out of the candidate set and the
+  // budget moves on — nothing can sit at the front and block the rest.
+  const holdsByDealer = await stats.countGrouped(
+    catalystApp,
+    LEADS_TABLE,
+    ['dealer_code'],
+    ["sync_status = 'ROUTING_HOLD'"]
   );
-  summary.candidates = heldRows.length;
-  const integrationsByDealer = new Map();
+  const dealerCodes = holdsByDealer.map((row) => row.dealer_code).filter(Boolean);
+  if (dealerCodes.length === 0) return summary;
 
-  for (const row of heldRows) {
-    const leadRow = row[LEADS_TABLE];
-    if (!leadRow.dealer_code || !leadRow.crm_record_id) continue;
-    try {
-      if (!integrationsByDealer.has(leadRow.dealer_code)) {
-        integrationsByDealer.set(
-          leadRow.dealer_code,
-          await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code)
+  // One dealer's integration config is read once per sweep. Start the dealer
+  // order at a rotating position so no dealer is always served first.
+  const start = Math.floor(Date.now() / ROTATION_BUCKET_MS) % dealerCodes.length;
+  const rotated = [...dealerCodes.slice(start), ...dealerCodes.slice(0, start)];
+
+  const integrations = new Map();
+  const exhausted = new Set(); // dealers with nothing (more) to attempt this sweep
+
+  // Two passes over the dealers: first each routable dealer gets a small share
+  // (so a dealer with 60 held leads cannot use the whole budget before a dealer
+  // with 5 is looked at), then whatever budget is left goes to the dealers that
+  // still have candidates.
+  for (const perDealerCap of [ROUTING_HOLDS_PER_DEALER_PER_SWEEP, MAX_ROUTING_HOLDS_PER_SWEEP]) {
+    for (const dealerCode of rotated) {
+      const remaining = MAX_ROUTING_HOLDS_PER_SWEEP - summary.candidates;
+      if (remaining <= 0) break;
+      if (exhausted.has(dealerCode)) continue;
+      try {
+        if (!integrations.has(dealerCode)) {
+          integrations.set(dealerCode, await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode));
+        }
+        const integration = integrations.get(dealerCode);
+        const isRoutable = integration
+          && integration.integration_type === 'EXTERNAL_CRM'
+          && !UNROUTABLE_INTEGRATION_STATUSES.includes(integration.status);
+        // Only leads held BEFORE the dealer's setup last changed can have been
+        // fixed by that change.
+        if (!isRoutable || !integration.MODIFIEDTIME) {
+          exhausted.add(dealerCode);
+          continue;
+        }
+
+        const limit = Math.min(perDealerCap, remaining);
+        const held = await catalystApp.zcql().executeZCQLQuery(
+          `SELECT * FROM ${LEADS_TABLE} WHERE sync_status = 'ROUTING_HOLD' AND dealer_code = '${safeQuoteForZcql(dealerCode)}' ` +
+            `AND MODIFIEDTIME < '${safeQuoteForZcql(integration.MODIFIEDTIME)}' ` +
+            `ORDER BY MODIFIEDTIME ASC, ROWID ASC LIMIT 1, ${limit}`
         );
-      }
-      const integration = integrationsByDealer.get(leadRow.dealer_code);
-      const isRoutable = integration
-        && integration.integration_type === 'EXTERNAL_CRM'
-        && !UNROUTABLE_INTEGRATION_STATUSES.includes(integration.status);
-      const changedSinceHeld = integration
-        && String(integration.MODIFIEDTIME || '') > String(leadRow.MODIFIEDTIME || '');
-      if (!isRoutable || !changedSinceHeld) continue;
+        if (held.length < limit) exhausted.add(dealerCode);
 
-      summary.attempted += 1;
-      const outcome = await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
-      if (outcome && outcome.ok) summary.delivered += 1;
-      else summary.stillHeld += 1;
-    } catch (err) {
-      // syncLeadToExternalCrm already logged the Unhappy classification.
-      summary.errored += 1;
+        for (const row of held) {
+          const leadRow = row[LEADS_TABLE];
+          summary.candidates += 1;
+          if (!leadRow.crm_record_id) continue;
+          try {
+            summary.attempted += 1;
+            const outcome = await crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+            if (outcome && outcome.ok) summary.delivered += 1;
+            else summary.stillHeld += 1;
+          } catch (err) {
+            // syncLeadToExternalCrm already logged the Unhappy classification.
+            summary.errored += 1;
+          }
+        }
+      } catch (err) {
+        summary.errored += 1;
+        exhausted.add(dealerCode);
+        logger.error('outboundRetryScheduler', `Routing-hold reprocess failed for dealer ${dealerCode}`, err);
+      }
     }
   }
   return summary;
@@ -255,4 +356,4 @@ async function reprocessRoutingHolds(catalystApp) {
 // (cronRoutes.js).
 const runOutboundRetrySweep = guardSweep('outboundRetrySweep', runOutboundRetrySweepInternal);
 
-module.exports = { runOutboundRetrySweep };
+module.exports = { runOutboundRetrySweep, _test: { reprocessRoutingHolds, selectRetryCandidates, HEAD_ROWS, TAIL_ROWS } };
