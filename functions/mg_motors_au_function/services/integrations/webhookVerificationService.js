@@ -127,6 +127,16 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
     return valid ? { ok: true } : { ok: false, reason: 'INVALID_SIGNATURE' };
   }
 
+  // Static token in X-Webhook-Token (or X-Api-Key). Catalyst's own gateway
+  // treats any "Authorization: Bearer ..." header as a Catalyst OAuth token
+  // and rejects the call (401 INVALID_TOKEN) BEFORE this function runs, so a
+  // dealer CRM cannot use the Authorization header on a Catalyst endpoint.
+  const tokenHeader = headers['x-webhook-token'] || headers['x-api-key'];
+  if (tokenHeader) {
+    const valid = secrets.some((secret) => timingSafeEqual(String(tokenHeader), secret));
+    return valid ? { ok: true } : { ok: false, reason: 'INVALID_TOKEN' };
+  }
+
   // Fallback: shared bearer token in Authorization header.
   const authHeader = headers['authorization'];
   if (authHeader) {

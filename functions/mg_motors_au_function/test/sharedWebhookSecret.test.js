@@ -76,3 +76,14 @@ test('an unlisted dealer with no secret at all is still refused, with the same r
   setup(t, { unreadable: true, codes: 'AU999' });
   assert.equal((await verifyWebhook({}, integration('AU008'), body, bearer(SHARED))).reason, 'WEBHOOK_SECRET_UNREADABLE');
 });
+
+test('X-Webhook-Token (and X-Api-Key) carry the secret, because Catalyst blocks Authorization: Bearer before our code runs', async (t) => {
+  setup(t);
+  const viaToken = (s) => ({ 'x-webhook-token': s });
+  assert.equal((await verifyWebhook({}, integration('AU999'), body, viaToken(SHARED))).ok, true);
+  assert.equal((await verifyWebhook({}, integration('AU999'), body, { 'x-api-key': SHARED })).ok, true);
+  assert.equal((await verifyWebhook({}, integration('AU999'), body, viaToken(OWN))).ok, true);
+  assert.equal((await verifyWebhook({}, integration('AU999'), body, viaToken('nope'))).reason, 'INVALID_TOKEN');
+  // Not accepted for a dealer the shared secret is not scoped to.
+  assert.equal((await verifyWebhook({}, integration('AU008'), body, viaToken(SHARED))).ok, false);
+});
