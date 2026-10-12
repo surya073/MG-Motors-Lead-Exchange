@@ -233,7 +233,7 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 
 | Batch | Status | Branch / commit | Tests after | Notes |
 |---|---|---|---|---|
-| 0 | Not started | | baseline 334 | |
+| 0 | Done (12 Oct 2026) | `fusion/batch-0-baseline`: `5a05737` docs, `2ecd23b` .gitattributes, `6541642` test helpers | 345 pass, 0 fail (334 baseline + 11 helper self-tests) on Node 20.20.2; frontend build passes (18 existing warnings) | Run the gate on Node ≥ 20.4 (deploy stack is node20): on Node 18, 3 `sweepStarvation` tests fail on the `mock.timers` API. `SCALABILITY_TEST_PLAN.md` was already identical to HEAD (stale index entry only); the 32 CRLF-only files were restored. `.bin` exec bits fixed locally, so `npm run build` works. |
 | 1 | Not started | | | |
 | 2 | Not started | | | |
 | 3 | Not started | | | |
