@@ -198,6 +198,10 @@ const FUSION_DEFAULT_STATUS_MAPPINGS = [
   { source_status: "Not Contacted", target_status: "Open" },
   { source_status: "Lost", target_status: "Lost" },
   { source_status: "Not Qualified", target_status: "Prospect Lost" },
+  // Inbound only: Fusion may report Won / Delivered, but MG Contacted /
+  // Contact in Future must never be sent back to Fusion as Won / Delivered.
+  { source_status: "Contacted", target_status: "Won", inbound_only: true },
+  { source_status: "Contact in Future", target_status: "Delivered", inbound_only: true },
 ];
 
 const EMPTY_CONFIG = {
@@ -1990,9 +1994,20 @@ export default function DealerCRMConfig() {
                                 <div className="dealer-crm-config__mapping-saved-label">
                                   <CheckCircle2 size={15} className="dealer-crm-config__mapping-check" />
                                   <span className="dealer-crm-config__mapping-saved-text">
-                                    {ourStatusLabel(mapping.source_status)}
-                                    <span className="dealer-crm-config__mapping-arrow-inline">↔</span>
-                                    {mapping.target_status}
+                                    {mapping.inbound_only ? (
+                                      <>
+                                        {mapping.target_status}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">→</span>
+                                        {ourStatusLabel(mapping.source_status)}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">(inbound only)</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        {ourStatusLabel(mapping.source_status)}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">↔</span>
+                                        {mapping.target_status}
+                                      </>
+                                    )}
                                   </span>
                                 </div>
                                 <div className="dealer-crm-config__mapping-row-actions">
@@ -2034,6 +2049,15 @@ export default function DealerCRMConfig() {
                                 onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
                                 placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
                               />
+                              <label title="Accept this dealer status coming in, but never send our status out as it">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(mapping.inbound_only)}
+                                  onChange={(e) => handleStatusMappingChange(index, "inbound_only", e.target.checked)}
+                                  disabled={isViewUser}
+                                />{" "}
+                                Inbound only
+                              </label>
                               <button
                                 type="button"
                                 className="dealer-crm-config__icon-button dealer-crm-config__icon-button--danger"

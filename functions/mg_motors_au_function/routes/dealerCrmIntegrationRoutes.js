@@ -262,11 +262,34 @@ router.get('/:dealerCode/integration/mappings', requireAdminOrViewRole, async (r
       });
     });
 
+    // A dealer -> MG row with no MG -> dealer partner is an INBOUND-ONLY mapping
+    // (e.g. Fusion "Won" -> MG "Contacted" without ever sending MG "Contacted"
+    // out as "Won"). Shown as its own row in the MG -> dealer orientation the
+    // editor uses, flagged inbound_only. Leftover duplicates of a two-way pair
+    // are not inbound-only rows and stay in the cleanup count.
+    const forwardPairCount = statusMappings.length;
+    const inboundOnlyKeys = new Set();
+    reverseRows.forEach((reverseRow) => {
+      if (usedReverseIds.has(String(reverseRow.ROWID))) return;
+      const mgFirstKey = [reverseRow.target_status, reverseRow.source_status]
+        .map(pathPolicy.normalizeStatus)
+        .join(' ');
+      if (seenPairs.has(mgFirstKey) || inboundOnlyKeys.has(mgFirstKey)) return;
+      inboundOnlyKeys.add(mgFirstKey);
+      statusMappings.push({
+        source_status: reverseRow.target_status,
+        target_status: reverseRow.source_status,
+        inbound_only: true,
+        reverse_ROWID: reverseRow.ROWID,
+      });
+    });
+    const inboundOnlyCount = statusMappings.length - forwardPairCount;
+
     res.json({
       fieldMappings,
       statusMappings,
       statusMappingCleanupRequired:
-        statusMappingsRaw.length !== statusMappings.length * 2,
+        statusMappingsRaw.length !== forwardPairCount * 2 + inboundOnlyCount,
     });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET mappings failed for ${dealerCode}`, err);
@@ -342,14 +365,19 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         });
       }
 
-      const priorTarget = outboundTargetsBySource.get(normalizedSource);
-      if (priorTarget && priorTarget !== normalizedTarget) {
-        return res.status(400).json({
-          error: 'STATUS_MAPPING_AMBIGUOUS',
-          value: sourceStatus,
-        });
+      const inboundOnly = mapping.inbound_only === true;
+      // An inbound-only row never sends anything out, so it cannot make the
+      // MG -> dealer direction ambiguous.
+      if (!inboundOnly) {
+        const priorTarget = outboundTargetsBySource.get(normalizedSource);
+        if (priorTarget && priorTarget !== normalizedTarget) {
+          return res.status(400).json({
+            error: 'STATUS_MAPPING_AMBIGUOUS',
+            value: sourceStatus,
+          });
+        }
+        outboundTargetsBySource.set(normalizedSource, normalizedTarget);
       }
-      outboundTargetsBySource.set(normalizedSource, normalizedTarget);
 
       const priorInboundTarget = inboundTargetsBySource.get(normalizedTarget);
       if (priorInboundTarget && priorInboundTarget !== normalizedSource) {
@@ -367,6 +395,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         ...mapping,
         source_status: sourceStatus,
         target_status: targetStatus,
+        inbound_only: inboundOnly,
       });
     }
     if (validStatusMappings.length === 0) {
@@ -445,18 +474,25 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
     // save removes duplicates/orphans. This is safer than delete-all-first
     // in a datastore API that does not provide a transaction here.
     for (const mapping of validStatusMappings) {
-      let forwardRow = mapping.ROWID
-        ? existingStatusById.get(String(mapping.ROWID))
-        : null;
-      if (!forwardRow || !isForwardStatusRow(forwardRow) || claimedExistingIds.has(String(forwardRow.ROWID))) {
-        forwardRow = findUnclaimedRow((row) =>
-          isForwardStatusRow(row) &&
-          sameStatus(row.source_status, mapping.source_status) &&
-          sameStatus(row.target_status, mapping.target_status)
-        );
+      let forwardRow = null;
+      if (!mapping.inbound_only) {
+        forwardRow = mapping.ROWID
+          ? existingStatusById.get(String(mapping.ROWID))
+          : null;
+        if (!forwardRow || !isForwardStatusRow(forwardRow) || claimedExistingIds.has(String(forwardRow.ROWID))) {
+          forwardRow = findUnclaimedRow((row) =>
+            isForwardStatusRow(row) &&
+            sameStatus(row.source_status, mapping.source_status) &&
+            sameStatus(row.target_status, mapping.target_status)
+          );
+        }
       }
 
-      if (forwardRow) {
+      // Inbound-only: no MG -> dealer row is written, and any existing one for
+      // this pair is left unclaimed so the stale-row sweep below removes it.
+      if (mapping.inbound_only) {
+        // fall through to the reverse (dealer -> MG) row only
+      } else if (forwardRow) {
         await statusTable.updateRow({
           ROWID: forwardRow.ROWID,
           source_status: mapping.source_status,
