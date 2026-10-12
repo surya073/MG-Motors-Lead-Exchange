@@ -1,0 +1,4 @@
+# Store text files with LF line endings. Files already committed with CRLF
+# are left as they are (git does not convert them under text=auto); this
+# stops new CRLF-only churn, e.g. from a Windows checkout or a zip sync.
+* text=auto
