@@ -2,6 +2,7 @@
 
 const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
+const crmAdapterFactory = require('./crmAdapterFactory');
 const { guardSweep } = require('./sweepOverlapGuard');
 const { tailWindow, countFrom } = require('./sweepWindow');
 
@@ -268,7 +269,9 @@ async function runInboundReplaySweepInternal(catalystApp) {
       const leadMapping = mappingRows[0][LEAD_INTEGRATIONS_TABLE];
 
       const integration = await getIntegration(integrationId);
-      if (!integration) {
+      // A dealer CRM that cannot be read back (Fusion SD) cannot be replayed:
+      // its held rows are left untouched rather than failing on every sweep.
+      if (!integration || (integration.crm_type && !crmAdapterFactory.supports(integration.crm_type, 'getLead'))) {
         results.stillWaiting += 1;
         continue;
       }

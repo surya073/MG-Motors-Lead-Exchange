@@ -112,6 +112,10 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
   }
 });
 
+function deriveInboundEnabled(crmType, webhookEnabled) {
+  return crmType === 'FUSION_SD' ? Boolean(webhookEnabled) : true;
+}
+
 router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
@@ -147,9 +151,10 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       webhook_enabled: Boolean(body.webhook_enabled),
       webhook_id_field: body.webhook_id_field || 'id',
       outbound_enabled: true,
-      // Fusion SD has no webhook or read-back endpoint, so there is nothing
-      // inbound to reconcile or replay for it.
-      inbound_enabled: !isFusionSd,
+      // Fusion SD cannot be read back (no getLead), so nothing is reconciled or
+      // replayed for it, but it can PUSH status updates to our webhook. Inbound
+      // is therefore on for it only when the "send updates back" toggle is on.
+      inbound_enabled: deriveInboundEnabled(body.crm_type, body.webhook_enabled),
       status: (integration?.status === 'ACTIVE' || integration?.status === 'CONNECTED') ? 'CONFIGURING' : 'NOT_CONFIGURED',
     };
     if (integration) {
@@ -606,3 +611,4 @@ router.get('/leads/:crmRecordId/timeline', async (req, res) => {
 });
 
 module.exports = router;
+module.exports._test = { deriveInboundEnabled };
