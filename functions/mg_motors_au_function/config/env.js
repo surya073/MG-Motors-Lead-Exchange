@@ -89,4 +89,21 @@ function getAiAssistantConfig() {
   };
 }
 
-module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig, getLeadSyncSince };
+/**
+ * Optional shared inbound-webhook secret for dealers whose CRM cannot hold a
+ * per-dealer secret from this app (e.g. Fusion SD). It applies ONLY to the
+ * dealer codes listed in FUSION_WEBHOOK_DEALER_CODES (comma-separated), and is
+ * accepted in addition to the dealer's own secret. Unset = feature off.
+ */
+function getSharedWebhookConfig() {
+  const secret = (process.env.FUSION_WEBHOOK_SECRET || '').trim();
+  const dealerCodes = new Set(
+    (process.env.FUSION_WEBHOOK_DEALER_CODES || '')
+      .split(',')
+      .map((code) => code.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return { secret, dealerCodes };
+}
+
+module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig, getLeadSyncSince, getSharedWebhookConfig };

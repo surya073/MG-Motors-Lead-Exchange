@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const integrationAuthService = require('./integrationAuthService');
+const { getSharedWebhookConfig } = require('../../config/env');
 
 /**
  * webhookVerificationService.js
@@ -87,6 +88,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   // middleware outage rather than what it is: an authentication problem.
   // A failure to authenticate must always present as 401.
   let webhookSecret = null;
+  let unreadable = false;
   try {
     webhookSecret = await integrationAuthService.getDecryptedCredential(
       catalystApp,
@@ -99,10 +101,20 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
       `Webhook secret for integration ${integration.ROWID} could not be decrypted — re-save it so it is encrypted with the current INTEGRATION_CREDENTIALS_KEY`,
       err
     );
-    return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
+    unreadable = true;
   }
 
-  if (!webhookSecret) {
+  // The shared secret (env var) is accepted for the dealers it is explicitly
+  // scoped to, alongside the dealer's own secret. It never applies to any
+  // other dealer.
+  const shared = getSharedWebhookConfig();
+  const sharedApplies = Boolean(
+    shared.secret && shared.dealerCodes.has(String(integration.dealer_code || '').toLowerCase())
+  );
+  const secrets = [webhookSecret, sharedApplies ? shared.secret : null].filter(Boolean);
+
+  if (secrets.length === 0) {
+    if (unreadable) return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
     logger.error('webhookVerificationService', `No webhook secret configured for integration ${integration.ROWID}`);
     return { ok: false, reason: 'WEBHOOK_AUTH_NOT_CONFIGURED' };
   }
@@ -110,9 +122,8 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   // Preferred: HMAC signature in X-Signature / X-Webhook-Signature header.
   const signatureHeader = headers['x-webhook-signature'] || headers['x-signature'];
   if (signatureHeader) {
-    const expected = computeHmac(webhookSecret, rawBody);
     const provided = signatureHeader.replace(/^sha256=/, '');
-    const valid = timingSafeEqual(expected, provided);
+    const valid = secrets.some((secret) => timingSafeEqual(computeHmac(secret, rawBody), provided));
     return valid ? { ok: true } : { ok: false, reason: 'INVALID_SIGNATURE' };
   }
 
@@ -120,7 +131,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   const authHeader = headers['authorization'];
   if (authHeader) {
     const token = authHeader.replace(/^Bearer\s+/i, '');
-    const valid = timingSafeEqual(token, webhookSecret);
+    const valid = secrets.some((secret) => timingSafeEqual(token, secret));
     return valid ? { ok: true } : { ok: false, reason: 'INVALID_TOKEN' };
   }
 
@@ -129,7 +140,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   try {
     const parsed = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody));
     if (parsed?.token) {
-      const valid = verifyZohoWatchToken(parsed.token, webhookSecret);
+      const valid = secrets.some((secret) => verifyZohoWatchToken(parsed.token, secret));
       return valid ? { ok: true } : { ok: false, reason: 'INVALID_TOKEN' };
     }
   } catch {
