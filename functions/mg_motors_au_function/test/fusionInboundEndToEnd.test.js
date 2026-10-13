@@ -58,11 +58,11 @@ async function buckby(t, { mgStatus = 'Contacted', flag = 'true' } = {}) {
   });
   t.after(() => listener.close());
 
-  const deliver = async (payload, { secret = SECRET, timestamp, tamper } = {}) => {
+  const deliver = async (payload, { secret = SECRET, timestamp, tamper, contentType = 'application/json' } = {}) => {
     const signed = signStandardWebhook({ secret, timestamp, body: payload });
     const response = await fetch(`http://127.0.0.1:${listener.address().port}/webhooks/dealers/AU999`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...signed.headers },
+      headers: { 'Content-Type': contentType, ...signed.headers },
       body: tamper ? tamper(signed.body) : signed.body,
     });
     return { status: response.status, body: await response.json(), id: signed.headers['webhook-id'] };
@@ -136,4 +136,21 @@ test('fusionSdAdapter declares webhook support only with FUSION_INBOUND_V2 on; g
   assert.equal(crmAdapterFactory.supports('FUSION_SD', 'webhook'), true);
   assert.equal(crmAdapterFactory.supports('FUSION_SD', 'getLead'), false);
   assert.equal(crmAdapterFactory.supports('ZOHO_CRM', 'webhook'), true);
+});
+
+// Review edge cases: Fusion may send a charset with its JSON content type; a
+// request whose body is not JSON at all fails closed.
+test('a signed webhook sent as application/json; charset=utf-8 is verified and applied', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost' }), { contentType: 'application/json; charset=utf-8' });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.result.scenarioCode, 'Happy 2');
+});
+
+test('a webhook sent with a non-JSON content type is refused (401) and changes nothing', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost' }), { contentType: 'text/plain' });
+  assert.equal(result.status, 401);
+  assert.equal(h.oemWrites.length, 0);
+  assert.equal(h.db.tables.webhook_events.length, 0);
 });
