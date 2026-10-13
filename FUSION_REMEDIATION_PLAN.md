@@ -234,7 +234,7 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Batch | Status | Branch / commit | Tests after | Notes |
 |---|---|---|---|---|
 | 0 | Done (12 Oct 2026) | `fusion/batch-0-baseline`: `5a05737` docs, `2ecd23b` .gitattributes, `6541642` test helpers | 345 pass, 0 fail (334 baseline + 11 helper self-tests) on Node 20.20.2; frontend build passes (18 existing warnings) | Run the gate on Node ≥ 20.4 (deploy stack is node20): on Node 18, 3 `sweepStarvation` tests fail on the `mock.timers` API. `SCALABILITY_TEST_PLAN.md` was already identical to HEAD (stale index entry only); the 32 CRLF-only files were restored. `.bin` exec bits fixed locally, so `npm run build` works. |
-| 1 | Not started | | | |
+| 1 | Done (13 Oct 2026) | `fusion/batch-1-security-hygiene`: `22df517` M1/M2, `6619855` M9, `4053e64` H3, `c49570f` M6, `94978da` + `de4a4aa` M7/L2, `9976229` S10, `5a3be46` L4, `fbca793` L3 | 371 pass, 0 fail (345 + 26 new) on Node 20.20.2; frontend build passes (18 existing warnings) | Read-only live checks (13 Oct): no saved mapping or base_url is refused by the new save rules; every Fusion lead id matches the M6 rule; live ZCQL refuses `LIMIT 0, 500`, confirming S10. Deploy: the first fast-recover run emails one catch-up digest (16 failures queued on 13 Oct). Fusion-only behaviour change: a token-endpoint 401/403 during a sync now marks the integration ERROR (L2). M6 changed 3 existing tests on purpose. No new env vars. |
 | 2 | Not started | | | |
 | 3 | Not started | | | |
 | 4 | Blocked (Q1, Q2) | | | |
