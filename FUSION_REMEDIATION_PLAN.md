@@ -244,6 +244,8 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Q19 | A Fusion dealer with both a signing secret and an `X-Webhook-Token` secret: require both, or the signature plus the token only when it is sent? | Batch 5 verifier |
 | Q20 | Fusion: a real signed sample from Buckby's production account, to confirm (a) the signing secret's encoding (`whsec_<base64>` or plain), (b) that `lead.updated` carries the same `lead_id` as Fusion's 201 to our create, and (c) that `status` uses the enquiryStatus words (Open, Won, Delivered, Lost, Prospect Lost) rather than the dealer's own status names. | Switching `FUSION_INBOUND_V2` on |
 | Q21 | Buckby MG's 6 lead mappings were all sent at or before the 12:16 switch to Fusion production (13 Oct), so their Fusion `lead_id`s are probably QA ids. Production webhooks will not match them (Unhappy 7). Re-deliver those leads to production? | Buckby inbound for existing leads |
+| Q22 | Batch 6's durable event store (stored payloads, the C4 duplicate handling, replay from a stored payload): every CRM type, or Fusion only, and behind which switch? | Batch 6 |
+| Q23 | Batch 6's S9 retention (deleting SUCCESS webhook event rows after N days): on by default at 30 days, or off until `WEBHOOK_EVENT_RETENTION_DAYS` is set? | Batch 6 |
 
 ### Answers (13 Oct 2026)
 
@@ -272,6 +274,8 @@ Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
 | Q17 | Keep today's Unhappy 7 hold (one alert per lead, answered 202). It can't be replayed for Fusion before Batch 6. | Batch 5 |
 | Q18 | Log a mismatch, don't reject. Reject only when `dealer_id` is a different MG dealer's code. The per-dealer signing secret already proves the sender. | Batch 5 |
 | Q19 | A valid signature is required; an `X-Webhook-Token` header, when sent, must also match. | Batch 5 |
+| Q22 | Fusion only, behind a new flag `INBOUND_EVENT_STORE` (default off). AU008 and generic dealers keep today's handling. | Batch 6 |
+| Q23 | Off until `WEBHOOK_EVENT_RETENTION_DAYS` is set. When set, it runs once a day in fast-recover and in daily-error-report. | Batch 6 |
 
 Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
