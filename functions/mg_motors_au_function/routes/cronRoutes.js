@@ -14,6 +14,7 @@ const integrationAlertBatchService = require('../services/integrations/integrati
 const alertContext = require('../services/integrations/alertContext');
 const { syncModifiedLeads } = require('../services/leadSyncService');
 const dashboardStats = require('../services/dashboardStatsService');
+const { getOutboundRetryConfig } = require('../config/env');
 
 // Background sweeps: alerts they raise are recorded but not emailed (see
 // alertContext.js). The daily report and test alert are not wrapped.
@@ -206,6 +207,10 @@ router.post('/cron/retry-outbound-syncs', backgroundRun, async (req, res) => {
  * Safe to run often: a lead that is still broken simply fails again and is
  * re-counted, and one that is held by policy (validation, consent, echo) is
  * reported under heldByPolicy rather than being pushed.
+ *
+ * FAST_RECOVER_HONOUR_SCHEDULE=true (config/env.js) makes this sweep wait
+ * for each lead's next_retry_at too, so the retry backoff applies even when
+ * fast-recover is the only retry cron. A lead with no next_retry_at is due.
  */
 router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
   const providedSecret = req.headers['x-cron-secret'];
@@ -217,7 +222,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
     const fastRecoverStartedAt = Date.now();
     const catalystApp = catalyst.initialize(req);
     const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
-      ignoreSchedule: true,
+      ignoreSchedule: !getOutboundRetryConfig().fastRecoverHonourSchedule,
       includeRoutingHolds: true,
     });
     if (results.recovered > 0) {
