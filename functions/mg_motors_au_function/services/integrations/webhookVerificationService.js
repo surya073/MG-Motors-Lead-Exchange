@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const integrationAuthService = require('./integrationAuthService');
-const { getSharedWebhookConfig } = require('../../config/env');
+const { getSharedWebhookConfig, isFusionInboundV2Enabled } = require('../../config/env');
 
 /**
  * webhookVerificationService.js
@@ -57,29 +57,10 @@ function verifyZohoWatchToken(provided, secret) {
 }
 
 /**
- * @param {object} integration - dealer_integrations row
- * @param {Buffer|string} rawBody - the raw, unparsed request body (must be
- *   captured before JSON parsing — HMAC verification requires exact bytes)
- * @param {object} headers - lowercased request headers
+ * The dealer's static webhook secret(s): its own WEBHOOK_SECRET and, for the
+ * dealers it is scoped to, the shared FUSION_WEBHOOK_SECRET.
  */
-async function verifyWebhook(catalystApp, integration, rawBody, headers) {
-  const webhookEnabled = !(
-    integration.webhook_enabled === false || integration.webhook_enabled === 0 ||
-    String(integration.webhook_enabled).toLowerCase() === 'false' ||
-    String(integration.webhook_enabled) === '0'
-  );
-  if (!webhookEnabled) {
-    return { ok: false, reason: 'WEBHOOK_DISABLED' };
-  }
-
-  if (ALLOW_INSECURE_WEBHOOKS) {
-    logger.error(
-      'webhookVerificationService',
-      `ALLOW_INSECURE_WEBHOOKS is enabled for integration ${integration.ROWID}; use only in a local test environment.`
-    );
-    return { ok: true };
-  }
-
+async function loadTokenSecrets(catalystApp, integration) {
   // getDecryptedCredential THROWS (CREDENTIAL_DECRYPT_FAILED) when the
   // stored ciphertext cannot be opened with the current
   // INTEGRATION_CREDENTIALS_KEY — e.g. after the key is rotated without
@@ -112,6 +93,132 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
     shared.secret && shared.dealerCodes.has(String(integration.dealer_code || '').toLowerCase())
   );
   const secrets = [webhookSecret, sharedApplies ? shared.secret : null].filter(Boolean);
+  return { secrets, unreadable };
+}
+
+// Standard Webhooks (https://www.standardwebhooks.com), as Fusion SD
+// documents them: refuse anything more than five minutes from now.
+const STANDARD_WEBHOOK_TOLERANCE_SECONDS = 300;
+
+/**
+ * The HMAC key(s) a stored signing secret may stand for. `whsec_<base64>` is
+ * the Standard Webhooks form and is decoded. Without the prefix the encoding
+ * is unconfirmed (FUSION_REMEDIATION_PLAN.md Q20), so the secret is tried as
+ * given and, when it is valid base64, decoded too.
+ */
+function signingKeys(secret) {
+  const text = String(secret || '').trim();
+  if (!text) return [];
+  if (text.startsWith('whsec_')) return [Buffer.from(text.slice('whsec_'.length), 'base64')];
+  const keys = [Buffer.from(text, 'utf8')];
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(text) && text.length % 4 === 0) {
+    keys.push(Buffer.from(text, 'base64'));
+  }
+  return keys;
+}
+
+function signStandardWebhook(key, webhookId, timestamp, rawBody) {
+  return crypto
+    .createHmac('sha256', key)
+    .update(`${webhookId}.${timestamp}.`)
+    .update(Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8'))
+    .digest('base64');
+}
+
+function timingSafeEqualBase64(a, b) {
+  const bufA = Buffer.from(String(a || ''), 'base64');
+  const bufB = Buffer.from(String(b || ''), 'base64');
+  if (bufA.length === 0 || bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+async function verifyStandardWebhook(catalystApp, integration, rawBody, headers) {
+  const webhookId = String(headers['webhook-id'] || '');
+  const timestampText = String(headers['webhook-timestamp'] || '').trim();
+  if (!webhookId) return { ok: false, reason: 'MISSING_AUTH' };
+
+  const timestamp = /^\d+$/.test(timestampText) ? Number(timestampText) : NaN;
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(timestamp) || Math.abs(now - timestamp) > STANDARD_WEBHOOK_TOLERANCE_SECONDS) {
+    return { ok: false, reason: 'STALE_TIMESTAMP' };
+  }
+
+  let signingSecret = null;
+  try {
+    signingSecret = await integrationAuthService.getDecryptedCredential(
+      catalystApp,
+      integration.ROWID,
+      'WEBHOOK_SIGNING_SECRET'
+    );
+  } catch (err) {
+    logger.error(
+      'webhookVerificationService',
+      `Webhook signing secret for integration ${integration.ROWID} could not be decrypted — re-save it so it is encrypted with the current INTEGRATION_CREDENTIALS_KEY`,
+      err
+    );
+    return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
+  }
+  const keys = signingKeys(signingSecret);
+  if (keys.length === 0) {
+    logger.error('webhookVerificationService', `No webhook signing secret configured for integration ${integration.ROWID}`);
+    return { ok: false, reason: 'WEBHOOK_SIGNING_SECRET_MISSING' };
+  }
+
+  // Space-separated `v1,<base64>` entries: more than one while the dealer
+  // rotates its secret. Any other version is ignored.
+  const provided = String(headers['webhook-signature'])
+    .split(' ')
+    .filter((entry) => entry.startsWith('v1,'))
+    .map((entry) => entry.slice(3));
+  const valid = keys.some((key) => {
+    const expected = signStandardWebhook(key, webhookId, timestampText, rawBody);
+    return provided.some((signature) => timingSafeEqualBase64(signature, expected));
+  });
+  if (!valid) return { ok: false, reason: 'INVALID_SIGNATURE' };
+
+  // A static token sent alongside must match as well (Q19). Fusion's own
+  // webhooks carry only the signature headers.
+  const tokenHeader = headers['x-webhook-token'] || headers['x-api-key'];
+  if (tokenHeader) {
+    const { secrets } = await loadTokenSecrets(catalystApp, integration);
+    const tokenValid = secrets.some((secret) => timingSafeEqual(String(tokenHeader), secret));
+    if (!tokenValid) return { ok: false, reason: 'INVALID_TOKEN' };
+  }
+  return { ok: true };
+}
+
+/**
+ * @param {object} integration - dealer_integrations row
+ * @param {Buffer|string} rawBody - the raw, unparsed request body (must be
+ *   captured before JSON parsing — HMAC verification requires exact bytes)
+ * @param {object} headers - lowercased request headers
+ */
+async function verifyWebhook(catalystApp, integration, rawBody, headers) {
+  const webhookEnabled = !(
+    integration.webhook_enabled === false || integration.webhook_enabled === 0 ||
+    String(integration.webhook_enabled).toLowerCase() === 'false' ||
+    String(integration.webhook_enabled) === '0'
+  );
+  if (!webhookEnabled) {
+    return { ok: false, reason: 'WEBHOOK_DISABLED' };
+  }
+
+  if (ALLOW_INSECURE_WEBHOOKS) {
+    logger.error(
+      'webhookVerificationService',
+      `ALLOW_INSECURE_WEBHOOKS is enabled for integration ${integration.ROWID}; use only in a local test environment.`
+    );
+    return { ok: true };
+  }
+
+  // Fusion SD signs its webhooks the Standard Webhooks way (Batch 5). Only
+  // with FUSION_INBOUND_V2 on, and only when the request carries the
+  // signature; everything else takes the checks below, as before.
+  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled() && headers['webhook-signature']) {
+    return verifyStandardWebhook(catalystApp, integration, rawBody, headers);
+  }
+
+  const { secrets, unreadable } = await loadTokenSecrets(catalystApp, integration);
 
   if (secrets.length === 0) {
     if (unreadable) return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
@@ -162,6 +269,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
 
 module.exports = {
   verifyWebhook,
+  signStandardWebhook,
   computeHmac,
   deriveZohoWatchToken,
   verifyZohoWatchToken,
