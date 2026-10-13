@@ -10,7 +10,7 @@ const { assertSafeUrl } = require('./genericRestAdapter');
  * -----------------------------------------------------------------------
  * OAuth2 access-token handling for a dealer's Fusion SD integration.
  * Mirrors zohoCrmOAuthHelper.js's shape (in-memory cache keyed by
- * integration ROWID, 5-minute refresh safety margin), but adds
+ * integration ROWID, refreshed up to 5 minutes before expiry), but adds
  * single-flight de-duplication that helper does not have: if N concurrent
  * requests for the SAME dealer all see an expired/missing token, only the
  * FIRST triggers a real refresh call — the rest await that same in-flight
@@ -29,10 +29,8 @@ const { assertSafeUrl } = require('./genericRestAdapter');
  *     client_credentials` — no key material in the body at all.
  *   - Response is `{ access_token, token_type: "Bearer", expires_in,
  *     scope }`. In QA, expires_in was 600 (10 minutes) and scope was
- *     "leads:write leads:update" — the "leads:update" scope suggests an
- *     update endpoint exists on Fusion's side, but we have not been given
- *     its URL/payload shape, so updateLead stays unsupported in the
- *     adapter (see fusionSdAdapter.js) until that's confirmed too.
+ *     "leads:write leads:update": leads:write for createLead, leads:update
+ *     for updateLead (PATCH /v1/leads/{lead_id}, see fusionSdAdapter.js).
  */
 
 const tokenCache = new Map(); // integrationId -> { accessToken, refreshAt }

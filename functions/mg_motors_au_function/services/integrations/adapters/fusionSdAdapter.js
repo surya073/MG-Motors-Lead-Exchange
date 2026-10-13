@@ -30,47 +30,29 @@ const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
  * capability as adapters for less REST-standard CRMs get added.
  *
  * ================================================================
- * Update (PATCH) is implemented per Fusion's OpenAPI file; getLead/webhook
- * stay unsupported (no read endpoint is documented), and callers check
- * `capabilities` via crmAdapterFactory.supports() before using them.
- *
- * STATUS (2026-10-02) — token auth confirmed; lead payload still unknown
+ * CONTRACT — Fusion's Lead API OpenAPI file (D3 in FUSION_SD_AUDIT.md)
  * ================================================================
- * Token exchange (fusionSdOAuthHelper.js) is CONFIRMED against Fusion's
- * real QA endpoint — see that file's header comment.
+ * Documented, and implemented here: create (POST /v1/leads, a nested JSON
+ * body, answered 201 { lead_id, status, received_at }), update
+ * (PATCH /v1/leads/{lead_id}, RFC 7396 merge patch) and RFC 9457
+ * problem+json errors whose `instance` is a correlation id. Token exchange
+ * is in fusionSdOAuthHelper.js.
  *
- * The create-lead request/response body is still NOT documented by Fusion
- * and is still a best-effort guess, not a confirmed fact:
- *   - Request body: the MG-side mapped lead fields sent as a flat JSON
- *     object (no wrapper envelope like Zoho's `{ data: [...] }`). Live
- *     testing against Fusion's QA create-lead endpoint confirms it
- *     validates contact fields server-side (RFC7807 `problem+json`,
- *     `missing_contact` error: "A lead needs a first or last name, and a
- *     phone number or an email address.") but every flat/nested,
- *     snake_case/camelCase field-name combination tried was rejected as
- *     still missing a usable contact — the actual expected field names
- *     remain unknown. This is NOT a code defect: this adapter deliberately
- *     does not hardcode Fusion field names — it forwards whatever payload
- *     crmIntegrationService builds from that dealer's configured Field
- *     Mappings (Dealer CRM Config UI), so once Fusion confirms the real
- *     field names, fixing this is a field-mapping config change, not an
- *     adapter code change.
- *   - Success response: the created record's ID is assumed to be at
- *     response.data.id, response.data.lead_id, or response.data.data.id —
- *     checked in that order, falling back to undefined (which surfaces as
- *     a DEALER_ACK_MISSING_ID error upstream in crmIntegrationService,
- *     the same existing handling a misbehaving generic REST CRM gets).
- *     Not yet verified against a successful (2xx) create-lead response
- *     since no payload has succeeded yet.
- *   - Error response: confirmed RFC7807 `problem+json` shape
- *     (`{type, title, status, detail, correlation_id}`) on validation
- *     failures, but errors are still classified by HTTP status only
- *     (401/403 -> AUTHENTICATION_FAILED, 400/422 -> FIELD_MAPPING_INVALID,
- *     404 -> NOT_FOUND, 429/5xx -> EXTERNAL_CRM_ERROR, treated as
- *     retryable the same way any other transient external error is). The
- *     `detail`/`correlation_id` fields are not yet surfaced in thrown
- *     errors or logs — worth adding once the payload shape is confirmed,
- *     to give admins/Fusion support a concrete correlation_id to trace.
+ * Field names are still not hardcoded: the adapter nests whatever payload
+ * crmIntegrationService builds from the dealer's configured Field Mappings,
+ * so a field-name change is a mapping change, not a code change.
+ *
+ * Errors are classified by HTTP status (401/403 -> AUTHENTICATION_FAILED,
+ * 400/422 -> FIELD_MAPPING_INVALID, 404 -> NOT_FOUND, anything else or no
+ * response -> EXTERNAL_CRM_ERROR). Only the problem title and correlation
+ * id (`instance`, or `correlation_id` as the QA host sends it) reach thrown
+ * errors and logs.
+ *
+ * Not supported: getLead (Fusion documents no read endpoint). Fusion does
+ * document signed webhooks (Standard Webhooks), but the inbound receiver
+ * cannot verify or translate them yet (audit finding H5), so `webhook`
+ * stays false. Callers check `capabilities` via crmAdapterFactory.supports()
+ * before using either.
  */
 
 const capabilities = Object.freeze({
@@ -78,7 +60,7 @@ const capabilities = Object.freeze({
   updateLead: true, // PATCH /v1/leads/{lead_id}, RFC 7396 merge patch (needs the leads:update scope)
   getLead: false,
   statusUpdate: false,
-  webhook: false,
+  webhook: false, // documented by Fusion; our receiver is not compatible yet (audit H5)
   duplicateSearch: false,
 });
 
