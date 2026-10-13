@@ -1978,6 +1978,16 @@ function hasProgressedBeyondWaiting(mgStatus) {
   return status !== '' && status !== '-None-' && !pathPolicy.isWaitingForDealerActionStatus(status);
 }
 
+// Whether the dealer status is exactly what MG's current status is sent out as.
+function isCurrentOutboundStatus(mgStatus, dealerStatus, statusMappings) {
+  try {
+    const sent = leadMappingService.mapStatus(mgStatus, statusMappings, 'ZOHO_TO_EXTERNAL');
+    return pathPolicy.normalizeStatus(sent) === pathPolicy.normalizeStatus(dealerStatus);
+  } catch {
+    return false; // MG-only or unmapped status: nothing of it was sent
+  }
+}
+
 async function attemptInboundLeadUpdate(
   catalystApp, integration, externalLeadId, externalRecord,
   fieldMappings, statusMappings, requestReference, zohoCrmService,
@@ -2141,21 +2151,29 @@ async function attemptInboundLeadUpdate(
     mappedUpdate.lead_status = 'Not Qualified';
   }
 
-  // Every MG status a dealer works on goes to Fusion as "Open" (Q1), so
-  // Fusion "Open" coming back is no news. It only moves a lead that is still
-  // waiting for the dealer (Update Pending); one MG has progressed keeps its
-  // status. Not held or alerted: nothing is wrong.
+  // Many MG statuses go to Fusion as one Fusion status (Q1): every worked
+  // status as "Open", every lost one as "Prospect Lost". So a Fusion status
+  // that is what MG's current status is already sent as is no news (Fusion
+  // may echo our own PATCH), and Fusion "Open" never moves a lead MG has
+  // progressed back to Not Contacted; it only moves one still waiting for
+  // the dealer (Update Pending). MG keeps its status; nothing is held or
+  // alerted, because nothing is wrong.
   if (
     fusionV2 &&
     isStatusSync &&
     mappedUpdate.lead_status !== undefined &&
-    pathPolicy.isWaitingForDealerActionStatus(mappedUpdate.lead_status) &&
-    hasProgressedBeyondWaiting(existingLeadRow.lead_status)
+    (
+      isCurrentOutboundStatus(existingLeadRow.lead_status, rawDealerStatus, statusMappings) ||
+      (
+        pathPolicy.isWaitingForDealerActionStatus(mappedUpdate.lead_status) &&
+        hasProgressedBeyondWaiting(existingLeadRow.lead_status)
+      )
+    )
   ) {
     delete mappedUpdate.lead_status;
     isStatusSync = false;
     if (Object.keys(mappedUpdate).length === 0) {
-      return { skipped: true, reason: 'FUSION_OPEN_KEPT_MG_STATUS' };
+      return { skipped: true, reason: 'FUSION_STATUS_KEPT_MG_STATUS' };
     }
   }
 

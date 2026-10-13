@@ -58,7 +58,7 @@ for (const mgStatus of OPEN.filter((s) => s !== 'Not Contacted').concat(['Lost',
     const harness = buckby(t, mgStatus);
     const result = await fusionStatus(harness, 'Open');
     assert.equal(result.skipped, true);
-    assert.equal(result.reason, 'FUSION_OPEN_KEPT_MG_STATUS');
+    assert.equal(result.reason, 'FUSION_STATUS_KEPT_MG_STATUS');
     assertUntouched(harness, mgStatus);
   });
 }
@@ -145,4 +145,30 @@ test('flag on: a GENERIC_REST dealer keeps today\'s status handling (no Open gua
   );
   assert.equal(result.ok, true);
   assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Not Contacted' });
+});
+
+// Many MG statuses go out as one Fusion status (Q1). Fusion echoing back the
+// status MG's current status is already sent as (e.g. after our own PATCH)
+// is no news: MG Lost, sent as Prospect Lost, must not become Not Qualified.
+for (const mgStatus of ['Lost', 'Dropped', 'Junk Lead', 'Lost Lead', 'Not Qualified']) {
+  test(`Fusion "Prospect Lost" echoed back for an MG lead at ${mgStatus} changes nothing`, async (t) => {
+    const harness = buckby(t, mgStatus);
+    const result = await fusionStatus(harness, 'Prospect Lost');
+    assert.equal(result.skipped, true);
+    assertUntouched(harness, mgStatus);
+  });
+}
+
+test('Fusion "Lost" for an MG lead at Dropped (sent as Prospect Lost) is a real change: MG becomes Lost', async (t) => {
+  const harness = buckby(t, 'Dropped');
+  const result = await fusionStatus(harness, 'Lost');
+  assert.equal(result.ok, true);
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost' });
+});
+
+test('Fusion "Prospect Lost" for a Contacted lead (sent as Open) is a real change', async (t) => {
+  const harness = buckby(t, 'Contacted');
+  const result = await fusionStatus(harness, 'Prospect Lost');
+  assert.equal(result.ok, true);
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Not Qualified' });
 });
