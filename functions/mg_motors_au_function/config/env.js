@@ -162,6 +162,18 @@ function isFusionInboundV2Enabled() {
   return String(process.env.FUSION_INBOUND_V2 || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * INBOUND_EVENT_STORE=true stores each Fusion SD webhook, encrypted, before
+ * it is processed, so a failed or interrupted event can be processed again
+ * and a held one replayed (FUSION_REMEDIATION_PLAN.md, Batch 6; Q22: Fusion
+ * SD only). Needs the webhook_events columns payload_encrypted,
+ * external_lead_id, attempt_count and lease_until; until they exist events
+ * are recorded as before. Read on every call.
+ */
+function isInboundEventStoreEnabled() {
+  return String(process.env.INBOUND_EVENT_STORE || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -171,4 +183,5 @@ module.exports = {
   getOutboundRetryConfig,
   isLeadNamePartsEnabled,
   isFusionInboundV2Enabled,
+  isInboundEventStoreEnabled,
 };

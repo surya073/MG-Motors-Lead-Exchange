@@ -15,7 +15,8 @@ const outboundSyncClaimService = require('./outboundSyncClaimService');
 const dashboardStats = require('../dashboardStatsService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
-const { getOutboundRetryConfig, isFusionInboundV2Enabled } = require('../../config/env');
+const { getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled } = require('../../config/env');
+const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
 
 const DEALERS_TABLE = 'dealers';
@@ -2470,7 +2471,56 @@ async function attemptInboundLeadUpdate(
 }
 
 
-async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eventId) {
+// webhook_events column sizes (live, 13 Oct 2026).
+const MAX_DEDUPE_KEY_LENGTH = 100;
+const MAX_EVENT_ID_LENGTH = 150;
+// How long one delivery may take before a repeat of it is processed again
+// (Batch 6). Longer than any single inbound attempt.
+const WEBHOOK_EVENT_LEASE_SECONDS = 120;
+
+function usesInboundEventStore(integration) {
+  return integration?.crm_type === 'FUSION_SD' && isInboundEventStoreEnabled();
+}
+
+// An event id too long for dedupe_key is replaced by its hash, so the row
+// still inserts and a repeat of the same id is still caught.
+function webhookDedupeKey(integration, eventId) {
+  const key = `${integration.ROWID}:${eventId || crypto.randomUUID()}`;
+  if (key.length <= MAX_DEDUPE_KEY_LENGTH) return key;
+  return `${integration.ROWID}:sha256:${crypto.createHash('sha256').update(String(eventId)).digest('hex')}`;
+}
+
+function leaseUntil(now = Date.now()) {
+  return toCatalystDateTime(new Date(now + WEBHOOK_EVENT_LEASE_SECONDS * 1000));
+}
+
+function isDuplicateConstraintError(err) {
+  const message = (err.message || '').toLowerCase();
+  return message.includes('unique') || message.includes('duplicate') || err.code === 'DUPLICATE_DATA';
+}
+
+/**
+ * Batch 6 (INBOUND_EVENT_STORE, Fusion SD only): the columns that make an
+ * event durable. Null when the payload cannot be encrypted, in which case the
+ * event is recorded as before rather than refused.
+ */
+function durableEventColumns(integration, rawBody, externalLeadId) {
+  try {
+    return {
+      payload_encrypted: integrationAuthService.encrypt(
+        Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody)
+      ),
+      external_lead_id: externalLeadId ? String(externalLeadId).slice(0, 255) : null,
+      attempt_count: 1,
+      lease_until: leaseUntil(),
+    };
+  } catch (err) {
+    logger.error('crmIntegrationService', `Webhook payload for integration ${integration.ROWID} could not be encrypted; recorded without it`, err);
+    return null;
+  }
+}
+
+async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eventId, { externalLeadId = null } = {}) {
   const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
 
   // Only a provider-issued event id is safe for event-level dedupe. Zoho
@@ -2479,25 +2529,42 @@ async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eve
   // Hashing those bodies as a permanent key dropped the later change. When
   // no event id exists, process the event and rely on state fingerprints /
   // no-change detection for idempotency rather than risk data loss.
-  const dedupeKey = `${integration.ROWID}:${eventId || crypto.randomUUID()}`;
+  const dedupeKey = webhookDedupeKey(integration, eventId);
+  const row = {
+    integration_id: integration.ROWID,
+    dealer_code: integration.dealer_code,
+    event_id: eventId ? String(eventId).slice(0, MAX_EVENT_ID_LENGTH) : null,
+    payload_hash: payloadHash,
+    dedupe_key: dedupeKey, // NEW — the column with the unique constraint
+    processing_status: 'RECEIVED',
+    received_at: toCatalystDateTime(),
+  };
+  const table = catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE);
+
+  const durable = usesInboundEventStore(integration) ? durableEventColumns(integration, rawBody, externalLeadId) : null;
+  if (durable) {
+    try {
+      const inserted = await table.insertRow({ ...row, ...durable });
+      return { isDuplicate: false, eventRowId: inserted.ROWID };
+    } catch (err) {
+      if (isDuplicateConstraintError(err)) {
+        logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
+        return { isDuplicate: true };
+      }
+      // Most likely the Batch 6 columns have not been created yet.
+      logger.error(
+        'crmIntegrationService',
+        `Could not store webhook payload for integration ${integration.ROWID}; recorded without it. Add the Batch 6 webhook_events columns.`,
+        err
+      );
+    }
+  }
 
   try {
-    const inserted = await catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE).insertRow({
-      integration_id: integration.ROWID,
-      dealer_code: integration.dealer_code,
-      event_id: eventId || null,
-      payload_hash: payloadHash,
-      dedupe_key: dedupeKey, // NEW — the column with the unique constraint
-      processing_status: 'RECEIVED',
-      received_at: toCatalystDateTime(),
-    });
+    const inserted = await table.insertRow(row);
     return { isDuplicate: false, eventRowId: inserted.ROWID };
   } catch (err) {
-    const message = (err.message || '').toLowerCase();
-    const isDuplicateConstraintError =
-      message.includes('unique') || message.includes('duplicate') || err.code === 'DUPLICATE_DATA';
-
-    if (isDuplicateConstraintError) {
+    if (isDuplicateConstraintError(err)) {
       logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
       return { isDuplicate: true };
     }
