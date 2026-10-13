@@ -206,56 +206,53 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
   return { externalLeadId, httpStatus: response.status, raw: response.data };
 }
 
+// Fusion lead ids look like lead_01M4FPDJ89FCJ7WFZ17JYN5CP1. This only rules
+// out values that cannot be an id at all: prose, markup, paths, empty strings.
+const LEAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+function asLeadId(value) {
+  return typeof value === 'string' && LEAD_ID_PATTERN.test(value) ? value : undefined;
+}
+
+function leadIdFromLocation(location) {
+  if (typeof location !== 'string' || !location.trim()) return undefined;
+  let pathname;
+  try {
+    // Resolves a relative Location too, and drops any query or fragment.
+    pathname = new URL(location, 'https://location.invalid').pathname;
+  } catch (_) {
+    return undefined;
+  }
+  const match = /(?:^|\/)v1\/leads\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return undefined;
+  try {
+    return asLeadId(decodeURIComponent(match[1]));
+  } catch (_) {
+    return undefined;
+  }
+}
+
 /**
- * Live production evidence (AU004/QA, 2026-10-05): Fusion's create-lead
- * response body comes back empty/non-JSON — none of the guessed body
- * field names (id/lead_id/data.id) were ever going to match, because
- * there's no body to match against. Rather than guess more body field
- * names, this checks the one place a created resource's ID is
- * UNIVERSALLY expected to live on a REST API when the body doesn't carry
- * it: the standard HTTP `Location` response header for a 201 Created
- * (RFC 7231 §7.1.2) — e.g. `Location: /v1/leads/abc-123` -> `abc-123`.
- * This is a documented HTTP convention, not a Fusion-specific guess.
- * Also defensively parses a string body as JSON, in case Fusion sends a
- * correct JSON payload under the wrong Content-Type (axios then leaves
- * response.data as an unparsed string instead of an object).
+ * Fusion's 201 to POST /v1/leads is JSON `{ lead_id, status, received_at }`
+ * (OpenAPI `LeadAccepted`), and every Fusion lead id stored so far has that
+ * form. The id is therefore taken only from `lead_id`, or from a `Location`
+ * header whose path is /v1/leads/{id}. A string body is parsed as JSON in
+ * case it arrives under the wrong Content-Type. Anything else (an `id`
+ * field, a plain-text body such as "OK", a malformed value) yields no id,
+ * so the create surfaces as DEALER_ACK_MISSING_ID instead of storing a
+ * wrong id.
  */
 function extractExternalLeadId(response) {
   let body = response.data;
-  let bareStringCandidate = null;
   if (typeof body === 'string' && body.trim()) {
-    const trimmed = body.trim();
     try {
-      body = JSON.parse(trimmed);
+      body = JSON.parse(body);
     } catch (_) {
-      // Not JSON. A short, plain-text response with no braces/brackets/
-      // markup is a known (if less common) lightweight-API convention:
-      // the bare created-record ID as the ENTIRE response body. Guarded
-      // narrowly (short, no markup, no multi-space prose) so an HTML
-      // error page or informational text with a 2xx status is never
-      // mistaken for an ID. Held as a last-resort candidate rather than
-      // returned immediately — a body.id-style match or a Location
-      // header, if either is also present, is more explicit evidence and
-      // takes priority.
-      const looksLikeBareId = trimmed.length > 0 && trimmed.length <= 128
-        && !/^[<{[]/.test(trimmed) && !/\s{2,}/.test(trimmed);
-      if (looksLikeBareId) bareStringCandidate = trimmed;
       body = null;
     }
   }
-  if (body && typeof body === 'object') {
-    const fromBody = body.id || body.lead_id || body.data?.id || body.record?.id || body.record?.uuid;
-    if (fromBody) return fromBody;
-  }
-
-  const location = response.headers?.location || response.headers?.Location;
-  if (typeof location === 'string' && location.trim()) {
-    const segments = location.split('/').filter(Boolean);
-    const lastSegment = segments[segments.length - 1];
-    if (lastSegment) return decodeURIComponent(lastSegment);
-  }
-
-  return bareStringCandidate || undefined;
+  const fromBody = body && typeof body === 'object' ? asLeadId(body.lead_id) : undefined;
+  return fromBody || leadIdFromLocation(response.headers?.location || response.headers?.Location);
 }
 
 /**
@@ -359,5 +356,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyFusionError, nestDottedKeys, updatePath },
+  _test: { classifyFusionError, nestDottedKeys, updatePath, extractExternalLeadId },
 };

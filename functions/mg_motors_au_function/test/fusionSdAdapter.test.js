@@ -148,7 +148,7 @@ test('createLead: extracts the external record ID from the response', async (t) 
   t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
   t.mock.method(axios, 'request', async () => ({
     status: 201,
-    data: { id: 'FUSION-LEAD-123' },
+    data: { lead_id: 'FUSION-LEAD-123' },
   }));
 
   const integration = fakeIntegration({ ROWID: '4001' });
@@ -189,7 +189,7 @@ test('createLead: parses a JSON body sent as a raw string (wrong Content-Type) b
   t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok-create', expires_in: 3600 } }));
   t.mock.method(axios, 'request', async () => ({
     status: 201,
-    data: '{"id":"FUSION-STRING-BODY-1"}',
+    data: '{"lead_id":"FUSION-STRING-BODY-1"}',
     headers: { location: '/v1/leads/should-not-be-used' },
   }));
 
@@ -199,7 +199,7 @@ test('createLead: parses a JSON body sent as a raw string (wrong Content-Type) b
   assert.equal(result.externalLeadId, 'FUSION-STRING-BODY-1', 'a parseable JSON string body takes priority over the Location header');
 });
 
-test('createLead: a bare plain-text ID body with no Location header is used as a last-resort candidate', async (t) => {
+test('createLead: a bare plain-text body with no Location header is not used as the lead id', async (t) => {
   fusionSdOAuthHelper._resetForTests();
   t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, _id, credType) =>
     credType === 'FUSION_ACCESS_KEY' ? 'ak' : 'sk'
@@ -210,7 +210,8 @@ test('createLead: a bare plain-text ID body with no Location header is used as a
   const integration = fakeIntegration({ ROWID: '4005' });
   const result = await fusionSdAdapter.createLead({}, integration, { customer_name: 'Test Lead' });
 
-  assert.equal(result.externalLeadId, 'fusion-bare-id-789');
+  // M6: Fusion returns JSON lead_id; a text body is never trusted as an id.
+  assert.equal(result.externalLeadId, undefined);
 });
 
 test('createLead: an HTML error page accidentally returned with a 2xx status is never mistaken for a bare ID', async (t) => {
@@ -482,4 +483,57 @@ test('testConnection reports an unsafe Fusion URL as a configuration error, like
     (err) => err.code === 'INVALID_CRM_CONFIGURATION'
   );
   assert.equal(post.mock.callCount(), 0, 'the keys are never sent over plain HTTP');
+});
+
+test("extractExternalLeadId takes Fusion's lead_id only, and only when it looks like an id", () => {
+  const { extractExternalLeadId } = fusionSdAdapter._test;
+  const idFrom = (data) => extractExternalLeadId({ status: 201, data, headers: {} });
+
+  // The shape of every Fusion lead id in the live datastore (13 Oct 2026).
+  assert.equal(idFrom({ lead_id: 'lead_01M4FPDJ89FCJ7WFZ17JYN5CP1', status: 'received' }), 'lead_01M4FPDJ89FCJ7WFZ17JYN5CP1');
+  assert.equal(
+    idFrom('{"lead_id":"lead_01M4FPDJ89FCJ7WFZ17JYN5CP1"}'),
+    'lead_01M4FPDJ89FCJ7WFZ17JYN5CP1',
+    'JSON sent with the wrong Content-Type'
+  );
+
+  for (const data of [
+    'OK',
+    'lead_01M4FPDJ89FCJ7WFZ17JYN5CP1', // plain text, even when it looks like an id
+    { id: 'abc' },
+    { data: { id: 'abc' } },
+    { record: { id: 'abc' } },
+    { record: { uuid: 'abc' } },
+    { lead_id: 'not an id' },
+    { lead_id: '../leads/x' },
+    { lead_id: '' },
+    { lead_id: 42 },
+    { lead_id: { id: 'x' } },
+    { lead_id: 'x'.repeat(129) },
+  ]) {
+    assert.equal(idFrom(data), undefined, JSON.stringify(data).slice(0, 60));
+  }
+});
+
+test('extractExternalLeadId reads a Location header only when its path is /v1/leads/{id}', () => {
+  const { extractExternalLeadId } = fusionSdAdapter._test;
+  const idFrom = (location) => extractExternalLeadId({ status: 201, data: '', headers: { location } });
+
+  assert.equal(idFrom('/v1/leads/lead_01ABC'), 'lead_01ABC');
+  assert.equal(idFrom('https://qa.fusionamspro.com/api/leadapi/v1/leads/lead_01ABC'), 'lead_01ABC');
+  assert.equal(idFrom('/api/leadapi/v1/leads/lead_01ABC?expand=contact#top'), 'lead_01ABC', 'query and fragment are ignored');
+  assert.equal(idFrom('/v1/leads/lead%5F01ABC'), 'lead_01ABC', 'percent-decoded');
+
+  for (const location of ['/v1/contacts/abc', '/leads/abc', '/v1/leads/', '/v1/leads/abc/notes', '/v1/leads/not%20an%20id', '/v1/leads/%E0%A4%A']) {
+    assert.equal(idFrom(location), undefined, location);
+  }
+});
+
+test('createLead: a 2xx plain-text body such as "OK" is not taken as the lead id', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => ({ status: 201, data: 'OK', headers: {} }));
+
+  const result = await fusionSdAdapter.createLead({}, updateIntegration(), { 'contact.lastName': 'Testing' });
+
+  assert.equal(result.externalLeadId, undefined);
 });
