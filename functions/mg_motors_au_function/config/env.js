@@ -174,6 +174,19 @@ function isInboundEventStoreEnabled() {
   return String(process.env.INBOUND_EVENT_STORE || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * WEBHOOK_EVENT_RETENTION_DAYS: SUCCESS webhook_events rows older than this
+ * many days are deleted (FUSION_REMEDIATION_PLAN.md, Batch 6, audit S9).
+ * Unset, or not a positive whole number, keeps every row (Q23). Read on
+ * every call.
+ */
+function getWebhookEventRetentionDays() {
+  const text = String(process.env.WEBHOOK_EVENT_RETENTION_DAYS || '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const days = Number(text);
+  return days > 0 ? days : null;
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -184,4 +197,5 @@ module.exports = {
   isLeadNamePartsEnabled,
   isFusionInboundV2Enabled,
   isInboundEventStoreEnabled,
+  getWebhookEventRetentionDays,
 };

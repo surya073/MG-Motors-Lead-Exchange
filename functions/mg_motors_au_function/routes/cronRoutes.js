@@ -8,6 +8,7 @@ const inboundReplayScheduler = require('../services/integrations/inboundReplaySc
 const slaMonitorService = require('../services/integrations/slaMonitorService');
 const dealerReconciliationService = require('../services/integrations/dealerReconciliationService');
 const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
+const webhookEventRetention = require('../services/integrations/webhookEventRetention');
 const logger = require('../utils/logger');
 const integrationAlertService = require('../services/integrations/integrationAlertService');
 const integrationAlertBatchService = require('../services/integrations/integrationAlertBatchService');
@@ -262,6 +263,16 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         await alertReconciliationFailure(catalystApp, reconcileErr);
       }
     }
+    // Old SUCCESS webhook events, once a day (Batch 6, S9). A no-op until
+    // WEBHOOK_EVENT_RETENTION_DAYS is set.
+    if (webhookEventRetention.isRetentionDue()) {
+      try {
+        results.webhookEventRetention = await webhookEventRetention.purgeOldWebhookEvents(catalystApp);
+      } catch (retentionErr) {
+        logger.error('cronRoutes', 'Webhook event retention within fast recovery failed', retentionErr);
+        results.webhookEventRetention = { error: retentionErr.message };
+      }
+    }
     // Consolidated failure digest: sends whatever is queued once the batch
     // window has elapsed, even if ALERT_BATCH_SIZE was never reached (an
     // immediate flush on hitting the threshold already happens inline when
@@ -333,7 +344,14 @@ router.post('/cron/daily-error-report', async (req, res) => {
   try {
     const catalystApp = catalyst.initialize(req);
     const report = await dailyErrorReportService.sendDailyErrorReport(catalystApp);
-    res.status(200).json({ success: true, report });
+    let webhookEventRetentionResult;
+    try {
+      webhookEventRetentionResult = await webhookEventRetention.purgeOldWebhookEvents(catalystApp);
+    } catch (retentionErr) {
+      logger.error('cronRoutes', 'Webhook event retention within the daily report failed', retentionErr);
+      webhookEventRetentionResult = { error: retentionErr.message };
+    }
+    res.status(200).json({ success: true, report, webhookEventRetention: webhookEventRetentionResult });
   } catch (err) {
     logger.error('cronRoutes', 'Daily error report cron failed', err);
     res.status(502).json({ success: false, error: err.message });
