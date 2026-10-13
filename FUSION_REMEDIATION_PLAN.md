@@ -235,6 +235,33 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Q10 | C1 idempotency: on a Fusion create retry, compare the payload's hash with the previous attempt's and skip the create when it changed and the previous outcome is unknown. This needs Fusion to confirm how long an Idempotency-Key is kept, and whether a key whose first request failed (4xx) can be reused with a corrected body. Until then, with `OUTBOUND_RETRY_POLICY=classified`, a 409 `idempotency_conflict` stops retrying. | Batch 3 follow-up (Fusion) |
 | Q11 | Is Fusion's 409 `lead_not_ready` ever temporary? Batch 3's classifier treats every 409 as PERMANENT, as this plan and D2 (no retries of unchanged 4xx) say; an older adapter comment calls it transient. | Batch 3 classifier |
 | Q12 | Extend the missing-ID safety (`ACK_UNRESOLVED`) to GENERIC_REST and ZOHO_CRM? Batch 3 limits it to Fusion: Zoho creates are idempotent upserts, and a generic dealer's idempotency is unknown. | Batch 3 follow-up |
+| Q13 | Buckby MG (725001), the dealer currently in focus, points at Fusion's QA environment (`https://qa.fusionamspro.com/api/leadapi`, read 13 Oct 2026). Should it move to Fusion's production URL, and when? | Buckby go-live (admin config change) |
+| Q14 | Which Source values does each Fusion dealer have? Batch 4 sends MG's Nature of Enquiry as Fusion `leadSource`. Fusion confirmed "Test Drive"; other values (Service Booking, General Enquiry, …) appear in the lead's notes once Fusion's change ships. | Display only |
+
+### Answers (13 Oct 2026)
+
+Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
+- The MG lead ID shows in the lead's "Lead API" tag, and Fusion will add a dedicated field for it.
+- Enquiry Type, Origin, Source and Campaign are enums. A value displays only when it matches one the dealer has mapped. Fusion suggested Internet, Manufacturer Lead and Test Drive as test values.
+- Fusion is changing its system so that values that don't match appear in the lead's notes.
+- Fusion doesn't need the dealer code. It adds digital consent automatically.
+- For status updates (Batch 5), Fusion asked for the webhook URL, the authentication method and the setup details.
+
+| # | Answer | Next |
+|---|---|---|
+| Q1 | Outbound: D1, extended to every MG status. These go to Open: Not Contacted, Follow-up 1, Follow-up 2, Attempted to Contact, Contacted, Contact in Future and Pre-Qualified. These go to Prospect Lost: Not Qualified, Dropped, Lost, Junk Lead and Lost Lead. Update Pending, Dealer Unavailable and Unattended Alert stay MG-only and are left out. Fusion Won and Delivered leave MG unchanged (no inbound rule). Fusion Open, Lost and Prospect Lost keep today's inbound rules: Not Contacted, Lost and Not Qualified. Enquiry outcome is not sent (MG to decide). | Batch 4. Batch 5 must stop Fusion "Open" from moving a progressed MG lead back to Not Contacted. Contacted and similar statuses now go out as Open. |
+| Q2 | Split first and last name. Over 32 KB: trim the longest text fields and still send. Fusion enums, following Fusion's guidance: Enquiry Type comes from MG's lead source channel (Phone → Phone, Walk-in → Walk In, everything else → Internet). Origin is always "Manufacturer Lead". Source is MG's Nature of Enquiry. Campaign is not sent. | Batch 4. The name split needs `first_name` and `last_name` text columns on `leads` (Catalyst console), then `LEAD_NAME_PARTS=true`. |
+| Q3 | Build Batch 5 from Fusion's documented Standard Webhooks spec, behind `FUSION_INBOUND_V2` (off). Check it against a real Fusion sample before switching it on. | Batch 5 unblocked |
+| Q4 | Fusion dealers stay exempt from the dealer-action SLA until their return channel is live. Production minutes are not decided. The live values (AU008 only, 2 minutes) are demo values. | Batch 7 unblocked (C3 gate) |
+| Q5 | Use safe, configurable defaults: Fusion's documented 300 requests per minute per credential at 80% headroom, a 15 s timeout on Zoho calls, and a 25 s work budget per cron run. A read-only check (13 Oct) found that only `/cron/fast-recover` is scheduled (every 2 min). Catalyst Cache is available (Default segment). The API does not expose the function timeout. | Batch 8 unblocked |
+| Q6 | Park it as HELD, with reason `DEALER_UPDATES_DISABLED`. | Batch 4 (small change) |
+| Q7 | Fix now: an admin uses "Load Fusion default map" and saves it for 725001 (Buckby MG) and 568026, then re-saves with the D1 preset after Batch 4. On 13 Oct, all of 725001's leads were Not Contacted, so none had been sent as "Lost". 568026's lead 44707000060074862 was probably sent as "Won". | Admin action |
+| Q8 | Set AU008's base URL to the dealer's Zoho API domain, and revoke and regenerate the AU008 dealer Zoho token. Test connections to `www.example.in` returned HTTP 200 on 6–8 Oct. | Admin action |
+| Q9 | Moot: AU004 no longer has an integration row (13 Oct). 10 orphaned status-mapping rows remain. | None |
+| Q10, Q11 | Keep Batch 3's safe handling. Ask Fusion. | Open (Fusion) |
+| Q12 | Keep it Fusion-only. No GENERIC_REST dealer exists (13 Oct). | Revisit when one is onboarded |
+
+Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
 ## Status
 
@@ -244,10 +271,10 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | 1 | Done (13 Oct 2026) | `fusion/batch-1-security-hygiene`: `22df517` M1/M2, `6619855` M9, `4053e64` H3, `c49570f` M6, `94978da` + `de4a4aa` M7/L2, `9976229` S10, `5a3be46` L4, `fbca793` L3 | 371 pass, 0 fail (345 + 26 new) on Node 20.20.2; frontend build passes (18 existing warnings) | Read-only live checks (13 Oct): no saved mapping or base_url is refused by the new save rules; every Fusion lead id matches the M6 rule; live ZCQL refuses `LIMIT 0, 500`, confirming S10. Deploy: the first fast-recover run emails one catch-up digest (16 failures queued on 13 Oct). Fusion-only behaviour change: a token-endpoint 401/403 during a sync now marks the integration ERROR (L2). M6 changed 3 existing tests on purpose. No new env vars. |
 | 2 | Done (13 Oct 2026); Q6 open | `fusion/batch-2-outbound-status`: `9823d79` issue #2, `c9731da` M5, `804b9f5` H4 skipped updates, `17ddc27` H4 update outcome (`9564981` records Q6–Q9) | 386 pass, 0 fail (371 + 15 new) on Node 20.20.2; frontend build passes (18 existing warnings) | Open: Q6, whether a skipped update should park a FAILED mapping as HELD; for now it keeps FAILED, as this plan says. UI: SKIPPED and "Awaiting dealer acceptance" are rendered where integration logs appear: the lead timeline (LeadDetailView), the dealer config activity log, the Integrations page and the dealer drawer. `SyncLogsPage` shows lead-sync runs, not these logs. Read-only live checks (13 Oct): no live Fusion dealer has inbound-only status rows yet, no lead is held for that reason, and no update has been refused with 403. No schema change: logs use the existing `status` (varchar 20) and `field_changes` (text, 10,000) columns. No new env vars. |
 | 3 | Done (13 Oct 2026); Q10–Q12 open | `fusion/batch-3-retry-safety`: `64290ae` error classifier, `8f4f717` S2 retry policy, `c545b7e` S2 fast-recover schedule, `bb1640b` C2/L5 escalation, `b0aa68b` + `9f82ec7` C1 ACK_UNRESOLVED and admin link/replay, `11e8d03` UI (`9d6a491` records Q10–Q12) | 415 pass, 0 fail (386 + 29 new) on Node 20.20.2; frontend build passes (18 existing warnings) | New env vars, read in `config/env.js`; unset keeps today's behaviour. `OUTBOUND_RETRY_POLICY=classified`: backoff from 2 min to 6 h with ±20% jitter, honouring the dealer's Retry-After; AUTH and PERMANENT failures, and retries past `OUTBOUND_RETRY_MAX_ATTEMPTS` (default 10) or `OUTBOUND_RETRY_MAX_AGE_HOURS` (default 48), stop as `RETRY_EXHAUSTED`. Also `FAST_RECOVER_HONOUR_SCHEDULE=true` and `ESCALATION_TRANSIENT_ONLY=true` (C2/L5). Deploy: fast-recover (every 2 min) is the only live retry cron, so set `FAST_RECOVER_HONOUR_SCHEDULE` together with the classified policy; otherwise the 10 attempts are used up in about 20 minutes. These vars are not yet in the runbook's production checklist, because .md files were left untouched. Always on, Fusion only: a create answered 2xx without a lead id becomes `ACK_UNRESOLVED` (Unhappy 11, one alert, payload sha256 in the log) and is never created again. GENERIC_REST and ZOHO_CRM keep today's retry (Q12). From the lead detail, admins link the dealer's lead id for an `ACK_UNRESOLVED` lead, or retry a `RETRY_EXHAUSTED` one. These use new admin-only routes `POST /admin/dealers/:dealerCode/integration/link-lead` and `/replay`; replay refuses a DISABLED integration, as a manual sync does. No schema change. A read-only check (13 Oct) found `lead_integrations.sync_status` is varchar 25, and `failure_streak_started_at` and `leads.sync_status` are text. The stop reason goes in the failure log's `retry` entry. Pre-existing: `routes/dealerCrmIntegrationRoutes.js` contains a literal NUL byte, so git diffs it as binary (use `git diff --text`); left as is. |
-| 4 | Blocked (Q1, Q2) | | | |
-| 5 | Blocked (Q3) | | | |
+| 4 | In progress (13 Oct 2026) | `fusion/batch-4-mapping-contract` | | |
+| 5 | Not started (Q3 answered: build behind `FUSION_INBOUND_V2`) | | | |
 | 6 | Not started (after 5) | | | |
-| 7 | Blocked (Q4) | | | |
-| 8 | Blocked (Q5) | | | |
-| 9 | Not started | | | |
+| 7 | Not started (Q4 answered) | | | |
+| 8 | Not started (Q5: safe defaults) | | | |
+| 9 | Skipped for now (no isolated Catalyst project) | | | |
 | 10 | Not started (after 3, 8) | | | |
