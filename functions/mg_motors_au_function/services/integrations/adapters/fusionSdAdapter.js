@@ -342,6 +342,9 @@ async function testConnection(catalystApp, integration) {
     await getAccessTokenForFusionSd(catalystApp, integration);
     return { httpStatus: 200, responseTimeMs: Date.now() - start, ok: true };
   } catch (err) {
+    // An unsafe URL is a configuration error, reported as one the way
+    // genericRestAdapter.testConnection reports it.
+    if (err.code === 'INVALID_CRM_CONFIGURATION') throw err;
     return {
       httpStatus: err.response?.status || 0,
       responseTimeMs: Date.now() - start,

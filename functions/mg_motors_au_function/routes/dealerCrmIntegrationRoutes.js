@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const { findTargetFieldProblem } = require('../services/integrations/leadMappingService');
+const { assertSafeUrl } = require('../services/integrations/adapters/genericRestAdapter');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
@@ -117,6 +118,21 @@ function deriveInboundEnabled(crmType, webhookEnabled) {
   return crmType === 'FUSION_SD' ? Boolean(webhookEnabled) : true;
 }
 
+/**
+ * A dealer base URL that is malformed, not HTTPS, or points at a local or
+ * private address is refused when the integration is saved. A host that does
+ * not resolve is accepted: assertSafeUrl treats that as an outage rather than
+ * a configuration error, and re-checks the URL before every request.
+ */
+async function unsafeBaseUrlReason(baseUrl) {
+  try {
+    await assertSafeUrl(baseUrl);
+    return null;
+  } catch (err) {
+    return err.code === 'INVALID_CRM_CONFIGURATION' ? err.message : null;
+  }
+}
+
 router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { dealerCode } = req.params;
@@ -131,6 +147,12 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     const isFusionSd = body.crm_type === 'FUSION_SD';
     if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM' && !body.oauth_accounts_domain) {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
+    }
+    if (body.integration_type === 'EXTERNAL_CRM' && body.base_url) {
+      const reason = await unsafeBaseUrlReason(body.base_url);
+      if (reason) {
+        return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'base_url', message: reason });
+      }
     }
     const table = catalystApp.datastore().table('dealer_integrations');
     let integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);

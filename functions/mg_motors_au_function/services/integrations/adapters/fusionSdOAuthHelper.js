@@ -3,6 +3,7 @@
 const axios = require('axios');
 const integrationAuthService = require('../integrationAuthService');
 const logger = require('../../../utils/logger');
+const { assertSafeUrl } = require('./genericRestAdapter');
 
 /**
  * fusionSdOAuthHelper.js
@@ -40,6 +41,10 @@ const SAFETY_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
 const TOKEN_ENDPOINT_PATH = '/oauth2/token';
 
 async function requestNewToken(catalystApp, integration) {
+  // Checked before the keys are even read: they must never be sent to a
+  // non-HTTPS or internal address (the same SSRF guard createLead uses).
+  const tokenUrl = await assertSafeUrl(`${integration.base_url}${TOKEN_ENDPOINT_PATH}`);
+
   const [accessKey, secretKey] = await Promise.all([
     integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, 'FUSION_ACCESS_KEY'),
     integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, 'FUSION_SECRET_KEY'),
@@ -51,12 +56,10 @@ async function requestNewToken(catalystApp, integration) {
     throw err;
   }
 
-  const tokenUrl = `${integration.base_url}${TOKEN_ENDPOINT_PATH}`;
-
   let response;
   try {
     response = await axios.post(
-      tokenUrl,
+      tokenUrl.toString(),
       'grant_type=client_credentials',
       {
         auth: { username: accessKey, password: secretKey },

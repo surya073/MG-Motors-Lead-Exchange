@@ -861,7 +861,11 @@ export default function DealerCRMConfig() {
       setSaveSuccess(true);
       clearSaveSuccessSoon();
     } catch (err) {
-      showAlert("error", err?.response?.data?.error || "Couldn't save the configuration. Try again.", {
+      const response = err?.response?.data;
+      const message = response?.field === "base_url" && response?.message
+        ? `Base URL: ${response.message}`
+        : response?.error || "Couldn't save the configuration. Try again.";
+      showAlert("error", message, {
         title: "Save failed",
       });
     } finally {

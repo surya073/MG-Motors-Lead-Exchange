@@ -448,3 +448,38 @@ test('nestDottedKeys keeps the first of two colliding targets instead of overwri
     { contact: { firstName: 'Jane' } }
   );
 });
+
+test('getAccessTokenForFusionSd refuses an unsafe token URL before reading the keys or sending anything', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  const credentials = t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  const post = t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok', expires_in: 600 } }));
+
+  for (const baseUrl of ['http://8.8.8.8/api/leadapi', 'https://127.0.0.1/api/leadapi', 'https://10.1.2.3/api/leadapi', 'not a url']) {
+    await assert.rejects(
+      () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, fakeIntegration({ ROWID: '6001', base_url: baseUrl })),
+      (err) => err.code === 'INVALID_CRM_CONFIGURATION',
+      baseUrl
+    );
+  }
+  assert.equal(credentials.mock.callCount(), 0, 'the keys are never read');
+  assert.equal(post.mock.callCount(), 0, 'nothing is sent');
+
+  const token = await fusionSdOAuthHelper.getAccessTokenForFusionSd(
+    {},
+    fakeIntegration({ ROWID: '6001', base_url: 'https://8.8.8.8/api/leadapi' })
+  );
+  assert.equal(token, 'tok');
+  assert.equal(post.mock.calls[0].arguments[0], 'https://8.8.8.8/api/leadapi/oauth2/token');
+});
+
+test('testConnection reports an unsafe Fusion URL as a configuration error, like the generic adapter', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  const post = t.mock.method(axios, 'post', async () => ({ data: { access_token: 'tok', expires_in: 600 } }));
+
+  await assert.rejects(
+    () => fusionSdAdapter.testConnection({}, fakeIntegration({ ROWID: '6002', base_url: 'http://8.8.8.8/api/leadapi' })),
+    (err) => err.code === 'INVALID_CRM_CONFIGURATION'
+  );
+  assert.equal(post.mock.callCount(), 0, 'the keys are never sent over plain HTTP');
+});
