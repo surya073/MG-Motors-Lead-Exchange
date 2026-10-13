@@ -287,6 +287,10 @@ router.get('/:dealerCode/integration/mappings', requireAdminOrViewRole, async (r
       statusMappings.push({
         ...forwardRow,
         reverse_ROWID: reverseRow?.ROWID,
+        // No dealer -> MG partner: an OUTBOUND-ONLY mapping (e.g. MG
+        // "Contacted" sent to Fusion as "Open", while Fusion "Open" maps
+        // back to "Not Contacted" only).
+        ...(reverseRow ? {} : { outbound_only: true }),
       });
     });
 
@@ -296,6 +300,7 @@ router.get('/:dealerCode/integration/mappings', requireAdminOrViewRole, async (r
     // editor uses, flagged inbound_only. Leftover duplicates of a two-way pair
     // are not inbound-only rows and stay in the cleanup count.
     const forwardPairCount = statusMappings.length;
+    const outboundOnlyCount = statusMappings.filter((mapping) => mapping.outbound_only).length;
     const inboundOnlyKeys = new Set();
     reverseRows.forEach((reverseRow) => {
       if (usedReverseIds.has(String(reverseRow.ROWID))) return;
@@ -317,7 +322,7 @@ router.get('/:dealerCode/integration/mappings', requireAdminOrViewRole, async (r
       fieldMappings,
       statusMappings,
       statusMappingCleanupRequired:
-        statusMappingsRaw.length !== forwardPairCount * 2 + inboundOnlyCount,
+        statusMappingsRaw.length !== forwardPairCount * 2 - outboundOnlyCount + inboundOnlyCount,
     });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET mappings failed for ${dealerCode}`, err);
@@ -403,6 +408,13 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       }
 
       const inboundOnly = mapping.inbound_only === true;
+      const outboundOnly = mapping.outbound_only === true;
+      if (inboundOnly && outboundOnly) {
+        return res.status(400).json({
+          error: 'STATUS_MAPPING_INVALID',
+          value: sourceStatus,
+        });
+      }
       // An inbound-only row never sends anything out, so it cannot make the
       // MG -> dealer direction ambiguous.
       if (!inboundOnly) {
@@ -416,14 +428,18 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         outboundTargetsBySource.set(normalizedSource, normalizedTarget);
       }
 
-      const priorInboundTarget = inboundTargetsBySource.get(normalizedTarget);
-      if (priorInboundTarget && priorInboundTarget !== normalizedSource) {
-        return res.status(400).json({
-          error: 'STATUS_MAPPING_AMBIGUOUS',
-          value: targetStatus,
-        });
+      // An outbound-only row never maps a dealer status back, so several MG
+      // statuses may go out as the same dealer status (Fusion "Open").
+      if (!outboundOnly) {
+        const priorInboundTarget = inboundTargetsBySource.get(normalizedTarget);
+        if (priorInboundTarget && priorInboundTarget !== normalizedSource) {
+          return res.status(400).json({
+            error: 'STATUS_MAPPING_AMBIGUOUS',
+            value: targetStatus,
+          });
+        }
+        inboundTargetsBySource.set(normalizedTarget, normalizedSource);
       }
-      inboundTargetsBySource.set(normalizedTarget, normalizedSource);
 
       const pairKey = `${normalizedSource}\u0000${normalizedTarget}`;
       if (seenStatusPairs.has(pairKey)) continue;
@@ -433,6 +449,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
         source_status: sourceStatus,
         target_status: targetStatus,
         inbound_only: inboundOnly,
+        outbound_only: outboundOnly,
       });
     }
     if (validStatusMappings.length === 0) {
@@ -546,6 +563,10 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
           direction: 'ZOHO_TO_EXTERNAL',
         });
       }
+
+      // Outbound-only: no dealer -> MG row is written, and any existing one for
+      // this pair is left unclaimed so the stale-row sweep below removes it.
+      if (mapping.outbound_only) continue;
 
       let reverseRow = mapping.reverse_ROWID
         ? existingStatusById.get(String(mapping.reverse_ROWID))

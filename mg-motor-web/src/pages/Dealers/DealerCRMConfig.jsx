@@ -192,16 +192,27 @@ const FUSION_DEFAULT_FIELD_MAPPINGS = [
 ];
 
 // Fusion's enquiryStatus accepts Open, Won, Delivered, Lost, Prospect Lost.
-// Only the unambiguous pairs are preset: MG has no Won/Delivered equivalent,
-// so mapping Contacted/Contact in Future there would falsely mark deals won.
+// MG's D1 workbook map, extended to every MG status (Q1, 13 Oct 2026). Many
+// MG statuses go out as one Fusion status, so all but one per Fusion status
+// are outbound only; the two-way rows decide what a Fusion status means when
+// it comes back. Fusion Won / Delivered have no row: MG is left unchanged.
+// Update Pending, Dealer Unavailable and Unattended Alert are MG-only and are
+// never sent. Mirrored in the backend's outboundOnlyStatusMappings.test.js.
 const FUSION_DEFAULT_STATUS_MAPPINGS = [
   { source_status: "Not Contacted", target_status: "Open" },
-  { source_status: "Lost", target_status: "Lost" },
+  { source_status: "Follow-up 1", target_status: "Open", outbound_only: true },
+  { source_status: "Follow-up 2", target_status: "Open", outbound_only: true },
+  { source_status: "Attempted to Contact", target_status: "Open", outbound_only: true },
+  { source_status: "Contacted", target_status: "Open", outbound_only: true },
+  { source_status: "Contact in Future", target_status: "Open", outbound_only: true },
+  { source_status: "Pre-Qualified", target_status: "Open", outbound_only: true },
   { source_status: "Not Qualified", target_status: "Prospect Lost" },
-  // Inbound only: Fusion may report Won / Delivered, but MG Contacted /
-  // Contact in Future must never be sent back to Fusion as Won / Delivered.
-  { source_status: "Contacted", target_status: "Won", inbound_only: true },
-  { source_status: "Contact in Future", target_status: "Delivered", inbound_only: true },
+  { source_status: "Dropped", target_status: "Prospect Lost", outbound_only: true },
+  { source_status: "Lost", target_status: "Prospect Lost", outbound_only: true },
+  { source_status: "Junk Lead", target_status: "Prospect Lost", outbound_only: true },
+  { source_status: "Lost Lead", target_status: "Prospect Lost", outbound_only: true },
+  // Inbound only: Fusion Lost still maps back to MG Lost, as before.
+  { source_status: "Lost", target_status: "Lost", inbound_only: true },
 ];
 
 const EMPTY_CONFIG = {
@@ -784,6 +795,18 @@ export default function DealerCRMConfig() {
     setStatusMappings((prev) => prev.map((m, i) => (i === index ? { ...m, [key]: value } : m)));
   };
 
+  // A row is two-way, inbound only or outbound only, never both flags.
+  const handleStatusMappingDirection = (index, key, checked) => {
+    setSaveSuccess(false);
+    setStatusMappings((prev) =>
+      prev.map((m, i) =>
+        i === index
+          ? { ...m, inbound_only: key === "inbound_only" && checked, outbound_only: key === "outbound_only" && checked }
+          : m
+      )
+    );
+  };
+
   const addStatusMapping = () => {
     setSaveSuccess(false);
     setStatusMappings((prev) => [...prev, { source_status: "", target_status: "" }]);
@@ -929,7 +952,7 @@ export default function DealerCRMConfig() {
         message = `“${response.value}” is an MG-only workflow status and must not be mapped to a dealer value.`;
       }
       if (response?.error === "STATUS_MAPPING_AMBIGUOUS") {
-        message = `“${response.value}” has an ambiguous two-way status mapping. Keep exactly one approved counterpart.`;
+        message = `“${response.value}” has an ambiguous two-way status mapping. Keep exactly one two-way row for it, and mark the others Outbound only or Inbound only.`;
       }
       if (response?.error === "FIELD_MAPPING_AMBIGUOUS") {
         message = `Each MG and dealer field may appear only once. Check ${response.sourceField || "the source field"} and ${response.targetField || "the target field"}.`;
@@ -2034,6 +2057,13 @@ export default function DealerCRMConfig() {
                                         {ourStatusLabel(mapping.source_status)}
                                         <span className="dealer-crm-config__mapping-arrow-inline">(inbound only)</span>
                                       </>
+                                    ) : mapping.outbound_only ? (
+                                      <>
+                                        {ourStatusLabel(mapping.source_status)}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">→</span>
+                                        {mapping.target_status}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">(outbound only)</span>
+                                      </>
                                     ) : (
                                       <>
                                         {ourStatusLabel(mapping.source_status)}
@@ -2086,10 +2116,19 @@ export default function DealerCRMConfig() {
                                 <input
                                   type="checkbox"
                                   checked={Boolean(mapping.inbound_only)}
-                                  onChange={(e) => handleStatusMappingChange(index, "inbound_only", e.target.checked)}
+                                  onChange={(e) => handleStatusMappingDirection(index, "inbound_only", e.target.checked)}
                                   disabled={isViewUser}
                                 />{" "}
                                 Inbound only
+                              </label>
+                              <label title="Send our status out as this dealer status, but never map it back to ours (lets several of our statuses share one dealer status)">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(mapping.outbound_only)}
+                                  onChange={(e) => handleStatusMappingDirection(index, "outbound_only", e.target.checked)}
+                                  disabled={isViewUser}
+                                />{" "}
+                                Outbound only
                               </label>
                               <button
                                 type="button"
