@@ -777,3 +777,31 @@ test('a skipped update (403 updates_not_enabled) carries the vendor diagnostics 
   assert.equal(result.vendor.type, 'https://docs.fusionamspro.com/lead-api/errors/updates_not_enabled');
   assert.equal(result.vendor.instance, 'lreq_test00000001');
 });
+
+// H4: what Fusion did with a PATCH (LeadUpdated) is summarised for the log.
+test('updateLead summarises what Fusion did with the update: mode, linked enquiry, updated and ignored fields', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => fixtures.leadUpdatedResponse({ update_mode: 'manual', ignored_fields: ['privacy'] }));
+
+  const result = await fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, { enquiryStatus: 'Open' });
+
+  assert.deepEqual(result.dealerResponse, {
+    update_mode: 'manual',
+    enquiry_linked: true,
+    updated_fields: ['status'],
+    ignored_fields: ['privacy'],
+  });
+});
+
+test('the update summary is trimmed, and absent when Fusion reports none of those fields', async (t) => {
+  mockFusionToken(t);
+  let body = fixtures.leadUpdatedResponse({ updated_fields: Array.from({ length: 40 }, (_, i) => `field_${i}_${'x'.repeat(80)}`) });
+  t.mock.method(axios, 'request', async () => body);
+
+  const trimmed = (await fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, {})).dealerResponse;
+  assert.equal(trimmed.updated_fields.length, 25);
+  assert.ok(trimmed.updated_fields.every((name) => name.length <= 60));
+
+  body = { status: 200, data: { lead_id: fixtures.FUSION_TEST_LEAD_ID, enquiry_updated: true }, headers: {} };
+  assert.equal((await fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, {})).dealerResponse, undefined);
+});

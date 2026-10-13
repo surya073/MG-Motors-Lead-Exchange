@@ -248,3 +248,23 @@ test('a refused update keeps a FAILED mapping FAILED (open question Q6)', async 
   assert.equal(db.tables.lead_integrations[0].sync_status, 'FAILED');
   assert.equal(db.tables.lead_integrations[0].retry_count, '2');
 });
+
+// --- H4: what Fusion did with an update is kept in the log ---
+
+test("Fusion's update outcome is kept in the log; a manual-mode update is delivered and not retried", async (t) => {
+  const { db, integration, leadRow, logs } = setup(t);
+  const dealerResponse = { update_mode: 'manual', enquiry_linked: false, updated_fields: ['status'], ignored_fields: ['privacy'] };
+  fakeFusion(t, (externalLeadId) => ({ externalLeadId, httpStatus: 200, raw: {}, dealerResponse }));
+
+  const result = await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+
+  assert.equal(result.ok, true);
+  assert.equal(db.tables.lead_integrations[0].sync_status, 'SYNCED', 'recorded at the dealer, so never retried');
+  const log = logs().at(-1);
+  assert.equal(log.status, 'SUCCESS');
+  assert.equal(log.happy_unhappy_path_name, 'Happy 5');
+  assert.deepEqual(
+    JSON.parse(log.field_changes).find((change) => change.field === 'dealer_response'),
+    { field: 'dealer_response', ...dealerResponse }
+  );
+});

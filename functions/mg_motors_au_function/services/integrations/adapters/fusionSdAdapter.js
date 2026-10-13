@@ -295,15 +295,16 @@ function extractExternalLeadId(response) {
  * truth, rather than trusting an update-endpoint field that new dealers
  * carry the generic placeholder default for.
  *
- * Per Fusion's guide:
- *   - `enquiry_updated: false` means the dealer holds updates for a person
- *     to accept — recorded, NOT a failure, and must not be retried, so it
- *     is returned as a normal success.
+ * Per Fusion's guide (OpenAPI LeadUpdated):
+ *   - A 200 means the update was recorded. `update_mode: manual` means it is
+ *     parked for a person to accept, and `ignored_fields` lists keys the
+ *     dealer has not mapped, which were not applied. Neither is a failure or
+ *     retried; both are summarised in `dealerResponse` for the log.
  *   - 403 `updates_not_enabled` means this dealer has switched updates off
  *     for MG. Retrying can never succeed, and it is not a credential
- *     problem, so it is a logged no-op instead of an error — otherwise the
- *     generic retry path would loop on it, escalate to Unhappy 3 and mark
- *     the lead "Dealer Unavailable".
+ *     problem, so it is returned as skipped (the orchestrator logs it as
+ *     SKIPPED) instead of an error — otherwise the generic retry path would
+ *     loop on it, escalate to Unhappy 3 and mark the lead "Dealer Unavailable".
  *   - 409 `lead_not_ready` is transient and stays retryable.
  */
 function updatePath(integration, externalLeadId) {
@@ -314,6 +315,20 @@ function updatePath(integration, externalLeadId) {
 function isUpdatesNotEnabled(err) {
   const type = err.response?.data?.type;
   return err.response?.status === 403 && typeof type === 'string' && type.endsWith('/updates_not_enabled');
+}
+
+// What Fusion did with a PATCH (OpenAPI LeadUpdated), trimmed for the log.
+// Undefined when the response carries none of these fields.
+function summarizeLeadUpdated(body) {
+  if (!body || typeof body !== 'object') return undefined;
+  const names = (value) => (Array.isArray(value) ? value.slice(0, 25).map((name) => String(name).slice(0, 60)) : undefined);
+  const summary = Object.fromEntries(Object.entries({
+    update_mode: typeof body.update_mode === 'string' ? body.update_mode.slice(0, 20) : undefined,
+    enquiry_linked: typeof body.enquiry_linked === 'boolean' ? body.enquiry_linked : undefined,
+    updated_fields: names(body.updated_fields),
+    ignored_fields: names(body.ignored_fields),
+  }).filter(([, value]) => value !== undefined));
+  return Object.keys(summary).length > 0 ? summary : undefined;
 }
 
 async function updateLead(catalystApp, integration, externalLeadId, payload) {
@@ -356,7 +371,15 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
     throw wrapFusionError(error, 'Fusion SD rejected the lead update request');
   }
 
-  return { externalLeadId, httpStatus: response.status, raw: response.data };
+  const dealerResponse = summarizeLeadUpdated(response.data);
+  if (dealerResponse?.ignored_fields?.length) {
+    // Field-level warning: the dealer has no mapping for these keys.
+    logger.info(
+      'fusionSdAdapter',
+      `Dealer ${integration.dealer_code || integration.ROWID} ignored ${dealerResponse.ignored_fields.length} field(s) of an update (not applied): ${dealerResponse.ignored_fields.join(', ')}`
+    );
+  }
+  return { externalLeadId, httpStatus: response.status, raw: response.data, dealerResponse };
 }
 
 async function getLead() {

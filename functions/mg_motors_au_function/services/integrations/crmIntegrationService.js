@@ -919,12 +919,14 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       status: 'SUCCESS',
       http_status: result.httpStatus,
       request_reference: requestReference,
+      // result.dealerResponse: what the dealer did with an update, e.g. Fusion
+      // parked it for a person to accept or ignored unmapped fields.
       field_changes: JSON.stringify([{
         field: 'delivery_timing',
         sent_at: attemptStartedAt.toISOString(),
         acknowledged_at: new Date().toISOString(),
         duration_ms: Date.now() - attemptStartedAt.getTime(),
-      }]),
+      }, ...(result.dealerResponse ? [{ field: 'dealer_response', ...result.dealerResponse }] : [])]),
     }, { scenarioCode });
 
     // A recovery that CREATED the dealer record is also the enquiry's

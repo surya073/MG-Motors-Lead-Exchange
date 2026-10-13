@@ -283,12 +283,18 @@ function errorDetailText(entry) {
 }
 
 // Entries describing the dealer's response rather than a field change.
-const DEALER_NOTE_FIELDS = new Set(["dealer_error"]);
+const DEALER_NOTE_FIELDS = new Set(["dealer_error", "dealer_response"]);
 
 // What the dealer CRM said about an outbound attempt, as recorded by the
-// adapter: its error (status, problem title/detail, reference id, Retry-After).
+// adapter: what it did with an update (e.g. Fusion parked it for a person to
+// accept, or ignored unmapped fields), or its error (status, problem
+// title/detail, reference id, Retry-After).
 function dealerNotes(changes) {
   const notes = [];
+  const response = changes.find((c) => c.field === "dealer_response");
+  if (response?.update_mode === "manual") notes.push("Awaiting dealer acceptance");
+  if (response?.enquiry_linked === false) notes.push("Not yet in the dealer's pipeline");
+  if (response?.ignored_fields?.length) notes.push(`Dealer ignored: ${response.ignored_fields.join(", ")}`);
   const error = changes.find((c) => c.field === "dealer_error");
   if (error) {
     const said = [error.title, error.detail].filter(Boolean).join(" — ");
