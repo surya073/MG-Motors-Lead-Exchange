@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { DERIVED_SOURCE_FIELDS } = require('./leadMappingService');
 
 /**
  * leadFingerprintService.js
@@ -77,6 +78,9 @@ function fingerprintKeys(fieldMappings) {
   const keys = new Set(ALWAYS_INCLUDED_FIELDS);
   (fieldMappings || []).forEach((m) => {
     if (m && m.source_field) keys.add(m.source_field);
+    // A computed source (enquiry_channel) changes when the field it is
+    // computed from changes, so that field is part of the fingerprint too.
+    if (m && DERIVED_SOURCE_FIELDS[m.source_field]) keys.add(DERIVED_SOURCE_FIELDS[m.source_field]);
   });
   return Array.from(keys).sort();
 }

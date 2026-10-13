@@ -533,6 +533,9 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings, { crmType,
     // have Zoho's immutable record id, which is still a safe idempotency
     // key and must not make an otherwise valid enquiry disappear.
     enquiry_id: leadRow.enquiry_id || leadRow.crm_record_id,
+    // Computed sources a field mapping may use (enquiry_channel,
+    // lead_origin); unused unless a mapping names them.
+    ...leadMappingService.deriveSourceFields(leadRow),
   };
   const payload = leadMappingService.mapZohoLeadToExternal(
     normalizedLead,
@@ -578,8 +581,8 @@ function validateIntegrationConfiguration(integration, fieldMappings, statusMapp
       .filter((row) => row.source_field && row.target_field)
       .map((row) => row.source_field)
   );
-  pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.forEach((field) => {
-    if (!configuredSources.has(field)) missingConfig.push(`field:${field}`);
+  leadMappingService.missingDeliveryMappingFields([...configuredSources], integration?.crm_type).forEach((field) => {
+    missingConfig.push(`field:${field}`);
   });
 
   if (

@@ -5,7 +5,7 @@ const catalyst = require('zcatalyst-sdk-node');
 const logger = require('../utils/logger');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
-const { findTargetFieldProblem } = require('../services/integrations/leadMappingService');
+const { findTargetFieldProblem, missingDeliveryMappingFields } = require('../services/integrations/leadMappingService');
 const { assertSafeUrl } = require('../services/integrations/adapters/genericRestAdapter');
 const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
 const { isValidLeadId } = require('../services/integrations/adapters/fusionSdAdapter');
@@ -373,9 +373,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       return res.status(400).json({ error: 'FIELD_MAPPING_INVALID', ...targetProblem });
     }
     const configuredSourceFields = new Set(validFieldMappings.map((mapping) => mapping.source_field));
-    const missingRequiredFields = pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.filter(
-      (field) => !configuredSourceFields.has(field)
-    );
+    const missingRequiredFields = missingDeliveryMappingFields([...configuredSourceFields], integration.crm_type);
     if (missingRequiredFields.length > 0) {
       return res.status(400).json({
         error: 'FIELD_MAPPING_INVALID',

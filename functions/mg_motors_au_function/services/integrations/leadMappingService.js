@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeStatus, OPTIONAL_DELIVERY_VALUE_FIELDS } = require('./pathPolicyService');
+const { normalizeStatus, OPTIONAL_DELIVERY_VALUE_FIELDS, REQUIRED_DELIVERY_MAPPING_FIELDS } = require('./pathPolicyService');
 
 /**
  * leadMappingService.js
@@ -31,6 +31,47 @@ function parseTriState(value) {
   if (['true', 'yes', 'y', '1'].includes(text)) return true;
   if (['false', 'no', 'n', '0'].includes(text)) return false;
   return undefined;
+}
+
+/**
+ * Mapping sources computed from the lead when it is sent rather than stored,
+ * each with the stored field it is computed from (null for a fixed value).
+ * Fusion only displays an enum value that is on the dealer's list (Fusion,
+ * 13 Oct 2026): enquiry_channel turns MG's lead source into Fusion's enquiry
+ * type, and lead_origin is Fusion's origin for every lead MG sends.
+ */
+const DERIVED_SOURCE_FIELDS = Object.freeze({
+  enquiry_channel: 'lead_source',
+  lead_origin: null,
+});
+
+function deriveSourceFields(lead) {
+  const channel = String(lead?.lead_source || '').toLowerCase().replace(/[^a-z]/g, '');
+  let enquiryChannel = 'Internet';
+  if (channel === 'phone') enquiryChannel = 'Phone';
+  else if (channel === 'walkin') enquiryChannel = 'Walk In';
+  return { enquiry_channel: enquiryChannel, lead_origin: 'Manufacturer Lead' };
+}
+
+// Fusion SD routes a lead by the dealer's own API credentials and does not
+// need MG's dealer code (Fusion, 13 Oct 2026).
+const FUSION_NOT_REQUIRED_FIELDS = Object.freeze(['dealer_code']);
+
+/**
+ * The mandatory MG fields (pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS) that
+ * a dealer's field mapping leaves out. For Fusion SD only, the dealer code
+ * is not needed and a derived source counts as mapping the field it is
+ * computed from; every other CRM type is checked exactly as before.
+ */
+function missingDeliveryMappingFields(sourceFields, crmType) {
+  const covered = new Set(sourceFields);
+  if (crmType === 'FUSION_SD') {
+    sourceFields.forEach((field) => {
+      if (DERIVED_SOURCE_FIELDS[field]) covered.add(DERIVED_SOURCE_FIELDS[field]);
+    });
+    FUSION_NOT_REQUIRED_FIELDS.forEach((field) => covered.add(field));
+  }
+  return REQUIRED_DELIVERY_MAPPING_FIELDS.filter((field) => !covered.has(field));
 }
 
 function mapZohoLeadToExternal(zohoLead, fieldMappings, { excludeSourceFields = [] } = {}) {
@@ -259,6 +300,9 @@ function mapStatus(status, statusMappings, direction, options = {}) {
 
 module.exports = {
   parseTriState,
+  DERIVED_SOURCE_FIELDS,
+  deriveSourceFields,
+  missingDeliveryMappingFields,
   mapZohoLeadToExternal,
   mapExternalLeadToZoho,
   mapStatus,

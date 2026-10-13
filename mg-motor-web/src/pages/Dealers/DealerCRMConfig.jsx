@@ -91,7 +91,16 @@ const OUR_FIELDS = [
   "chat_transcript",
   "lead_owner_email",
   "dealer_rejected_reason",
+  // Computed when a lead is sent, not stored (backend leadMappingService
+  // deriveSourceFields). Fusion shows these enum values on its own lists.
+  "enquiry_channel",
+  "lead_origin",
 ];
+
+const DERIVED_FIELD_LABELS = {
+  enquiry_channel: "Enquiry channel: Internet, Phone or Walk In, from Lead Source (enquiry_channel)",
+  lead_origin: "Lead origin: always Manufacturer Lead (lead_origin)",
+};
 
 function humanizeFieldName(field) {
   return field
@@ -102,7 +111,7 @@ function humanizeFieldName(field) {
 
 const OUR_FIELD_OPTIONS = [
   { value: "", label: "Select field…" },
-  ...OUR_FIELDS.map((f) => ({ value: f, label: `${humanizeFieldName(f)} (${f})` })),
+  ...OUR_FIELDS.map((f) => ({ value: f, label: DERIVED_FIELD_LABELS[f] || `${humanizeFieldName(f)} (${f})` })),
 ];
 
 const CONNECTED_STATUSES = ["ACTIVE", "CONNECTED"];
@@ -172,9 +181,15 @@ const AU008_VERIFIED_STATUS_MAPPINGS = [
 ];
 
 // Fusion AMS-Pro Lead API (data/lead-api-mg-motors-openapi.yaml). Dotted
-// targets are expanded into the nested body by fusionSdAdapter. Fusion has
-// no dealer-code or consent field: `campaign` carries the dealer code and
-// `privacy` is an ignored key that only satisfies the required mapping.
+// targets are expanded into the nested body by fusionSdAdapter. Fusion only
+// displays Enquiry Type, Origin and Source when the value is on the dealer's
+// list (Fusion, 13 Oct 2026), so enquiry type comes from the computed
+// enquiry_channel (Internet / Phone / Walk In), origin is always
+// "Manufacturer Lead", and Source is MG's Nature of Enquiry. Fusion routes by
+// the dealer's credentials and needs no dealer code, so campaign is not sent.
+// `privacy` is an ignored key that only satisfies MG's mandatory mapping
+// (Fusion records digital consent itself). Marketing consent goes to
+// marketingOptinEmail (D1 I7). Mirrored in fusionDerivedFields.test.js.
 const FUSION_DEFAULT_FIELD_MAPPINGS = [
   { source_field: "enquiry_id", target_field: "refID", data_type: "string", required: true },
   { source_field: "customer_name", target_field: "contact.firstName", data_type: "string", required: true },
@@ -182,12 +197,12 @@ const FUSION_DEFAULT_FIELD_MAPPINGS = [
   { source_field: "email_address", target_field: "contact.email", data_type: "string", required: true },
   { source_field: "postcode", target_field: "contact.areaCode", data_type: "string", required: true },
   { source_field: "vehicle_model", target_field: "requirement.model", data_type: "string", required: true },
-  { source_field: "nature_of_enquiry", target_field: "enquiryType", data_type: "string", required: true },
-  { source_field: "lead_source", target_field: "leadSource", data_type: "string", required: true },
-  { source_field: "dealer_code", target_field: "campaign", data_type: "string", required: true },
+  { source_field: "enquiry_channel", target_field: "enquiryType", data_type: "string", required: true },
+  { source_field: "lead_origin", target_field: "origin", data_type: "string", required: true },
+  { source_field: "nature_of_enquiry", target_field: "leadSource", data_type: "string", required: true },
   { source_field: "accept_privacy_policy", target_field: "privacy", data_type: "boolean", required: true },
   { source_field: "lead_status", target_field: "enquiryStatus", data_type: "string", required: true },
-  { source_field: "receive_marketing_updates", target_field: "contact.optinEmail", data_type: "boolean", required: false },
+  { source_field: "receive_marketing_updates", target_field: "contact.marketingOptinEmail", data_type: "boolean", required: false },
   { source_field: "dealer_rejected_reason", target_field: "lostReason", data_type: "string", required: false },
 ];
 
