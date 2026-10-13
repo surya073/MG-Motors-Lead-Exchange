@@ -66,12 +66,30 @@ test('a status MG itself changes afterwards is still sent (MG\'s own change wins
   assert.deepEqual(calls.update.at(-1), { enquiryStatus: 'Open' });
 });
 
-test('a lead delivered before the switch (no snapshot) gets one when the dealer\'s change is applied', async (t) => {
+test('a lead with no snapshot records only what the dealer changed; the next MG edit sends the rest, never the status', async (t) => {
   const { harness, calls, mgEdit, dealerSets } = buckby(t);
   assert.equal(snapshot.read(harness.db.tables.lead_integrations[0]), null);
   await dealerSets('Lost');
+  assert.deepEqual(snapshot.read(harness.db.tables.lead_integrations[0]), { enquiryStatus: 'Prospect Lost' });
   await mgEdit({ postcode: '7000' });
-  assert.deepEqual(calls.update.at(-1), { 'contact.areaCode': '7000' });
+  const sent = calls.update.at(-1);
+  assert.equal(sent['contact.areaCode'], '7000');
+  assert.equal(sent['contact.email'], 'jane@example.com', 'fields Fusion may not have are sent once');
+  assert.equal('enquiryStatus' in sent, false, 'the dealer\'s status is not overwritten');
+});
+
+test('review: an MG edit that never reached Fusion is not lost when a dealer change arrives first', async (t) => {
+  const { harness, calls, mgEdit, dealerSets } = buckby(t);
+  // MG changed the postcode, but the PATCH failed and the lead waits for a retry;
+  // no snapshot exists yet (delivered before the switch).
+  Object.assign(harness.db.tables.leads[0], { postcode: '7000' });
+  harness.db.tables.lead_integrations[0].sync_status = 'FAILED';
+  await dealerSets('Lost');
+  await mgEdit({ vehicle_model: 'MG4' });
+  const sent = calls.update.at(-1);
+  assert.equal(sent['contact.areaCode'], '7000', 'the pending postcode still reaches Fusion');
+  assert.equal(sent['requirement.model'], 'MG4');
+  assert.equal('enquiryStatus' in sent, false);
 });
 
 test('flag off: the later MG edit re-sends the full lead, status included, as before', async (t) => {

@@ -2142,7 +2142,9 @@ async function processResolvedInboundLead(
  * After a dealer change is applied to MG: sets, in the snapshot of what was
  * last sent to the dealer, the fields that change touched to what MG would
  * now send for them. Without a snapshot (a lead delivered before the switch)
- * the full current payload becomes the snapshot. Never fails the update.
+ * only those fields are recorded, so the next update still sends every other
+ * field, including an MG edit that has not reached the dealer yet. Never
+ * fails the update.
  */
 async function recordDealerChangeAsSent(catalystApp, integration, mapping, leadAfter, dealerChange, fieldMappings, statusMappings) {
   let current;
@@ -2155,17 +2157,13 @@ async function recordDealerChangeAsSent(catalystApp, integration, mapping, leadA
     logger.error('crmIntegrationService', `Could not record dealer change as sent for lead ${mapping.zoho_lead_id}`, err);
     return;
   }
-  const previous = sentPayloadSnapshot.read(mapping);
-  let next = current;
-  if (previous) {
-    next = { ...previous };
-    fieldMappings
-      .filter((row) => Object.prototype.hasOwnProperty.call(dealerChange, row.source_field) && row.target_field)
-      .forEach(({ target_field: target }) => {
-        if (current[target] === undefined) delete next[target];
-        else next[target] = current[target];
-      });
-  }
+  const next = { ...(sentPayloadSnapshot.read(mapping) || {}) };
+  fieldMappings
+    .filter((row) => Object.prototype.hasOwnProperty.call(dealerChange, row.source_field) && row.target_field)
+    .forEach(({ target_field: target }) => {
+      if (current[target] === undefined) delete next[target];
+      else next[target] = current[target];
+    });
   await sentPayloadSnapshot.store(catalystApp, mapping.ROWID, next);
 }
 
