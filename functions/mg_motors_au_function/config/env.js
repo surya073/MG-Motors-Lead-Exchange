@@ -291,6 +291,17 @@ function isMappingCachePerRunEnabled() {
   return String(process.env.MAPPING_CACHE_PER_RUN || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * FULL_SYNC_STRICT_SNAPSHOT=true: the full lead sync stops when its local
+ * lead snapshot may be cut off (it reached its row bound), instead of
+ * treating every lead past the bound as new, and a snapshot that cannot be
+ * read is recorded as a Failed sync run (FUSION_REMEDIATION_PLAN.md, Batch
+ * 9a, audit S5). Read on every call.
+ */
+function isFullSyncStrictSnapshotEnabled() {
+  return String(process.env.FULL_SYNC_STRICT_SNAPSHOT || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -311,4 +322,5 @@ module.exports = {
   isSyncClaimFailClosed,
   isDurableSyncCheckpointEnabled,
   isMappingCachePerRunEnabled,
+  isFullSyncStrictSnapshotEnabled,
 };

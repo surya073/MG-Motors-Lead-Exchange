@@ -6,7 +6,7 @@ const {
   fetchOemLeadsModifiedSince,
   updateOemLead,
 } = require('./zohoCrmService');
-const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled } = require('../config/env');
+const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled, isFullSyncStrictSnapshotEnabled } = require('../config/env');
 const { withMappingCache } = require('./integrations/mappingRunCache');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
@@ -190,7 +190,7 @@ function stripEmptyDateFields(row) {
  * already-synced leads as new and tried to re-insert them instead of
  * updating.
  */
-async function loadExistingLeadsByCrmId(catalystApp) {
+async function loadExistingLeadsByCrmId(catalystApp, { bound = FULL_SYNC_LEAD_ROW_BOUND } = {}) {
   // Used only by the full manual sync. Paged in a stable order (ROWID) with a
   // true 0-based offset: the old loop used an unordered scan with a 1-based
   // offset, so it re-read a row at the first page boundary and gave the
@@ -200,8 +200,16 @@ async function loadExistingLeadsByCrmId(catalystApp) {
     LEADS_TABLE,
     '',
     'ORDER BY ROWID ASC',
-    FULL_SYNC_LEAD_ROW_BOUND
+    bound
   );
+  // FULL_SYNC_STRICT_SNAPSHOT (Batch 9a, S5): a snapshot that reached its
+  // bound may be cut off; every lead past it would look new and be inserted
+  // again, so the run stops instead.
+  if (isFullSyncStrictSnapshotEnabled() && rows.length >= bound) {
+    const err = new Error(`Local lead snapshot reached its ${bound}-row bound and may be incomplete; full sync stopped`);
+    err.code = 'FULL_SYNC_SNAPSHOT_INCOMPLETE';
+    throw err;
+  }
   const map = new Map();
   rows.forEach((lead) => map.set(lead.crm_record_id, lead));
   return map;
@@ -560,7 +568,20 @@ async function runLeadSyncInternal(catalystApp, {
     };
   }
 
-  const existingLeadsByCrmId = await loadExisting(crmRecords);
+  let existingLeadsByCrmId;
+  try {
+    existingLeadsByCrmId = await loadExisting(crmRecords);
+  } catch (err) {
+    // FULL_SYNC_STRICT_SNAPSHOT (Batch 9a, S5): never fail without a record.
+    if (isFullSyncStrictSnapshotEnabled()) {
+      await recordSyncRun(catalystApp, {
+        syncType: 'Lead_Sync', syncTrigger: trigger, triggeredBy, startTime, endTime: toCatalystDateTime(),
+        totalRecordsFetched: crmRecords.length, recordsInserted: 0, recordsUpdated: 0, recordsFailed: 0,
+        status: 'Failed', errorDetails: [{ error: `Local lead snapshot failed: ${err.message}` }],
+      });
+    }
+    throw err;
+  }
 
   let inserted = 0;
   let updated = 0;
