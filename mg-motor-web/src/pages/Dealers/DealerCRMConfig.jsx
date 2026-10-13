@@ -321,6 +321,15 @@ function scenarioKeyFromStoredName(name) {
 }
 
 function classifyDealerLog(row) {
+  // Recorded but not applied at the dealer (e.g. dealer updates switched off).
+  if (row.status === "SKIPPED") {
+    return {
+      special: true,
+      label: row.happy_unhappy_path_message || "Not applied at the dealer",
+      tone: "warning",
+    };
+  }
+
   if (row.happy_unhappy_path_name) {
     if (row.happy_unhappy_path_name.startsWith("Connection Test")) {
       return {
@@ -378,6 +387,7 @@ function classifyDealerLogLegacy(row) {
 function logStatusBadge(status) {
   if (status === "SUCCESS") return <Badge tone="active" fixed>Success</Badge>;
   if (status === "FAILED") return <Badge tone="danger" fixed>Failed</Badge>;
+  if (status === "SKIPPED") return <Badge tone="warning" fixed>Skipped</Badge>;
   return <Badge tone="neutral" fixed>{status || "—"}</Badge>;
 }
 
@@ -459,7 +469,13 @@ function LogDetailOffcanvas({ row, onClose }) {
             <strong>{row.external_lead_id || "—"}</strong>
           </div>
           <div className="dealer-crm-config__offcanvas-row">
-            {row.status === "SUCCESS" ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+            {row.status === "SUCCESS" ? (
+              <CheckCircle2 size={14} />
+            ) : row.status === "SKIPPED" ? (
+              <AlertTriangle size={14} />
+            ) : (
+              <XCircle size={14} />
+            )}
             <span>Status</span>
             <strong>{row.status || "—"}</strong>
           </div>
@@ -469,7 +485,7 @@ function LogDetailOffcanvas({ row, onClose }) {
             <strong>{row.http_status || "—"}</strong>
           </div>
 
-          {row.status === "FAILED" && (
+          {(row.status === "FAILED" || row.status === "SKIPPED") && (
             <div className="dealer-crm-config__offcanvas-error">
               <AlertTriangle size={14} />
               <span>{row.error_message || "Unknown error"}</span>
@@ -1052,6 +1068,14 @@ export default function DealerCRMConfig() {
             >
               Retry
             </button>
+          </div>
+        ) : row.status === "SKIPPED" ? (
+          // Not retryable from here: the dealer refuses until it changes its own setting.
+          <div className="dealer-crm-config__log-error">
+            <span className="dealer-crm-config__error-chip">
+              <AlertTriangle size={12} />
+              {row.error_message || "Not applied"}
+            </span>
           </div>
         ) : (
           <span className="dealer-crm-config__muted">—</span>

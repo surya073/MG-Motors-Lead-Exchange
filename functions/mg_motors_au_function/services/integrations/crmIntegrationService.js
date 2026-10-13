@@ -26,6 +26,11 @@ const LEADS_TABLE = 'leads';
 
 const CONSENT_MISMATCH_ERROR_CODE = 'CONSENT_MISMATCH';
 
+// A dealer that has switched lead updates off for MG (Fusion 403
+// updates_not_enabled): the update is recorded as SKIPPED, not delivered.
+const DEALER_UPDATES_DISABLED = 'DEALER_UPDATES_DISABLED';
+const DEALER_UPDATES_DISABLED_MESSAGE = 'Update not applied: the dealer has switched lead updates off for MG';
+
 
 // Unhappy 3 — Dealer Unavailable escalation window. A ZOHO_TO_EXTERNAL_CRM
 // failure (Unhappy 1) that stays unresolved this long gets reclassified as
@@ -688,6 +693,66 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   );
 }
 
+// True when this integration's latest outbound update was already refused
+// as DEALER_UPDATES_DISABLED, i.e. the current stretch of refusals has
+// already been alerted. A successful update in between starts a new one.
+async function dealerUpdatesAlreadyDisabled(catalystApp, integration) {
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT ROWID, CREATEDTIME, status, error_message FROM ${INTEGRATION_LOGS_TABLE} WHERE integration_id = ${integration.ROWID} ` +
+        `AND direction = 'ZOHO_TO_EXTERNAL_CRM' AND operation = 'UPDATE_LEAD' AND status IN ('SUCCESS', 'SKIPPED') ` +
+        'ORDER BY CREATEDTIME DESC, ROWID DESC LIMIT 1'
+    );
+    const latest = rows[0]?.[INTEGRATION_LOGS_TABLE];
+    return latest?.status === 'SKIPPED' && latest.error_message === DEALER_UPDATES_DISABLED;
+  } catch (err) {
+    // A failed lookup must never swallow the alert.
+    logger.error('crmIntegrationService', `Updates-disabled lookup failed for integration ${integration.ROWID}`, err);
+    return false;
+  }
+}
+
+/**
+ * The dealer refused an update because lead updates are switched off for
+ * MG (Fusion 403 updates_not_enabled), so nothing was applied. The lead is
+ * not marked SYNCED and no recovery is recorded: the mapping, the lead and
+ * the integration keep their previous state (FUSION_REMEDIATION_PLAN.md Q6
+ * covers a mapping that was waiting to retry). The skip is logged, and
+ * admins get one alert per stretch of refused updates for the integration.
+ */
+async function recordSkippedUpdate(catalystApp, integration, zohoLeadId, existingMapping, result, requestReference) {
+  const alreadyAlerted = await dealerUpdatesAlreadyDisabled(catalystApp, integration);
+
+  await writeLog(catalystApp, {
+    integration_id: integration.ROWID,
+    dealer_code: integration.dealer_code,
+    direction: 'ZOHO_TO_EXTERNAL_CRM',
+    operation: 'UPDATE_LEAD',
+    zoho_lead_id: zohoLeadId,
+    external_lead_id: existingMapping.external_crm_lead_id,
+    status: 'SKIPPED',
+    http_status: result.httpStatus,
+    error_message: DEALER_UPDATES_DISABLED,
+    request_reference: requestReference,
+    field_changes: result.vendor ? JSON.stringify([{ field: 'dealer_error', ...result.vendor }]) : undefined,
+  }, { scenarioMessage: DEALER_UPDATES_DISABLED_MESSAGE });
+
+  if (!alreadyAlerted) {
+    try {
+      await integrationAlertService.notifyScenario(catalystApp, {
+        scenarioCode: 'Dealer updates disabled',
+        scenarioMessage: "MG updates to this dealer's leads are not being applied",
+        dealerCode: integration.dealer_code,
+        reason: `${DEALER_UPDATES_DISABLED}: the dealer CRM refused an update (lead updates are switched off for MG). Ask the dealer to enable lead updates for MG.`,
+      });
+    } catch (err) {
+      logger.error('crmIntegrationService', `Failed to send the updates-disabled alert for dealer ${integration.dealer_code}`, err);
+    }
+  }
+
+  return { skipped: true, reason: DEALER_UPDATES_DISABLED };
+}
+
 async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference) {
   let operation = 'CREATE_LEAD';
   let existingMapping = null;
@@ -741,6 +806,9 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
         existingMapping.external_crm_lead_id,
         payload
       ));
+      if (result.skipped) {
+        return recordSkippedUpdate(catalystApp, integration, zohoLeadId, existingMapping, result, requestReference);
+      }
     } else {
       result = await withCrmApiLimit(integration.crm_type, () => adapter.createLead(
         catalystApp,
@@ -1161,6 +1229,13 @@ function classifyLogScenario(
     );
   }
 
+  // Recorded but not applied at the dealer (e.g. dealer updates switched
+  // off). It neither completes nor fails a register path, so it carries a
+  // message but no path name.
+  if (status === 'SKIPPED') {
+    return { message: scenarioMessage || 'Not applied at the dealer' };
+  }
+
   if (status === 'SUCCESS') {
     if (direction === 'EXTERNAL_CRM_TO_ZOHO') {
       if (isStatusSync) {
@@ -1263,8 +1338,9 @@ async function writeLog(catalystApp, entry, classificationHint) {
   // failures (bad webhook payload, no lead mapping yet) have no
   // zoho_lead_id and are skipped here; they're still fully visible in
   // the dealer's raw Activity Log via integration_logs, just not
-  // mirrored onto any specific lead.
-  if (entry.zoho_lead_id) {
+  // mirrored onto any specific lead. An entry with no path (a skipped
+  // update) leaves the lead's current path as it was.
+  if (entry.zoho_lead_id && (scenario.code || scenario.name)) {
     try {
       const leadRows = await catalystApp.zcql().executeZCQLQuery(
         `SELECT ROWID FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(entry.zoho_lead_id)}' LIMIT 1`

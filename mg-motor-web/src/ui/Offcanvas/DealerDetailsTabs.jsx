@@ -66,8 +66,17 @@ const TONE_VAR = {
   neutral: "var(--color-text-muted)",
 };
 
+// "ok" for SUCCESS, "skipped" for SKIPPED (recorded but not applied at the
+// dealer, e.g. dealer updates switched off), "failed" for anything else.
+function logOutcome(log) {
+  const status = String(log.status || "").toUpperCase();
+  if (status === "SUCCESS") return "ok";
+  if (status === "SKIPPED") return "skipped";
+  return "failed";
+}
+
 function isLogSuccess(log) {
-  return String(log.status || "").toUpperCase() === "SUCCESS";
+  return logOutcome(log) === "ok";
 }
 
 function cellText(v) {
@@ -317,13 +326,15 @@ export function OverviewTab({ dealer, activity }) {
       .sort((a, b) => b.count - a.count);
     const converted = active.filter((l) => leadTone(l.lead_status) === "success").length;
     const ok = logs.filter(isLogSuccess).length;
+    // A skipped update is neither a success nor a sync failure.
+    const failed = logs.filter((l) => logOutcome(l) === "failed").length;
     return {
       total: active.length,
       converted,
       conversion: active.length ? (converted / active.length) * 100 : 0,
       statusRows,
-      syncRate: logs.length ? (ok / logs.length) * 100 : null,
-      failed: logs.length - ok,
+      syncRate: ok + failed ? (ok / (ok + failed)) * 100 : null,
+      failed,
       leadSeries: buildDailySeries(active, (l) => l.CREATEDTIME, 14),
       syncSeries: buildDailySeries(logs, (l) => l.created_at || l.CREATEDTIME, 14, isLogSuccess),
     };
@@ -512,7 +523,7 @@ export function LogsTab({ activity }) {
   const [filter, setFilter] = useState("all");
 
   const shown = useMemo(
-    () => logs.filter((l) => (filter === "all" ? true : filter === "ok" ? isLogSuccess(l) : !isLogSuccess(l))),
+    () => logs.filter((l) => filter === "all" || logOutcome(l) === filter),
     [logs, filter]
   );
 
@@ -520,11 +531,13 @@ export function LogsTab({ activity }) {
   if (logsError) return <Empty icon={AlertTriangle}>Couldn't load sync logs for this dealer.</Empty>;
   if (!logs.length) return <Empty icon={FileText}>No integration logs for this dealer.</Empty>;
 
-  const failedCount = logs.filter((l) => !isLogSuccess(l)).length;
+  const counts = { ok: 0, skipped: 0, failed: 0 };
+  logs.forEach((l) => { counts[logOutcome(l)] += 1; });
   const chips = [
     { id: "all", label: `All ${logs.length}` },
-    { id: "ok", label: `Success ${logs.length - failedCount}` },
-    { id: "failed", label: `Failed ${failedCount}` },
+    { id: "ok", label: `Success ${counts.ok}` },
+    { id: "failed", label: `Failed ${counts.failed}` },
+    ...(counts.skipped ? [{ id: "skipped", label: `Skipped ${counts.skipped}` }] : []),
   ];
 
   return (
@@ -546,7 +559,8 @@ export function LogsTab({ activity }) {
       ) : (
         <ul className="dd-timeline">
           {shown.slice(0, 50).map((log, i) => {
-            const ok = isLogSuccess(log);
+            const outcome = logOutcome(log);
+            const ok = outcome === "ok";
             const inbound = log.direction === "EXTERNAL_CRM_TO_ZOHO";
             const Dir = inbound ? ArrowDownLeft : ArrowUpRight;
             return (
@@ -555,7 +569,11 @@ export function LogsTab({ activity }) {
                 <div className="dd-log__body">
                   <div className="dd-log__top">
                     <strong>{String(log.operation || "SYNC").replace(/_/g, " ").toLowerCase()}</strong>
-                    <Badge tone={ok ? "success" : "danger"}>{ok ? "Success" : log.status || "Failed"}</Badge>
+                    {outcome === "skipped" ? (
+                      <Badge tone="warning">Skipped</Badge>
+                    ) : (
+                      <Badge tone={ok ? "success" : "danger"}>{ok ? "Success" : log.status || "Failed"}</Badge>
+                    )}
                   </div>
                   <span className="dd-log__dir">
                     <Dir size={12} /> {inbound ? "Dealer CRM → MG" : "MG → Dealer CRM"}

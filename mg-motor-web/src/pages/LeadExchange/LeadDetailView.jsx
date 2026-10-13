@@ -282,6 +282,9 @@ function errorDetailText(entry) {
   return detail || null;
 }
 
+// Entries describing the dealer's response rather than a field change.
+const DEALER_NOTE_FIELDS = new Set(["dealer_error"]);
+
 // What the dealer CRM said about an outbound attempt, as recorded by the
 // adapter: its error (status, problem title/detail, reference id, Retry-After).
 function dealerNotes(changes) {
@@ -330,7 +333,7 @@ function timelineDetailText(entry) {
   }
 
   const statusChange = changes.find((c) => c.field === "lead_status");
-  const otherChanges = changes.filter((c) => c.field !== "lead_status");
+  const otherChanges = changes.filter((c) => c.field !== "lead_status" && !DEALER_NOTE_FIELDS.has(c.field));
 
   // A dealer edit can change the status and other fields together; show
   // every field that changed, not just the status.
@@ -352,6 +355,8 @@ function timelineDetailText(entry) {
   otherChanges.forEach((c) => {
     parts.push(`${formatFieldName(c.field)}: "${c.from || "—"}" → "${c.to || "—"}"`);
   });
+  // A skipped update carries only what the dealer said (no timing).
+  parts.push(...dealerNotes(changes));
 
   return parts.length > 0 ? parts.join(" · ") : null;
 }

@@ -341,7 +341,13 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
         'fusionSdAdapter',
         `Dealer ${integration.dealer_code || integration.ROWID} has lead updates disabled for MG — update skipped (not an error)`
       );
-      return { externalLeadId, httpStatus: 403, raw: error.response.data, skipped: true };
+      return {
+        externalLeadId,
+        httpStatus: 403,
+        raw: error.response.data,
+        skipped: true,
+        vendor: vendorDiagnostics(error.response),
+      };
     }
     logger.error(
       'fusionSdAdapter',

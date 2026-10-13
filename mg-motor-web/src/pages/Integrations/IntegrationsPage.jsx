@@ -34,6 +34,13 @@ const SEVERITY_META = {
   P3: { label: "Low", tone: "info" },
 };
 
+// Log status -> status-pill tone. SKIPPED: recorded but not applied at the
+// dealer (e.g. dealer updates switched off). Anything else reads as a failure.
+const LOG_STATUS_PILL = {
+  SUCCESS: "success",
+  SKIPPED: "pending",
+};
+
 function formatDateInput(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -208,6 +215,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
             options={[
               { value: "", label: "Any status" },
               { value: "FAILED", label: "Failed" },
+              { value: "SKIPPED", label: "Skipped" },
               { value: "SUCCESS", label: "Success" },
             ]}
           />
@@ -260,7 +268,7 @@ function ErrorReportTable({ fromDate, toDate, dealerCode, dealers }) {
                       </td>
                       <td>{log.errorMessage || "—"}</td>
                       <td>
-                        <span className={`status-pill status-pill--${log.status === "SUCCESS" ? "success" : "danger"}`}>
+                        <span className={`status-pill status-pill--${LOG_STATUS_PILL[log.status] || "danger"}`}>
                           {log.status || "—"}
                         </span>
                       </td>

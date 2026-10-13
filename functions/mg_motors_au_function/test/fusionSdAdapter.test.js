@@ -763,3 +763,17 @@ test('Retry-After given as an HTTP date becomes seconds; a network error has no 
     (err) => err.code === 'EXTERNAL_CRM_ERROR' && err.vendor === undefined
   );
 });
+
+test('a skipped update (403 updates_not_enabled) carries the vendor diagnostics for the log', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => {
+    throw fixtures.updatesNotEnabledError();
+  });
+
+  const result = await fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, { enquiryStatus: 'Open' });
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.vendor.status, 403);
+  assert.equal(result.vendor.type, 'https://docs.fusionamspro.com/lead-api/errors/updates_not_enabled');
+  assert.equal(result.vendor.instance, 'lreq_test00000001');
+});

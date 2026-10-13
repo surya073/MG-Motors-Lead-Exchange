@@ -174,3 +174,77 @@ test("a failed Fusion call stores the dealer's error details in the failure log"
   assert.ok(changes.some((change) => change.field === 'delivery_timing'));
   assert.deepEqual(changes.find((change) => change.field === 'dealer_error'), { field: 'dealer_error', ...vendor });
 });
+
+// --- H4: an update the dealer refused (403 updates_not_enabled) is not a delivery ---
+
+const updatesDisabled = (externalLeadId) => {
+  const { response } = fixtures.updatesNotEnabledError();
+  return {
+    externalLeadId,
+    httpStatus: 403,
+    raw: response.data,
+    skipped: true,
+    vendor: { status: 403, type: response.data.type, title: response.data.title, instance: response.data.instance },
+  };
+};
+
+test('a refused update is logged SKIPPED, not SYNCED or Happy, and the mapping, lead and integration stay as they were', async (t) => {
+  const { db, integration, leadRow, logs } = setup(t, {
+    mapping: { last_sync_source_hash: 'previous', last_synced_at: '2026-10-01 10:00:00:000' },
+    lead: { happy_unhappy_path_name: 'Happy 1' },
+  });
+  fakeFusion(t, updatesDisabled);
+  const before = {
+    mapping: { ...db.tables.lead_integrations[0] },
+    lead: { ...db.tables.leads[0] },
+    integration: { ...db.tables.dealer_integrations[0] },
+  };
+
+  const result = await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+
+  assert.deepEqual(result, { skipped: true, reason: 'DEALER_UPDATES_DISABLED' });
+  assert.deepEqual(db.tables.lead_integrations[0], before.mapping, 'the mapping keeps its previous state');
+  assert.deepEqual(db.tables.leads[0], before.lead, 'the lead, and its current path, are untouched');
+  assert.deepEqual(db.tables.dealer_integrations[0], before.integration, 'the integration is not marked ACTIVE');
+
+  const log = logs().at(-1);
+  assert.equal(log.status, 'SKIPPED');
+  assert.equal(log.error_message, 'DEALER_UPDATES_DISABLED');
+  assert.equal(log.http_status, 403);
+  assert.equal(log.happy_unhappy_path_name, undefined, 'not a Happy or Unhappy path');
+  assert.match(log.happy_unhappy_path_message, /not applied/i);
+  const dealerError = JSON.parse(log.field_changes).find((change) => change.field === 'dealer_error');
+  assert.equal(dealerError.instance, 'lreq_test00000001');
+});
+
+test('one configuration alert per stretch of refused updates; it alerts again only after updates worked', async (t) => {
+  const { db, integration, leadRow, alerts } = setup(t);
+  let refuse = true;
+  fakeFusion(t, (externalLeadId) => (refuse ? updatesDisabled(externalLeadId) : accepted(externalLeadId)));
+  const sync = () => crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+  const updatesDisabledAlerts = () => alerts.mock.calls
+    .filter((call) => String(call.arguments[1].reason).startsWith('DEALER_UPDATES_DISABLED'))
+    .length;
+
+  await sync();
+  await sync();
+  assert.equal(updatesDisabledAlerts(), 1, 'not one alert per refused update');
+
+  refuse = false;
+  await sync();
+  refuse = true;
+  await sync();
+  assert.equal(updatesDisabledAlerts(), 2, 'refused again after a successful update');
+});
+
+// Open question Q6 (FUSION_REMEDIATION_PLAN.md): a FAILED mapping keeps
+// FAILED for now, as the plan says, so the retry sweep keeps re-sending it.
+test('a refused update keeps a FAILED mapping FAILED (open question Q6)', async (t) => {
+  const { db, integration, leadRow } = setup(t, { mapping: { sync_status: 'FAILED', retry_count: '2', last_error: 'EXTERNAL_CRM_ERROR' } });
+  fakeFusion(t, updatesDisabled);
+
+  await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+
+  assert.equal(db.tables.lead_integrations[0].sync_status, 'FAILED');
+  assert.equal(db.tables.lead_integrations[0].retry_count, '2');
+});
