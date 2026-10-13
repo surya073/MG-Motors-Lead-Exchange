@@ -1096,22 +1096,27 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     attemptStartedAt = new Date();
     if (existingMapping?.external_crm_lead_id) {
       operation = 'UPDATE_LEAD';
-      // FUSION_CHANGES_ONLY_PATCH (Batch 10): a lead in sync sends only what
-      // changed since the payload last sent, so fields the dealer maintains
-      // (its status) are not re-sent over the dealer's own values. A lead
-      // waiting for a retry, or with no snapshot, is sent in full as before.
+      // FUSION_CHANGES_ONLY_PATCH (Batch 10): send only what changed since
+      // the last successful send (the snapshot), so fields the dealer
+      // maintains (its status) are not re-sent over the dealer's own values;
+      // a retry thus delivers MG's pending change alone (Q33). With no
+      // snapshot the full lead is sent. With nothing changed, a lead in sync
+      // sends nothing, while a retry still sends the full lead so its
+      // recovery steps (e.g. the MG acknowledgement) run.
       let updatePayload = payload;
-      if (sentPayloadSnapshot.usesChangesOnlyPatch(integration) && existingMapping.sync_status === 'SYNCED') {
-        const previous = sentPayloadSnapshot.read(existingMapping);
-        if (previous) {
-          updatePayload = sentPayloadSnapshot.changedFields(previous, payload);
-          if (Object.keys(updatePayload).length === 0) {
-            logger.info('crmIntegrationService', `Nothing new to send for lead ${zohoLeadId} (dealer ${integration.dealer_code}); no update sent.`);
-            // The dealer already has everything: the lead is in sync, not
-            // PENDING (lead sync marks an edited lead PENDING before sending).
-            await setLeadSyncState(catalystApp, leadRow, 'SYNCED');
-            return { skipped: true, reason: 'NO_CHANGES_TO_SEND' };
-          }
+      const previous = sentPayloadSnapshot.usesChangesOnlyPatch(integration)
+        ? sentPayloadSnapshot.read(existingMapping)
+        : null;
+      if (previous) {
+        const changes = sentPayloadSnapshot.changedFields(previous, payload);
+        if (Object.keys(changes).length > 0) {
+          updatePayload = changes;
+        } else if (existingMapping.sync_status === 'SYNCED') {
+          logger.info('crmIntegrationService', `Nothing new to send for lead ${zohoLeadId} (dealer ${integration.dealer_code}); no update sent.`);
+          // The dealer already has everything: the lead is in sync, not
+          // PENDING (lead sync marks an edited lead PENDING before sending).
+          await setLeadSyncState(catalystApp, leadRow, 'SYNCED');
+          return { skipped: true, reason: 'NO_CHANGES_TO_SEND' };
         }
       }
       result = await withCrmApiLimit(integration.crm_type, () => adapter.updateLead(

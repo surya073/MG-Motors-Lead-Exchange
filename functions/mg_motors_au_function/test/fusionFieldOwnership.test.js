@@ -100,3 +100,51 @@ test('flag off: the later MG edit re-sends the full lead, status included, as be
   assert.equal(calls.update.at(-1).enquiryStatus, 'Prospect Lost');
   assert.equal(calls.update.at(-1)['contact.areaCode'], '7000');
 });
+
+// Q33 with Fusion: MG's postcode edit fails, the dealer marks the lead Lost
+// before the retry. With KEEP_OUTBOUND_RETRY_ON_INBOUND the retry is kept;
+// with changes-only it sends the postcode alone, never the status over the
+// dealer's Lost.
+const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
+const outboundRetryScheduler = require('../services/integrations/outboundRetryScheduler');
+const { fakeAdapter: failingOnce } = require('./helpers/outboundHarness');
+
+test('Q33: the kept retry delivers MG\'s pending postcode and leaves the dealer\'s Lost alone', async (t) => {
+  withEnv(t, {
+    FUSION_CHANGES_ONLY_PATCH: 'true',
+    FUSION_INBOUND_V2: 'true',
+    KEEP_OUTBOUND_RETRY_ON_INBOUND: 'true',
+    INTEGRATION_CREDENTIALS_KEY: crypto.randomBytes(32).toString('base64'),
+  });
+  const harness = setupOutbound(t, { lead: { lead_status: 'Contacted', postcode: '7250' } });
+  harness.db.tables.integration_field_mappings.splice(0, Infinity, ...FIELD_PRESET);
+  harness.db.tables.integration_status_mappings.splice(0, Infinity, ...STATUS_PRESET);
+  harness.db.tables.notifications = [];
+  let attempt = 0;
+  const calls = failingOnce(t, {
+    updateLead: async (id) => {
+      attempt += 1;
+      if (attempt === 2) throw Object.assign(new Error('Fusion unreachable'), { code: 'ECONNRESET' });
+      return { externalLeadId: id, httpStatus: 200, raw: {} };
+    },
+  });
+  const mgEdit = (changes = {}) => {
+    Object.assign(harness.db.tables.leads[0], changes);
+    return crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow()).catch(() => null);
+  };
+  await mgEdit();                                 // 1: full payload, snapshot kept
+  await mgEdit({ postcode: '7000' });             // 2: fails; waits for its retry
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'FAILED');
+  const applied = await crmIntegrationService.processInboundWebhook(
+    harness.db.app, harness.integration, fixtures.inboundFlatWebhookPayload({ status: 'Lost' }), oemCrmService
+  );
+  assert.equal(applied.ok, true);
+  assert.equal(harness.db.tables.leads[0].lead_status, 'Lost Lead');
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'FAILED', 'retry kept');
+
+  _resetForTests();
+  const sweep = await outboundRetryScheduler.runOutboundRetrySweep(harness.db.app, { ignoreSchedule: true });
+  assert.equal(sweep.recovered, 1);
+  assert.deepEqual(calls.update.at(-1), { 'contact.areaCode': '7000' });
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED');
+});

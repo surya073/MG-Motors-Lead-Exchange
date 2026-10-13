@@ -75,7 +75,7 @@ test('nothing new and the lead in sync: no request at all', async (t) => {
   assert.equal(calls.update.length, 1);
 });
 
-test('a lead waiting for a retry is sent in full, so it cannot be left half-applied', async (t) => {
+test('a retry with nothing changed since the last send sends the full lead, so recovery steps still run', async (t) => {
   const { harness, calls, sync } = setup(t);
   await sync();
   harness.db.tables.lead_integrations[0].sync_status = 'FAILED';
@@ -102,4 +102,16 @@ test('nothing new to send: the lead is marked SYNCED, not left PENDING', async (
   assert.equal(result.reason, 'NO_CHANGES_TO_SEND');
   assert.equal(calls.update.length, 1);
   assert.equal(harness.db.tables.leads[0].sync_status, 'SYNCED');
+});
+
+// Q33 follow-up: a retry sends only what changed since the last successful
+// send (the snapshot), so it delivers MG's pending change without re-sending
+// fields the dealer maintains.
+test('a lead waiting for a retry sends only what changed since the last successful send', async (t) => {
+  const { harness, calls, sync } = setup(t);
+  await sync();
+  harness.db.tables.lead_integrations[0].sync_status = 'FAILED';
+  await sync({ postcode: '7000' });
+  assert.deepEqual(calls.update[1], { 'contact.areaCode': '7000' });
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED');
 });
