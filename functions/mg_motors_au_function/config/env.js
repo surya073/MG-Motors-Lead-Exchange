@@ -314,6 +314,17 @@ function isFusionChangesOnlyPatchEnabled() {
   return String(process.env.FUSION_CHANGES_ONLY_PATCH || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * KEEP_OUTBOUND_RETRY_ON_INBOUND=true: a dealer update applied to MG keeps a
+ * pending outbound retry (the mapping stays FAILED, FAILED_CRITICAL or
+ * RETRY_EXHAUSTED, and no echo marker is written), so MG's own undelivered
+ * change still reaches the dealer (FUSION_REMEDIATION_PLAN.md, Q33). Every
+ * CRM type. Unset keeps today's behaviour. Read on every call.
+ */
+function isKeepOutboundRetryOnInboundEnabled() {
+  return String(process.env.KEEP_OUTBOUND_RETRY_ON_INBOUND || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -336,4 +347,5 @@ module.exports = {
   isMappingCachePerRunEnabled,
   isFullSyncStrictSnapshotEnabled,
   isFusionChangesOnlyPatchEnabled,
+  isKeepOutboundRetryOnInboundEnabled,
 };

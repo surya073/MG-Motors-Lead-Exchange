@@ -17,7 +17,7 @@ const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
 const {
   getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
-  isSyncClaimFailClosed,
+  isSyncClaimFailClosed, isKeepOutboundRetryOnInboundEnabled,
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
@@ -2170,6 +2170,15 @@ async function recordDealerChangeAsSent(catalystApp, integration, mapping, leadA
   await sentPayloadSnapshot.store(catalystApp, mapping.ROWID, next);
 }
 
+// Mapping states in which an MG change has not reached the dealer yet and a
+// retry (or, once stopped, an admin replay) will send it. Only outbound
+// failures set them.
+const OUTBOUND_PENDING_STATES = new Set(['FAILED', 'FAILED_CRITICAL', 'RETRY_EXHAUSTED']);
+
+function keepsPendingOutboundRetry(mapping) {
+  return isKeepOutboundRetryOnInboundEnabled() && OUTBOUND_PENDING_STATES.has(mapping?.sync_status);
+}
+
 // Fusion enquiryStatus values with no MG meaning (Q1, 13 Oct 2026).
 const FUSION_UNAPPLIED_STATUSES = new Set(['won', 'delivered']);
 
@@ -2539,18 +2548,24 @@ async function attemptInboundLeadUpdate(
 
     await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
       ROWID: mapping.ROWID,
-      // The accepted fields were applied, so the record is in sync. A held
-      // protected field (Unhappy 6) is recorded in last_error so its alert
-      // is not repeated, without marking the whole record as held.
-      sync_status: 'SYNCED',
       last_synced_at: toCatalystDateTime(),
-      last_sync_direction: 'EXTERNAL_CRM_TO_ZOHO',
-      // Same canonical internal-state fingerprint the outbound side
-      // computes, so the outbound echo guard can recognise this state.
-      last_sync_source_hash: leadFingerprintService.computeProjectedInboundFingerprint(
-        existingLeadRow, internalUpdate, fieldMappings
-      ),
-      last_error: conflicts.length > 0 ? 'OWNERSHIP_CONFLICT' : '',
+      // KEEP_OUTBOUND_RETRY_ON_INBOUND (Q33): an MG change still waiting for
+      // its outbound retry is not in the dealer's record, so the mapping keeps
+      // its retry state, and no echo marker is written: the retry must send
+      // MG's state, not be skipped as an echo of the dealer's.
+      ...(keepsPendingOutboundRetry(mapping) ? {} : {
+        // The accepted fields were applied, so the record is in sync. A held
+        // protected field (Unhappy 6) is recorded in last_error so its alert
+        // is not repeated, without marking the whole record as held.
+        sync_status: 'SYNCED',
+        last_sync_direction: 'EXTERNAL_CRM_TO_ZOHO',
+        // Same canonical internal-state fingerprint the outbound side
+        // computes, so the outbound echo guard can recognise this state.
+        last_sync_source_hash: leadFingerprintService.computeProjectedInboundFingerprint(
+          existingLeadRow, internalUpdate, fieldMappings
+        ),
+        last_error: conflicts.length > 0 ? 'OWNERSHIP_CONFLICT' : '',
+      }),
     });
     // A dealer change reached MG: the dealer acted (Batch 7).
     await stampDealerActionClock(catalystApp, mapping.ROWID);
