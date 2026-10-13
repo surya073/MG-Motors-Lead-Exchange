@@ -2,7 +2,7 @@
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
-const { getZohoConfig } = require('../config/env');
+const { getZohoConfig, isFusionInboundV2Enabled } = require('../config/env');
 const { syncDealers } = require('../services/dealerSyncService');
 const { syncLeadsByIds, syncModifiedLeads } = require('../services/leadSyncService');
 const zohoCrmService = require('../services/zohoCrmService');
@@ -11,6 +11,10 @@ const webhookVerificationService = require('../services/integrations/webhookVeri
 const logger = require('../utils/logger');
 
 const router = express.Router();
+
+function isFusionV2(integration) {
+  return integration?.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled();
+}
 
 function isEnabled(value) {
   return !(
@@ -96,6 +100,9 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       payload.eventId ||
       headers['x-event-id'] ||
       headers['x-webhook-id'] ||
+      // Fusion SD's Standard Webhooks id: unique per event, repeated on a
+      // retry (Batch 5, FUSION_INBOUND_V2 only).
+      (isFusionV2(integration) ? headers['webhook-id'] : null) ||
       null;
     const { isDuplicate, eventRowId } = await crmIntegrationService.checkAndRecordWebhookEvent(
       catalystApp, integration, rawBody, eventId
