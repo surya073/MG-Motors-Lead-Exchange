@@ -75,3 +75,21 @@ test('flag off: the same failure raises without a sync run, as before', async (t
   await assert.rejects(leadSyncService.syncLeads(db.app, { trigger: 'Manual', triggeredBy: 'test' }));
   assert.equal(db.tables.sync_logs.length, 0);
 });
+
+test('review: if the Failed run cannot be recorded either, the original snapshot error is still the one raised', async (t) => {
+  withFlag(t, 'true');
+  zohoReturnsNoLeads(t);
+  const db = createInMemoryZcql({});
+  const datastore = db.app.datastore;
+  db.app.datastore = () => ({
+    table: (name) => {
+      const real = datastore().table(name);
+      if (name !== 'sync_logs') return real;
+      return { ...real, insertRow: async () => { throw new Error('sync_logs unavailable'); } };
+    },
+  });
+  await assert.rejects(
+    leadSyncService.syncLeads(db.app, { trigger: 'Manual', triggeredBy: 'test' }),
+    (err) => /INVALID_TABLE leads/.test(err.message)
+  );
+});
