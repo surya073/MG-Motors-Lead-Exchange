@@ -1009,7 +1009,16 @@ async function getIncrementalWatermark(catalystApp, now = new Date()) {
     if (!['Success', 'Partial'].includes(log.status)) continue;
     if (Number(log.records_failed || 0) !== 0) continue;
     const startedAt = parseCatalystUtc(log.start_time);
-    if (startedAt) return new Date(startedAt.getTime() - WATERMARK_OVERLAP_MS);
+    if (startedAt) {
+      const checkpoint = new Date(startedAt.getTime() - WATERMARK_OVERLAP_MS);
+      // DURABLE_SYNC_CHECKPOINT can find a run far back; never read changes
+      // from before LEAD_SYNC_SINCE (Batch 9a review), as the fallback below.
+      if (isDurableSyncCheckpointEnabled()) {
+        const floor = getLeadSyncSince();
+        if (floor && floor > checkpoint) return floor;
+      }
+      return checkpoint;
+    }
   }
   const fallback = new Date(now.getTime() - WATERMARK_FALLBACK_LOOKBACK_MS);
   const since = getLeadSyncSince();

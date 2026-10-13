@@ -98,3 +98,20 @@ test('with fewer than 20 runs, the flag finds the same checkpoint as before', as
   const on = await getIncrementalWatermark(db.app, NOW);
   assert.equal(on.toISOString(), off.toISOString());
 });
+
+// Review of Batch 9a: a clean run found far back must not send the next
+// incremental run reading changes from before LEAD_SYNC_SINCE (leads outside
+// the sync window, and possibly too many for one cron run).
+test('review: flag on, a clean run older than LEAD_SYNC_SINCE resumes from LEAD_SYNC_SINCE', async (t) => {
+  withEnv(t, { DURABLE_SYNC_CHECKPOINT: 'true', LEAD_SYNC_SINCE: '2026-10-05T00:00:00Z' });
+  const db = createInMemoryZcql({ sync_logs: [run('2026-08-01 12:00:00:000', '2026-08-01 06:00:00', 'Success', 0)] });
+  const watermark = await getIncrementalWatermark(db.app, NOW);
+  assert.equal(watermark.toISOString(), '2026-10-05T00:00:00.000Z');
+});
+
+test('review: flag on, a clean run inside the window is used as is', async (t) => {
+  withEnv(t, { DURABLE_SYNC_CHECKPOINT: 'true', LEAD_SYNC_SINCE: '2026-10-05T00:00:00Z' });
+  const db = createInMemoryZcql({ sync_logs: [run('2026-10-11 12:00:00:000', '2026-10-11 06:00:00', 'Success', 0)] });
+  const watermark = await getIncrementalWatermark(db.app, NOW);
+  assert.equal(watermark.toISOString(), '2026-10-11T05:58:00.000Z');
+});
