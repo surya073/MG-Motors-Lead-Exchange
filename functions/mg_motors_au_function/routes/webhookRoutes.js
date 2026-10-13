@@ -123,9 +123,11 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       null;
     // The dealer lead the event is about, kept with a stored event so it can
     // be replayed (Batch 6, INBOUND_EVENT_STORE, Fusion SD only).
-    const externalLeadId = (payload && typeof payload === 'object')
-      ? (payload.lead_id || payload.id || payload.leadId || null)
+    // Trimmed, as the translator and the replay sweep read it.
+    const rawLeadId = (payload && typeof payload === 'object')
+      ? (payload.lead_id || payload.id || payload.leadId)
       : null;
+    const externalLeadId = rawLeadId === undefined || rawLeadId === null ? null : (String(rawLeadId).trim() || null);
     const { isDuplicate, inProgress, eventRowId } = await crmIntegrationService.checkAndRecordWebhookEvent(
       catalystApp, integration, rawBody, eventId, { externalLeadId }
     );

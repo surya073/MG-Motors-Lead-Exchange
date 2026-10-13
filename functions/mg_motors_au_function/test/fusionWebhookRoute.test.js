@@ -159,3 +159,17 @@ test('Batch 6: the dealer lead id is passed along to be stored with the event', 
   const call = crmIntegrationService.checkAndRecordWebhookEvent.mock.calls[0];
   assert.deepEqual(call.arguments[4], { externalLeadId: 'lead_XYZ' });
 });
+
+test('review, Batch 6: the dealer lead id is stored trimmed, as replay looks it up', async (t) => {
+  const { post } = await setup(t);
+  await post('725001', { lead_id: '  lead_XYZ  ', status: 'Lost' }, FUSION_HEADERS);
+  const call = crmIntegrationService.checkAndRecordWebhookEvent.mock.calls[0];
+  assert.deepEqual(call.arguments[4], { externalLeadId: 'lead_XYZ' });
+});
+
+test('review, Batch 6: a blank lead id is stored as none', async (t) => {
+  const { post } = await setup(t);
+  await post('725001', { lead_id: '   ', status: 'Lost' }, FUSION_HEADERS);
+  const call = crmIntegrationService.checkAndRecordWebhookEvent.mock.calls[0];
+  assert.deepEqual(call.arguments[4], { externalLeadId: null });
+});
