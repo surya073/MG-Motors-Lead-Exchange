@@ -24,14 +24,15 @@ const FIELD_PRESET = [
   ['dealer_rejected_reason', 'lostReason', 'string', false],
 ].map(([source_field, target_field, data_type, required]) => ({ integration_id: '1000', source_field, target_field, data_type, required }));
 
-const OPEN = ['Not Contacted', 'Follow-up 1', 'Follow-up 2', 'Attempted to Contact', 'Contacted', 'Contact in Future', 'Pre-Qualified'];
+const OPEN = ['Not Contacted', 'Follow-up 1', 'Follow-up 2', 'Attempted to Contact', 'Contacted', 'Contact in Future', 'Pre-Qualified', 'Finance Intro'];
 const PROSPECT_LOST = ['Not Qualified', 'Dropped', 'Lost', 'Junk Lead', 'Lost Lead'];
 const STATUS_PRESET = [
   ...OPEN.map((mg) => ({ source_status: mg, target_status: 'Open', direction: 'ZOHO_TO_EXTERNAL' })),
   ...PROSPECT_LOST.map((mg) => ({ source_status: mg, target_status: 'Prospect Lost', direction: 'ZOHO_TO_EXTERNAL' })),
   { source_status: 'Open', target_status: 'Not Contacted', direction: 'EXTERNAL_TO_ZOHO' },
   { source_status: 'Prospect Lost', target_status: 'Not Qualified', direction: 'EXTERNAL_TO_ZOHO' },
-  { source_status: 'Lost', target_status: 'Lost', direction: 'EXTERNAL_TO_ZOHO' },
+  // MG's "Lost" label stores Lost Lead (Q26).
+  { source_status: 'Lost', target_status: 'Lost Lead', direction: 'EXTERNAL_TO_ZOHO' },
 ].map((row) => ({ integration_id: '1000', ...row }));
 
 module.exports = { FIELD_PRESET, STATUS_PRESET, OPEN, PROSPECT_LOST };

@@ -219,8 +219,8 @@ const FUSION_DEFAULT_FIELD_MAPPINGS = [
 // MG statuses go out as one Fusion status, so all but one per Fusion status
 // are outbound only; the two-way rows decide what a Fusion status means when
 // it comes back. Fusion Won / Delivered have no row: MG is left unchanged.
-// Update Pending, Dealer Unavailable and Unattended Alert are MG-only and are
-// never sent. Mirrored in the backend's outboundOnlyStatusMappings.test.js.
+// Update Pending, Dealer Unavailable, Unattended Alert and PMA Unassigned are
+// MG-only and are never sent. Mirrored in the backend's outboundOnlyStatusMappings.test.js.
 const FUSION_DEFAULT_STATUS_MAPPINGS = [
   { source_status: "Not Contacted", target_status: "Open" },
   { source_status: "Follow-up 1", target_status: "Open", outbound_only: true },
@@ -229,13 +229,15 @@ const FUSION_DEFAULT_STATUS_MAPPINGS = [
   { source_status: "Contacted", target_status: "Open", outbound_only: true },
   { source_status: "Contact in Future", target_status: "Open", outbound_only: true },
   { source_status: "Pre-Qualified", target_status: "Open", outbound_only: true },
+  { source_status: "Finance Intro", target_status: "Open", outbound_only: true },
   { source_status: "Not Qualified", target_status: "Prospect Lost" },
   { source_status: "Dropped", target_status: "Prospect Lost", outbound_only: true },
   { source_status: "Lost", target_status: "Prospect Lost", outbound_only: true },
   { source_status: "Junk Lead", target_status: "Prospect Lost", outbound_only: true },
   { source_status: "Lost Lead", target_status: "Prospect Lost", outbound_only: true },
-  // Inbound only: Fusion Lost still maps back to MG Lost, as before.
-  { source_status: "Lost", target_status: "Lost", inbound_only: true },
+  // Inbound only: Fusion Lost comes back as MG "Lost", whose stored value
+  // is Lost Lead (MG's picklist, 9 Oct 2026; Q26).
+  { source_status: "Lost Lead", target_status: "Lost", inbound_only: true },
 ];
 
 const EMPTY_CONFIG = {

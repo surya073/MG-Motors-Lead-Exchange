@@ -33,12 +33,13 @@ const FUSION_D1_PRESET = [
   { source_status: 'Contacted', target_status: 'Open', outbound_only: true },
   { source_status: 'Contact in Future', target_status: 'Open', outbound_only: true },
   { source_status: 'Pre-Qualified', target_status: 'Open', outbound_only: true },
+  { source_status: 'Finance Intro', target_status: 'Open', outbound_only: true },
   { source_status: 'Not Qualified', target_status: 'Prospect Lost' },
   { source_status: 'Dropped', target_status: 'Prospect Lost', outbound_only: true },
   { source_status: 'Lost', target_status: 'Prospect Lost', outbound_only: true },
   { source_status: 'Junk Lead', target_status: 'Prospect Lost', outbound_only: true },
   { source_status: 'Lost Lead', target_status: 'Prospect Lost', outbound_only: true },
-  { source_status: 'Lost', target_status: 'Lost', inbound_only: true },
+  { source_status: 'Lost Lead', target_status: 'Lost', inbound_only: true },
 ];
 
 const FIELDS = pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.map((f) => ({
@@ -127,6 +128,7 @@ test('the Fusion D1 preset saves, sends every MG status, and maps Fusion statuse
     Contacted: 'Open',
     'Contact in Future': 'Open',
     'Pre-Qualified': 'Open',
+    'Finance Intro': 'Open',
     'Not Qualified': 'Prospect Lost',
     Dropped: 'Prospect Lost',
     Lost: 'Prospect Lost',
@@ -139,14 +141,15 @@ test('the Fusion D1 preset saves, sends every MG status, and maps Fusion statuse
   }
   // Every MG status a dealer can hold is covered; the rest are MG-only.
   for (const mg of pathPolicy.MG_LEAD_STATUS_VALUES) {
-    if (mg === '-None-' || pathPolicy.isOemOnlyStatus(mg)) continue;
+    if (mg === '-None-' || pathPolicy.isMgOnlyStatusFor(mg, 'FUSION_SD')) continue;
     assert.ok(expectedOut[mg], `${mg} has an outbound Fusion status`);
   }
 
   // Coming back: today's rules, unchanged.
   assert.equal(mapStatus('Open', rows, 'EXTERNAL_TO_ZOHO'), 'Not Contacted');
   assert.equal(mapStatus('Prospect Lost', rows, 'EXTERNAL_TO_ZOHO'), 'Not Qualified');
-  assert.equal(mapStatus('Lost', rows, 'EXTERNAL_TO_ZOHO'), 'Lost');
+  // Fusion Lost -> MG "Lost", whose stored value is Lost Lead (Q26).
+  assert.equal(mapStatus('Lost', rows, 'EXTERNAL_TO_ZOHO'), 'Lost Lead');
   // Won / Delivered: no rule, so MG is left unchanged (Q1 "safe option").
   for (const fusion of ['Won', 'Delivered']) {
     assert.throws(() => mapStatus(fusion, rows, 'EXTERNAL_TO_ZOHO'), (err) => err.code === 'STATUS_MAPPING_NOT_FOUND', fusion);
@@ -166,7 +169,10 @@ test('reading back flags outbound-only rows, and saving what was read back is st
   assert.deepEqual([contacted.target_status, contacted.outbound_only], ['Open', true]);
   const notContacted = view.find((m) => m.source_status === 'Not Contacted');
   assert.equal(notContacted.outbound_only, undefined, 'two-way rows are not flagged');
-  assert.equal(view.find((m) => m.inbound_only).target_status, 'Lost');
+  assert.deepEqual(
+    [view.find((m) => m.inbound_only).source_status, view.find((m) => m.inbound_only).target_status],
+    ['Lost Lead', 'Lost']
+  );
 
   const before = rowsOf(db).length;
   const again = await save(t, view);

@@ -119,7 +119,7 @@ test('C4: a failed MG write, then Fusion\'s redelivery, applies the update once'
 
   const late = await h.deliver();
   assert.equal(late.body.status, 'DUPLICATE');
-  assert.deepEqual(h.writes, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost' } }], 'written exactly once');
+  assert.deepEqual(h.writes, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }], 'written exactly once');
   assert.equal(h.db.tables.webhook_events.length, 1);
 });
 

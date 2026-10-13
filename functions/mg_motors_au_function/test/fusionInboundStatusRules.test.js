@@ -88,12 +88,12 @@ for (const status of ['Won', 'Delivered', 'won', ' DELIVERED ']) {
   });
 }
 
-test('Happy 2: Fusion "Lost" on a progressed lead moves MG to Lost', async (t) => {
+test('Happy 2: Fusion "Lost" on a progressed lead moves MG to Lost Lead (MG\'s "Lost")', async (t) => {
   const harness = buckby(t, 'Contacted');
   const result = await fusionStatus(harness, 'Lost');
   assert.equal(result.ok, true);
   assert.equal(result.scenarioCode, 'Happy 2');
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost' } }]);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
   assert.equal(harness.db.tables.lead_integrations[0].last_sync_direction, 'EXTERNAL_CRM_TO_ZOHO');
   const log = harness.logs().find((row) => row.status === 'SUCCESS');
   assert.equal(log.happy_unhappy_path_name, 'Happy 2');
@@ -159,11 +159,11 @@ for (const mgStatus of ['Lost', 'Dropped', 'Junk Lead', 'Lost Lead', 'Not Qualif
   });
 }
 
-test('Fusion "Lost" for an MG lead at Dropped (sent as Prospect Lost) is a real change: MG becomes Lost', async (t) => {
+test('Fusion "Lost" for an MG lead at Dropped (sent as Prospect Lost) is a real change: MG becomes Lost Lead', async (t) => {
   const harness = buckby(t, 'Dropped');
   const result = await fusionStatus(harness, 'Lost');
   assert.equal(result.ok, true);
-  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost' });
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead' });
 });
 
 test('Fusion "Prospect Lost" for a Contacted lead (sent as Open) is a real change', async (t) => {

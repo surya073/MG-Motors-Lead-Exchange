@@ -91,9 +91,9 @@ test('flag on: a whole-lead webhook writes only the status to MG; name, Nature o
   const result = await receive(harness, WHOLE_LEAD);
   assert.equal(result.ok, true);
   assert.equal(result.scenarioCode, 'Happy 2');
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost' } }]);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
   const lead = harness.db.tables.leads[0];
-  assert.equal(lead.lead_status, 'Lost');
+  assert.equal(lead.lead_status, 'Lost Lead');
   assert.equal(lead.nature_of_enquiry, 'Test Drive');
   assert.equal(lead.email_address, 'jane@example.com');
   assert.equal(lead.postcode, '7250');
@@ -140,5 +140,5 @@ test('flag on: a GENERIC_REST dealer\'s body is processed exactly as before', as
     harness.db.app, integration, { id: fixtures.FUSION_TEST_LEAD_ID, enquiryStatus: 'Lost', leadSource: 'Walk In' }, oemCrmService
   );
   assert.equal(result.ok, true);
-  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost', Nature_of_enquiry: 'Walk In' });
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead', Nature_of_enquiry: 'Walk In' });
 });

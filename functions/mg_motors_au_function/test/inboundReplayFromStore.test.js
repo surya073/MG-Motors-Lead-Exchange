@@ -62,7 +62,7 @@ test('a held Fusion update is applied from its stored event and closed as RECOVE
   const results = await inboundReplayScheduler.runInboundReplaySweep(harness.db.app);
   assert.equal(results.attempted, 1);
   assert.equal(results.recovered, 1);
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost' } }]);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
   assert.equal(heldLog(harness).status, 'RECOVERED');
   assert.equal(harness.db.tables.webhook_events[0].processing_status, 'SUCCESS');
 });
@@ -76,7 +76,7 @@ test('the newest stored event with a status is used; a newer one without a statu
     ],
   });
   await inboundReplayScheduler.runInboundReplaySweep(harness.db.app);
-  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost' });
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead' });
 });
 
 test('an Unhappy 7 hold (update arrived before the mapping) is applied from the store once the mapping exists', async (t) => {

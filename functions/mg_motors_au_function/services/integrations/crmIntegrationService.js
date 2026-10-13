@@ -557,7 +557,7 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings, { crmType,
   if (
     leadRow.lead_status &&
     statusFieldMapping &&
-    !pathPolicy.isOemOnlyStatus(leadRow.lead_status) &&
+    !pathPolicy.isMgOnlyStatusFor(leadRow.lead_status, crmType) &&
     !leadMappingService.isInboundOnlyStatus(leadRow.lead_status, statusMappings)
   ) {
     payload[statusFieldMapping.target_field] = leadMappingService.mapStatus(
@@ -592,7 +592,7 @@ function validateIntegrationConfiguration(integration, fieldMappings, statusMapp
 
   if (
     leadStatus &&
-    !pathPolicy.isOemOnlyStatus(leadStatus) &&
+    !pathPolicy.isMgOnlyStatusFor(leadStatus, integration?.crm_type) &&
     !leadMappingService.isInboundOnlyStatus(leadStatus, statusMappings)
   ) {
     try {

@@ -75,7 +75,7 @@ test('Happy 2: a signed Fusion "Lost" reaches MG; the event is stored under its 
   const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost', first_name: 'Other', lead_source: 'Walk In' }));
   assert.equal(result.status, 200);
   assert.equal(result.body.result.scenarioCode, 'Happy 2');
-  assert.deepEqual(h.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost' } }]);
+  assert.deepEqual(h.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
   assert.equal(h.db.tables.leads[0].nature_of_enquiry, 'Test Drive');
   assert.equal(h.logs().find((log) => log.status === 'SUCCESS').happy_unhappy_path_name, 'Happy 2');
   const event = h.db.tables.webhook_events[0];

@@ -132,6 +132,11 @@ const MG_LEAD_STATUS_VALUES = Object.freeze([
   'Junk Lead',
   'Lost Lead',
   'Pre-Qualified',
+  // Added to MG's picklist by 9 Oct 2026 (oem_status_picklist, Q26). MG's
+  // labels "Dropped" and "Lost" now store Junk Lead and Lost Lead; the
+  // values Dropped and Lost stay listed for older leads and dealer maps.
+  'PMA Unassigned',
+  'Finance Intro',
 ]);
 
 // These are MG/middleware workflow states, not dealer lifecycle values.
@@ -205,6 +210,16 @@ function scenario(code, overrides = {}) {
 
 function isOemOnlyStatus(value) {
   return OEM_ONLY_STATUSES.has(normalizeStatus(value));
+}
+
+// Never sent as a Fusion SD status (Q26): PMA Unassigned is MG's "no dealer
+// yet" state, and MG's field matrix sends nothing for it. Other CRM types
+// keep needing a mapping for it, as before.
+const FUSION_MG_ONLY_STATUSES = new Set(['pma unassigned']);
+
+/** MG-only for this dealer's CRM type: never sent as a dealer status. */
+function isMgOnlyStatusFor(value, crmType) {
+  return isOemOnlyStatus(value) || (crmType === 'FUSION_SD' && FUSION_MG_ONLY_STATUSES.has(normalizeStatus(value)));
 }
 
 function getMgLeadStatusSet() {
@@ -477,6 +492,7 @@ module.exports = {
   resolveBoolean,
   scenario,
   isOemOnlyStatus,
+  isMgOnlyStatusFor,
   getMgLeadStatusSet,
   statusComponents,
   classifyDealerStatus,
