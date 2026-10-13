@@ -978,6 +978,17 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     if (escalation.newEscalation) {
       alertReason = await describeEscalation(catalystApp, integration, escalation, err, reason);
     }
+    // err.vendor is the adapter's safe copy of the dealer's error (status,
+    // problem type/title/detail/instance, Retry-After); see fusionSdAdapter.
+    const failureDetails = [
+      ...(attemptStartedAt ? [{
+        field: 'delivery_timing',
+        sent_at: attemptStartedAt.toISOString(),
+        failed_at: new Date().toISOString(),
+        duration_ms: Date.now() - attemptStartedAt.getTime(),
+      }] : []),
+      ...(err.vendor ? [{ field: 'dealer_error', ...err.vendor }] : []),
+    ];
     await writeLog(catalystApp, {
       integration_id: integration.ROWID,
       dealer_code: integration.dealer_code,
@@ -989,12 +1000,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       http_status: err.response?.status,
       error_message: reason,
       request_reference: requestReference,
-      field_changes: attemptStartedAt ? JSON.stringify([{
-        field: 'delivery_timing',
-        sent_at: attemptStartedAt.toISOString(),
-        failed_at: new Date().toISOString(),
-        duration_ms: Date.now() - attemptStartedAt.getTime(),
-      }]) : undefined,
+      field_changes: failureDetails.length ? JSON.stringify(failureDetails) : undefined,
     }, {
       scenarioCode,
       // An acknowledgement write-back failure re-marks the mapping SYNCED on

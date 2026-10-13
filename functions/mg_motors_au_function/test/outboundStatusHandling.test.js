@@ -145,3 +145,32 @@ test('the log classifier keeps Unhappy 4 for dealer -> MG status failures; outbo
     'Unhappy 4'
   );
 });
+
+// --- M5: the dealer's error details reach the failure log ---
+
+test("a failed Fusion call stores the dealer's error details in the failure log", async (t) => {
+  const { db, integration, leadRow, logs } = setup(t);
+  const vendor = {
+    status: 429,
+    type: 'https://docs.fusionamspro.com/lead-api/errors/rate_limited',
+    title: 'Too many requests',
+    instance: 'lreq_1',
+    retryAfter: 60,
+  };
+  fakeFusion(t, async () => {
+    throw Object.assign(new Error('Fusion SD rejected the lead update request (HTTP 429)'), {
+      code: 'EXTERNAL_CRM_ERROR',
+      response: { status: 429 },
+      vendor,
+    });
+  });
+
+  await assert.rejects(() => crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow()));
+
+  const log = logs().at(-1);
+  assert.equal(log.status, 'FAILED');
+  assert.equal(log.error_message, 'EXTERNAL_CRM_ERROR', 'error_message keeps the plain code');
+  const changes = JSON.parse(log.field_changes);
+  assert.ok(changes.some((change) => change.field === 'delivery_timing'));
+  assert.deepEqual(changes.find((change) => change.field === 'dealer_error'), { field: 'dealer_error', ...vendor });
+});

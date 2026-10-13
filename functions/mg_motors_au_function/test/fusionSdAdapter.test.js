@@ -700,3 +700,66 @@ test('concurrent requests that all hit a 401 share one token refresh', async (t)
   assert.ok(results.every((result) => result.externalLeadId === fixtures.FUSION_TEST_LEAD_ID));
   assert.equal(issued.count, 2, 'the first token, then one shared refresh');
 });
+
+// M5: a safe copy of Fusion's error travels on err.vendor for the failure log.
+test('a Fusion error keeps safe vendor diagnostics: status, problem fields and Retry-After', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => {
+    throw fixtures.rateLimitedError({ retryAfter: 60 });
+  });
+
+  await assert.rejects(
+    () => fusionSdAdapter.createLead({}, updateIntegration(), {}),
+    (err) => {
+      assert.equal(err.code, 'EXTERNAL_CRM_ERROR');
+      assert.deepEqual(err.vendor, {
+        status: 429,
+        type: 'https://docs.fusionamspro.com/lead-api/errors/rate_limited',
+        title: 'Too many requests',
+        detail: 'Retry after the period given in the Retry-After header.',
+        instance: 'lreq_test00000001',
+        retryAfter: 60,
+      });
+      return true;
+    }
+  );
+});
+
+test('vendor diagnostics keep a 422 type and instance, truncate long text, and carry nothing else', async (t) => {
+  mockFusionToken(t);
+  t.mock.method(axios, 'request', async () => {
+    throw fixtures.fusionProblemError('missing_contact', { detail: 'x'.repeat(1000), instance: 'lreq_abc' });
+  });
+
+  await assert.rejects(
+    () => fusionSdAdapter.createLead({}, updateIntegration(), { 'contact.email': 'jane@example.com' }),
+    (err) => {
+      assert.equal(err.code, 'FIELD_MAPPING_INVALID');
+      assert.equal(err.vendor.type, 'https://docs.fusionamspro.com/lead-api/errors/missing_contact');
+      assert.equal(err.vendor.instance, 'lreq_abc');
+      assert.equal(err.vendor.detail.length, 300);
+      assert.deepEqual(Object.keys(err.vendor).sort(), ['detail', 'instance', 'status', 'title', 'type']);
+      assert.ok(!JSON.stringify(err.vendor).includes('jane@example.com'), 'no lead data');
+      return true;
+    }
+  );
+});
+
+test('Retry-After given as an HTTP date becomes seconds; a network error has no vendor diagnostics', async (t) => {
+  mockFusionToken(t);
+  let failure = fixtures.rateLimitedError({ retryAfter: new Date(Date.now() + 90 * 1000).toUTCString() });
+  t.mock.method(axios, 'request', async () => {
+    throw failure;
+  });
+
+  await assert.rejects(
+    () => fusionSdAdapter.createLead({}, updateIntegration(), {}),
+    (err) => err.vendor.retryAfter >= 88 && err.vendor.retryAfter <= 90
+  );
+
+  failure = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  await assert.rejects(
+    () => fusionSdAdapter.createLead({}, updateIntegration(), {}),
+    (err) => err.code === 'EXTERNAL_CRM_ERROR' && err.vendor === undefined
+  );
+});

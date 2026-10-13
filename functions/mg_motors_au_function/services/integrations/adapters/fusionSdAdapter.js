@@ -99,7 +99,36 @@ function wrapFusionError(err, contextMessage) {
   );
   wrapped.code = code;
   wrapped.response = err.response ? { status: err.response.status } : undefined;
+  if (err.response) wrapped.vendor = vendorDiagnostics(err.response);
   return wrapped;
+}
+
+// Retry-After is either seconds or an HTTP date (RFC 9110); returned as seconds.
+function retryAfterSeconds(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  const text = String(value).trim();
+  if (/^\d+$/.test(text)) return Number(text);
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - Date.now()) / 1000));
+}
+
+/**
+ * A safe copy of Fusion's error for the failure log: the HTTP status, the
+ * RFC 9457 problem fields (truncated) and Retry-After. Never the request,
+ * the token or the lead payload.
+ */
+function vendorDiagnostics(response) {
+  const problem = response.data && typeof response.data === 'object' ? response.data : {};
+  const text = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : undefined);
+  const vendor = {
+    status: response.status,
+    type: text(problem.type, 200),
+    title: text(problem.title, 120),
+    detail: text(problem.detail, 300),
+    instance: text(problem.instance || problem.correlation_id, 80),
+    retryAfter: retryAfterSeconds(response.headers?.['retry-after'] ?? response.headers?.['Retry-After']),
+  };
+  return Object.fromEntries(Object.entries(vendor).filter(([, value]) => value !== undefined));
 }
 
 function isNestedGroup(value) {

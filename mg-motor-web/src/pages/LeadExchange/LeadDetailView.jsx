@@ -282,6 +282,20 @@ function errorDetailText(entry) {
   return detail || null;
 }
 
+// What the dealer CRM said about an outbound attempt, as recorded by the
+// adapter: its error (status, problem title/detail, reference id, Retry-After).
+function dealerNotes(changes) {
+  const notes = [];
+  const error = changes.find((c) => c.field === "dealer_error");
+  if (error) {
+    const said = [error.title, error.detail].filter(Boolean).join(" — ");
+    const ref = error.instance ? ` (ref ${error.instance})` : "";
+    notes.push(`Dealer${error.status ? ` HTTP ${error.status}` : ""}: ${said || "error"}${ref}`);
+    if (error.retryAfter != null) notes.push(`retry after ${error.retryAfter} s`);
+  }
+  return notes;
+}
+
 function timelineDetailText(entry) {
   const changes = parseFieldChanges(entry);
   // A failure usually carries no field changes - nothing was written. The
@@ -292,6 +306,7 @@ function timelineDetailText(entry) {
 
   const deliveryTiming = changes.find((c) => c.field === "delivery_timing");
   if (deliveryTiming) {
+    const notes = dealerNotes(changes);
     // A FAILED attempt's timing alone never says why it failed — e.g.
     // DEALER_ACK_MISSING_ID carries a diagnostic naming the dealer
     // response's actual field names, which is far more actionable than a
@@ -299,10 +314,13 @@ function timelineDetailText(entry) {
     // error detail anyway, so it keeps showing timing as before.
     if (deliveryTiming.failed_at) {
       const detail = errorDetailText(entry);
-      if (detail) return detail;
+      if (detail || notes.length > 0) return [detail, ...notes].filter(Boolean).join(" · ");
     }
     const resultTime = deliveryTiming.acknowledged_at || deliveryTiming.failed_at || "—";
-    return `Sent ${deliveryTiming.sent_at || "—"} · result ${resultTime} · ${deliveryTiming.duration_ms ?? "—"} ms`;
+    return [
+      `Sent ${deliveryTiming.sent_at || "—"} · result ${resultTime} · ${deliveryTiming.duration_ms ?? "—"} ms`,
+      ...notes,
+    ].join(" · ");
   }
 
   const duplicateLink = changes.find((c) => c.field === "duplicate_link");
