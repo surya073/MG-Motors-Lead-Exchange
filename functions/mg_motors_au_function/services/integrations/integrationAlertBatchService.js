@@ -18,8 +18,9 @@ const pathPolicy = require('./pathPolicyService');
 const ALERT_QUEUE_TABLE = 'integration_alert_queue';
 
 // A single flush never tries to cram an unbounded failure storm into one
-// email; anything beyond this stays queued for the next flush.
-const MAX_BATCH_ROWS = 500;
+// email; anything beyond this stays queued for the next flush. 300 is also
+// the most rows one ZCQL SELECT may ask for: a LIMIT above it is refused.
+const MAX_BATCH_ROWS = 300;
 const DEQUEUE_CONCURRENCY = 5;
 
 // How many queued failures trigger an immediate consolidated email.
@@ -73,7 +74,7 @@ async function flushPending(catalystApp, rows) {
 
   if (result.sent) {
     const table = catalystApp.datastore().table(ALERT_QUEUE_TABLE);
-    // A flush can hold up to MAX_BATCH_ROWS (500) rows; delete them a few at a
+    // A flush can hold up to MAX_BATCH_ROWS (300) rows; delete them a few at a
     // time, not all at once, or Catalyst answers 429 and rows stay queued.
     await mapWithConcurrency(rows, DEQUEUE_CONCURRENCY, (row) => table.deleteRow(row.ROWID).catch((err) => {
       logger.error('integrationAlertBatchService', `Failed to dequeue alert row ${row.ROWID} after sending batch email`, err);
