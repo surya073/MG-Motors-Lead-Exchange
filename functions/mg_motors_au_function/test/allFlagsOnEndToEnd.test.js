@@ -7,7 +7,7 @@ process.env.ZOHO_API_DOMAIN = process.env.ZOHO_API_DOMAIN || 'https://www.zohoap
 process.env.ZOHO_ACCOUNTS_DOMAIN = process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.in';
 process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook-token';
 
-// Review (FUSION_REMEDIATION_PLAN.md, Batches 5-10): every new switch ON at
+// Review (FUSION_REMEDIATION_PLAN.md, Batches 5-10 and Q33): every new switch ON at
 // once, as production would run after go-live, for a Fusion dealer set up
 // like Buckby MG (Batch 4 presets), with a Zoho dealer (AU008) alongside.
 // Each feature is tested on its own elsewhere; this checks that together
@@ -44,6 +44,7 @@ const ALL_FLAGS = {
   MAPPING_CACHE_PER_RUN: 'true',
   FULL_SYNC_STRICT_SNAPSHOT: 'true',
   FUSION_CHANGES_ONLY_PATCH: 'true',
+  KEEP_OUTBOUND_RETRY_ON_INBOUND: 'true',
 };
 const SECRET = generateSigningSecret();
 
