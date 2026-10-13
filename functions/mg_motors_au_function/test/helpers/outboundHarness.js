@@ -96,4 +96,16 @@ function fakeAdapter(t, { createLead, updateLead } = {}) {
   return calls;
 }
 
-module.exports = { FIELD_MAPPINGS, STATUS_MAPPINGS, LEAD, setupOutbound, fakeAdapter };
+// Sets environment variables for one test and restores them afterwards;
+// `undefined` unsets a variable.
+function withEnv(t, vars) {
+  const before = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
+  const apply = (values) => Object.entries(values).forEach(([name, value]) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  });
+  apply(vars);
+  t.after(() => apply(before));
+}
+
+module.exports = { FIELD_MAPPINGS, STATUS_MAPPINGS, LEAD, setupOutbound, fakeAdapter, withEnv };

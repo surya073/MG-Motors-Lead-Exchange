@@ -294,7 +294,14 @@ async function recordOutboundFailureAndCheckEscalation(catalystApp, integration,
   const retryCount = isNewStreak ? 1 : (parseInt(existingMapping.retry_count, 10) || 0) + 1;
   const streakStart = pathPolicy.parseTimestamp(streakStartedAt);
   const elapsedMs = streakStart ? now.getTime() - streakStart.getTime() : 0;
-  const crossesEscalationWindow = !isNewStreak && elapsedMs >= UNHAPPY_3_ESCALATION_WINDOW_MS;
+  // ESCALATION_TRANSIENT_ONLY: only a dealer-side outage (TRANSIENT) of a
+  // lead the dealer has not received yet escalates to Dealer Unavailable.
+  // Our queue being full, a create accepted without an id, and a failed
+  // update of a lead the dealer already has keep retrying without changing
+  // the lead's business status.
+  const mayEscalate = !retryPolicy.escalationTransientOnly
+    || (errorClass === 'TRANSIENT' && !existingMapping?.external_crm_lead_id);
+  const crossesEscalationWindow = mayEscalate && !isNewStreak && elapsedMs >= UNHAPPY_3_ESCALATION_WINDOW_MS;
   const wasCritical = existingMapping?.sync_status === 'FAILED_CRITICAL';
 
   // Classified policy only: stop retrying when it cannot help, or at the limits.

@@ -10,7 +10,7 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { setupOutbound, fakeAdapter } = require('./helpers/outboundHarness');
+const { setupOutbound, fakeAdapter, withEnv } = require('./helpers/outboundHarness');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const outboundRetryScheduler = require('../services/integrations/outboundRetryScheduler');
 const pathPolicy = require('../services/integrations/pathPolicyService');
@@ -19,17 +19,6 @@ const { toCatalystDateTime } = require('../utils/dateFormat');
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
-
-// Sets environment variables for one test and restores them afterwards.
-function withEnv(t, vars) {
-  const before = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
-  const apply = (values) => Object.entries(values).forEach(([name, value]) => {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  });
-  apply(vars);
-  t.after(() => apply(before));
-}
 
 const classified = (t, extra = {}) => withEnv(t, { OUTBOUND_RETRY_POLICY: 'classified', ...extra });
 
