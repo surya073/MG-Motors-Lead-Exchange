@@ -95,11 +95,16 @@ const OUR_FIELDS = [
   // deriveSourceFields). Fusion shows these enum values on its own lists.
   "enquiry_channel",
   "lead_origin",
+  // Stored when LEAD_NAME_PARTS=true; until then first_name is the full name.
+  "first_name",
+  "last_name",
 ];
 
 const DERIVED_FIELD_LABELS = {
   enquiry_channel: "Enquiry channel: Internet, Phone or Walk In, from Lead Source (enquiry_channel)",
   lead_origin: "Lead origin: always Manufacturer Lead (lead_origin)",
+  first_name: "First name, or the full name until name parts are stored (first_name)",
+  last_name: "Last name, once name parts are stored (last_name)",
 };
 
 function humanizeFieldName(field) {
@@ -189,10 +194,13 @@ const AU008_VERIFIED_STATUS_MAPPINGS = [
 // the dealer's credentials and needs no dealer code, so campaign is not sent.
 // `privacy` is an ignored key that only satisfies MG's mandatory mapping
 // (Fusion records digital consent itself). Marketing consent goes to
-// marketingOptinEmail (D1 I7). Mirrored in fusionDerivedFields.test.js.
+// marketingOptinEmail (D1 I7). First and last name go separately once the
+// backend stores them (LEAD_NAME_PARTS); until then the full name is sent as
+// the first name, as before. Mirrored in fusionDerivedFields.test.js.
 const FUSION_DEFAULT_FIELD_MAPPINGS = [
   { source_field: "enquiry_id", target_field: "refID", data_type: "string", required: true },
-  { source_field: "customer_name", target_field: "contact.firstName", data_type: "string", required: true },
+  { source_field: "first_name", target_field: "contact.firstName", data_type: "string", required: false },
+  { source_field: "last_name", target_field: "contact.lastName", data_type: "string", required: false },
   { source_field: "mobile_number", target_field: "contact.phone", data_type: "string", required: true },
   { source_field: "email_address", target_field: "contact.email", data_type: "string", required: true },
   { source_field: "postcode", target_field: "contact.areaCode", data_type: "string", required: true },

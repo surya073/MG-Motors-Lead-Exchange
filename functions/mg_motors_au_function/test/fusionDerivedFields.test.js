@@ -30,7 +30,8 @@ const { buildOutboundPayload, validateIntegrationConfiguration } = crmIntegratio
 // Mirrors FUSION_DEFAULT_FIELD_MAPPINGS in mg-motor-web DealerCRMConfig.jsx.
 const FUSION_PRESET = [
   ['enquiry_id', 'refID', 'string', true],
-  ['customer_name', 'contact.firstName', 'string', true],
+  ['first_name', 'contact.firstName', 'string', false],
+  ['last_name', 'contact.lastName', 'string', false],
   ['mobile_number', 'contact.phone', 'string', true],
   ['email_address', 'contact.email', 'string', true],
   ['postcode', 'contact.areaCode', 'string', true],
@@ -85,7 +86,7 @@ test('Fusion needs no dealer code, and a derived source covers the field it come
   assert.deepEqual(missingDeliveryMappingFields(withoutChannel, 'FUSION_SD'), ['lead_source']);
 
   for (const crmType of ['ZOHO_CRM', 'GENERIC_REST']) {
-    assert.deepEqual(missingDeliveryMappingFields(fusionSources, crmType), ['lead_source', 'dealer_code'], crmType);
+    assert.deepEqual(missingDeliveryMappingFields(fusionSources, crmType), ['customer_name', 'lead_source', 'dealer_code'], crmType);
   }
 
   const fusion = validateIntegrationConfiguration(
@@ -98,7 +99,7 @@ test('Fusion needs no dealer code, and a derived source covers the field it come
     FUSION_PRESET, STATUS_ROWS, 'Not Contacted'
   );
   assert.equal(zoho.valid, false);
-  assert.deepEqual(zoho.missingConfig, ['field:lead_source', 'field:dealer_code']);
+  assert.deepEqual(zoho.missingConfig, ['field:customer_name', 'field:lead_source', 'field:dealer_code']);
 });
 
 test('a lead source change still changes the fingerprint when only enquiry_channel is mapped', () => {
@@ -150,5 +151,5 @@ test('the save route accepts the Fusion preset for a Fusion dealer, and still re
   setup(t, 'ZOHO_CRM');
   const zoho = await saveMappings(t, FUSION_PRESET);
   assert.equal(zoho.status, 400);
-  assert.deepEqual(zoho.body.missingFields, ['lead_source', 'dealer_code']);
+  assert.deepEqual(zoho.body.missingFields, ['customer_name', 'lead_source', 'dealer_code']);
 });

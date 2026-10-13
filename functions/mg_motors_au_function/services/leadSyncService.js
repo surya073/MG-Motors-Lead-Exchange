@@ -6,7 +6,7 @@ const {
   fetchOemLeadsModifiedSince,
   updateOemLead,
 } = require('./zohoCrmService');
-const { getLeadSyncSince } = require('../config/env');
+const { getLeadSyncSince, isLeadNamePartsEnabled } = require('../config/env');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
@@ -104,6 +104,11 @@ function mapCrmRecordToLeadRow(crmRecord) {
   return {
     dealer_code: crmRecord.Franchise_Code || '',
     customer_name: [crmRecord.First_Name, crmRecord.Last_Name].filter(Boolean).join(' ') || '',
+    // LEAD_NAME_PARTS=true (config/env.js): the parts as well, so Fusion gets
+    // first and last name separately; the `leads` columns must exist first.
+    ...(isLeadNamePartsEnabled()
+      ? { first_name: crmRecord.First_Name || '', last_name: crmRecord.Last_Name || '' }
+      : {}),
     // Normalized once here, at the point the number enters the system, so
     // every downstream consumer (dealer CRM push, UI display, duplicate
     // fingerprint) sees the same canonical 04XXXXXXXX form regardless of
@@ -201,12 +206,31 @@ async function loadExistingLeadsByCrmId(catalystApp) {
   return map;
 }
 
+const NAME_PART_FIELDS = ['first_name', 'last_name'];
+
+function hasStoredNameParts(row) {
+  return NAME_PART_FIELDS.some((field) => String(row?.[field] ?? '').trim() !== '');
+}
+
+/**
+ * LEAD_NAME_PARTS: the first fill of first_name / last_name on a lead stored
+ * before the parts were kept is maintenance, like the assigned_date
+ * backfill: saved without counting as a change or reaching the dealer.
+ * Returns the fields to save, or null.
+ */
+function namePartsBackfill(existingRow, mappedRow) {
+  if (hasStoredNameParts(existingRow) || !hasStoredNameParts(mappedRow)) return null;
+  return { first_name: mappedRow.first_name, last_name: mappedRow.last_name };
+}
+
 function hasChanges(existingRow, mappedRow) {
   return Object.keys(mappedRow).some((key) => {
     // Immutable source timestamp used for duplicate timing. Older rows may
     // not have it yet; a backfill alone is not a business change and must not
     // trigger a dealer API update.
     if (key === 'assigned_date') return false;
+    // Same for name parts never stored on this row (namePartsBackfill).
+    if (NAME_PART_FIELDS.includes(key) && !hasStoredNameParts(existingRow)) return false;
     const existingValue = existingRow[key] ?? '';
     const newValue = mappedRow[key] ?? '';
     return String(existingValue) !== String(newValue);
@@ -215,6 +239,16 @@ function hasChanges(existingRow, mappedRow) {
 
 function needsAssignedDateBackfill(existingRow, mappedRow) {
   return !existingRow?.assigned_date && Boolean(mappedRow?.assigned_date);
+}
+
+// Maintenance-only fields to save on a lead with no business change: the
+// assigned_date and name-part backfills. Null when there is nothing to save.
+function maintenanceBackfill(existingRow, mappedRow) {
+  const fields = {
+    ...(needsAssignedDateBackfill(existingRow, mappedRow) ? { assigned_date: mappedRow.assigned_date } : {}),
+    ...(namePartsBackfill(existingRow, mappedRow) || {}),
+  };
+  return Object.keys(fields).length > 0 ? fields : null;
 }
 
 const NON_DELIVERED_SYNC_STATUSES = new Set([
@@ -740,17 +774,10 @@ async function runLeadSync(catalystApp, {
             sync_status: 'DUPLICATE_LINKED',
           });
           updated += 1;
-        } else if (needsAssignedDateBackfill(existingRow, mappedRow)) {
-          await table.updateRow({
-            ROWID: existingRow.ROWID,
-            assigned_date: mappedRow.assigned_date,
-            last_synced_at: now,
-          });
-          existingLeadsByCrmId.set(crmRecord.id, {
-            ...existingRow,
-            assigned_date: mappedRow.assigned_date,
-            last_synced_at: now,
-          });
+        } else if (maintenanceBackfill(existingRow, mappedRow)) {
+          const backfill = maintenanceBackfill(existingRow, mappedRow);
+          await table.updateRow({ ROWID: existingRow.ROWID, ...backfill, last_synced_at: now });
+          existingLeadsByCrmId.set(crmRecord.id, { ...existingRow, ...backfill, last_synced_at: now });
           unchanged += 1;
         } else {
           unchanged += 1;
@@ -784,20 +811,14 @@ async function runLeadSync(catalystApp, {
             ? (scenarioHoldStatus || existingRow.sync_status)
             : 'SYNCED',
         });
-      } else if (needsAssignedDateBackfill(existingRow, mappedRow)) {
+      } else if (maintenanceBackfill(existingRow, mappedRow)) {
         // Maintenance-only migration for rows created before Created_Time was
-        // mapped. Persist the real submission timestamp without classifying a
-        // business change or sending the lead back to the dealer.
-        await table.updateRow({
-          ROWID: existingRow.ROWID,
-          assigned_date: mappedRow.assigned_date,
-          last_synced_at: now,
-        });
-        existingLeadsByCrmId.set(crmRecord.id, {
-          ...existingRow,
-          assigned_date: mappedRow.assigned_date,
-          last_synced_at: now,
-        });
+        // mapped, or before name parts were stored (LEAD_NAME_PARTS). Persist
+        // the values without classifying a business change or sending the
+        // lead back to the dealer.
+        const backfill = maintenanceBackfill(existingRow, mappedRow);
+        await table.updateRow({ ROWID: existingRow.ROWID, ...backfill, last_synced_at: now });
+        existingLeadsByCrmId.set(crmRecord.id, { ...existingRow, ...backfill, last_synced_at: now });
         unchanged += 1;
       } else {
         unchanged += 1;

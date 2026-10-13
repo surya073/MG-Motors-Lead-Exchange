@@ -43,6 +43,10 @@ function parseTriState(value) {
 const DERIVED_SOURCE_FIELDS = Object.freeze({
   enquiry_channel: 'lead_source',
   lead_origin: null,
+  // Stored with LEAD_NAME_PARTS=true (config/env.js); a lead stored without
+  // them falls back to customer_name, the full name.
+  first_name: 'customer_name',
+  last_name: 'customer_name',
 });
 
 function deriveSourceFields(lead) {
@@ -50,7 +54,15 @@ function deriveSourceFields(lead) {
   let enquiryChannel = 'Internet';
   if (channel === 'phone') enquiryChannel = 'Phone';
   else if (channel === 'walkin') enquiryChannel = 'Walk In';
-  return { enquiry_channel: enquiryChannel, lead_origin: 'Manufacturer Lead' };
+  // Without stored parts the full name goes out as the first name, as it
+  // always has, and no last name is sent, so none is cleared at the dealer.
+  const hasNameParts = ['first_name', 'last_name'].some((field) => String(lead?.[field] ?? '').trim() !== '');
+  return {
+    enquiry_channel: enquiryChannel,
+    lead_origin: 'Manufacturer Lead',
+    first_name: hasNameParts ? String(lead.first_name ?? '') : String(lead?.customer_name ?? ''),
+    last_name: hasNameParts ? String(lead.last_name ?? '') : undefined,
+  };
 }
 
 // Fusion SD routes a lead by the dealer's own API credentials and does not

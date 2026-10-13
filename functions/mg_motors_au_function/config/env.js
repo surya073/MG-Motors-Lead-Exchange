@@ -140,6 +140,18 @@ function getOutboundRetryConfig() {
   };
 }
 
+/**
+ * LEAD_NAME_PARTS=true: the lead sync also stores MG's First_Name and
+ * Last_Name in the `leads` table's first_name / last_name columns, so Fusion
+ * gets the customer's first and last name separately (Q2, Batch 4). Add both
+ * columns (text) in the Catalyst console BEFORE setting this, or every lead
+ * write fails. Unset: nothing new is stored and Fusion gets the full name as
+ * its first name, as before. Read on every call.
+ */
+function isLeadNamePartsEnabled() {
+  return String(process.env.LEAD_NAME_PARTS || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -147,4 +159,5 @@ module.exports = {
   getLeadSyncSince,
   getSharedWebhookConfig,
   getOutboundRetryConfig,
+  isLeadNamePartsEnabled,
 };
