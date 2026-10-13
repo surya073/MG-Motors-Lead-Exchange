@@ -94,10 +94,10 @@ async function setup(t, crmType, storedTypes = []) {
 
 test('a Fusion dealer\'s webhook signing secret is stored as WEBHOOK_SIGNING_SECRET, trimmed', async (t) => {
   const { save, saved } = await setup(t, 'FUSION_SD');
-  const result = await save({ fusion_webhook_signing_secret: '  whsec_c2VjcmV0  ' });
+  const result = await save({ fusion_webhook_signing_secret: '  whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw  ' });
   assert.equal(result.status, 200);
-  assert.deepEqual(saved, [{ id: '1000', type: 'WEBHOOK_SIGNING_SECRET', value: 'whsec_c2VjcmV0' }]);
-  assert.equal(JSON.stringify(result.body).includes('c2VjcmV0'), false, 'the secret is never echoed');
+  assert.deepEqual(saved, [{ id: '1000', type: 'WEBHOOK_SIGNING_SECRET', value: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw' }]);
+  assert.equal(JSON.stringify(result.body).includes('MfKQ9r8G'), false, 'the secret is never echoed');
 });
 
 test('saving a Fusion dealer without a signing secret leaves the stored one alone', async (t) => {
@@ -111,7 +111,7 @@ test('the signing secret field is ignored for ZOHO_CRM and GENERIC_REST dealers'
   for (const crmType of ['ZOHO_CRM', 'GENERIC_REST']) {
     await t.test(crmType, async (st) => {
       const { save, saved } = await setup(st, crmType);
-      await save({ fusion_webhook_signing_secret: 'whsec_c2VjcmV0' });
+      await save({ fusion_webhook_signing_secret: 'whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw' });
       assert.equal(saved.some((row) => row.type === 'WEBHOOK_SIGNING_SECRET'), false);
     });
   }
@@ -137,4 +137,34 @@ test('the GET response for a ZOHO_CRM dealer is unchanged (no signing-secret key
   const result = await read();
   assert.equal(result.body.hasCredential, true);
   assert.equal(Object.prototype.hasOwnProperty.call(result.body, 'hasWebhookSigningSecret'), false);
+});
+
+// Review of Batch 5: a pasted signing secret that starts with whsec_ but is
+// not valid base64 (or decodes to almost nothing) was accepted silently, and
+// every Fusion webhook then failed with 401. It is refused at save time,
+// before anything is written, with a message the admin page shows.
+const crypto = require('crypto');
+
+test('a whsec_ secret that is not valid base64, or too short, is refused before anything is saved', async (t) => {
+  for (const bad of ['whsec_!!!not-base64!!!', 'whsec_', 'whsec_YWJj', 'whsec_YWJjZA=']) {
+    await t.test(bad, async (st) => {
+      const { save, saved } = await setup(st, 'FUSION_SD');
+      const result = await save({ fusion_webhook_signing_secret: bad, base_url: 'https://8.8.4.4/api/leadapi' });
+      assert.equal(result.status, 400);
+      assert.equal(result.body.field, 'fusion_webhook_signing_secret');
+      assert.match(result.body.message, /signing secret/i);
+      assert.deepEqual(saved, [], 'no credential written');
+    });
+  }
+});
+
+test('a valid whsec_ secret and a plain secret are both accepted', async (t) => {
+  for (const good of [`whsec_${crypto.randomBytes(24).toString('base64')}`, 'a-plain-shared-signing-secret-value']) {
+    await t.test(good.slice(0, 12), async (st) => {
+      const { save, saved } = await setup(st, 'FUSION_SD');
+      const result = await save({ fusion_webhook_signing_secret: good });
+      assert.equal(result.status, 200);
+      assert.equal(saved.length, 1);
+    });
+  }
 });

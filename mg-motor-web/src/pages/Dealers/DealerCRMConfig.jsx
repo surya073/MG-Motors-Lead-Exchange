@@ -933,8 +933,9 @@ export default function DealerCRMConfig() {
       clearSaveSuccessSoon();
     } catch (err) {
       const response = err?.response?.data;
-      const message = response?.field === "base_url" && response?.message
-        ? `Base URL: ${response.message}`
+      const fieldLabels = { base_url: "Base URL", fusion_webhook_signing_secret: "Webhook signing secret" };
+      const message = fieldLabels[response?.field] && response?.message
+        ? `${fieldLabels[response.field]}: ${response.message}`
         : response?.error || "Couldn't save the configuration. Try again.";
       showAlert("error", message, {
         title: "Save failed",

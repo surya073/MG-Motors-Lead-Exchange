@@ -117,6 +117,29 @@ function signingKeys(secret) {
   return keys;
 }
 
+// Standard Webhooks secrets are 24 to 64 random bytes; fewer than this is
+// almost certainly a copy-and-paste slip.
+const MIN_SIGNING_KEY_BYTES = 16;
+
+/**
+ * Why a signing secret an admin is saving cannot work, or null. Only the
+ * whsec_<base64> form can be checked: its key must be valid base64 of at
+ * least MIN_SIGNING_KEY_BYTES. A secret without the prefix is used as given
+ * (its encoding is unconfirmed, Q20).
+ */
+function signingSecretProblem(secret) {
+  const text = String(secret || '').trim();
+  if (!text.startsWith('whsec_')) return null;
+  const encoded = text.slice('whsec_'.length);
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+    return 'The signing secret starts with whsec_ but what follows is not valid base64. Paste it exactly as Fusion issued it.';
+  }
+  if (Buffer.from(encoded, 'base64').length < MIN_SIGNING_KEY_BYTES) {
+    return 'The signing secret is too short to be a Standard Webhooks secret. Paste it exactly as Fusion issued it.';
+  }
+  return null;
+}
+
 function signStandardWebhook(key, webhookId, timestamp, rawBody) {
   return crypto
     .createHmac('sha256', key)
@@ -270,6 +293,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
 module.exports = {
   verifyWebhook,
   signStandardWebhook,
+  signingSecretProblem,
   computeHmac,
   deriveZohoWatchToken,
   verifyZohoWatchToken,

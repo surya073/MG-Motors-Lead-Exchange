@@ -13,6 +13,7 @@ const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
 const pathPolicy = require('../services/integrations/pathPolicyService');
+const { signingSecretProblem } = require('../services/integrations/webhookVerificationService');
 
 const crypto = require('crypto');
 
@@ -159,6 +160,16 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       const reason = await unsafeBaseUrlReason(body.base_url);
       if (reason) {
         return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'base_url', message: reason });
+      }
+    }
+    // Checked before anything is written (Batch 5 review): a malformed
+    // whsec_ secret would make every Fusion webhook fail with 401.
+    if (isFusionSd && String(body.fusion_webhook_signing_secret || '').trim()) {
+      const secretProblem = signingSecretProblem(body.fusion_webhook_signing_secret);
+      if (secretProblem) {
+        return res.status(400).json({
+          error: 'INVALID_CRM_CONFIGURATION', field: 'fusion_webhook_signing_secret', message: secretProblem,
+        });
       }
     }
     const table = catalystApp.datastore().table('dealer_integrations');
