@@ -190,3 +190,50 @@ test('adapter, flag off: requests are sent exactly as before, 429 or not', async
   await fusionSdAdapter.updateLead({}, integration, 'lead_1', { enquiryStatus: 'Open' });
   assert.deepEqual(sent, ['POST', 'PATCH']);
 });
+
+// Review of Batch 8: the Catalyst SDK's put() is an insert (POST) and
+// update() a separate PUT, and a read of a missing key may fail. The budget
+// must be shared correctly whichever way the live cache behaves, and a cache
+// problem must not write an error log line on every Fusion request.
+const logger = require('../utils/logger');
+
+function strictCache() {
+  const store = new Map();
+  const segment = {
+    put: async (key, value) => { if (store.has(key)) throw new Error('Cache key already exists'); store.set(key, String(value)); return {}; },
+    update: async (key, value) => { if (!store.has(key)) throw new Error('No such cache key'); store.set(key, String(value)); return {}; },
+    getValue: async (key) => { if (!store.has(key)) throw new Error('No such cache key'); return store.get(key); },
+  };
+  return { app: () => ({ cache: () => ({ segment: () => segment }) }), store };
+}
+
+test('review: an insert-only cache still shares one budget across instances', async (t) => {
+  withEnv(t, { FUSION_RATE_BUDGET: 'true', FUSION_RATE_LIMIT_PER_MINUTE: '10', FUSION_RATE_HEADROOM: '1' });
+  t.mock.method(logger, 'error', () => {});
+  fusionRateBudget._resetForTests();
+  const cache = strictCache();
+  await spend(cache.app(), 6, WINDOW_START);
+  assert.equal(cache.store.get(`fusion_rate_1001_${Math.floor(WINDOW_START / 60000)}`), '6');
+  fusionRateBudget._resetForTests(); // another instance
+  await spend(cache.app(), 4, WINDOW_START);
+  await assert.rejects(fusionRateBudget.takeSlot(cache.app(), FUSION, WINDOW_START), { code: 'FUSION_RATE_BUDGET_EXHAUSTED' });
+});
+
+test('review: a 429 cool-down is shared through an insert-only cache, even when renewed', async (t) => {
+  withEnv(t, { FUSION_RATE_BUDGET: 'true' });
+  t.mock.method(logger, 'error', () => {});
+  fusionRateBudget._resetForTests();
+  const cache = strictCache();
+  await fusionRateBudget.recordRateLimited(cache.app(), FUSION, 30, WINDOW_START);
+  await fusionRateBudget.recordRateLimited(cache.app(), FUSION, 90, WINDOW_START + 1000);
+  fusionRateBudget._resetForTests();
+  await assert.rejects(fusionRateBudget.takeSlot(cache.app(), FUSION, WINDOW_START + 60000), { code: 'FUSION_COOLDOWN' });
+});
+
+test('review: an unreachable cache logs one error a minute, not one per request', async (t) => {
+  withEnv(t, { FUSION_RATE_BUDGET: 'true', FUSION_RATE_LIMIT_PER_MINUTE: '100', FUSION_RATE_HEADROOM: '1' });
+  fusionRateBudget._resetForTests();
+  const errors = t.mock.method(logger, 'error', () => {});
+  await spend(fakeCache({ failing: true }).app(), 20, WINDOW_START);
+  assert.equal(errors.mock.callCount(), 1);
+});

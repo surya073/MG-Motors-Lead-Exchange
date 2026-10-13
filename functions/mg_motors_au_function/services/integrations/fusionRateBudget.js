@@ -45,25 +45,46 @@ function segmentOf(catalystApp) {
   }
 }
 
+// A cache problem is logged at most once a minute per instance, not on every
+// Fusion request.
+const CACHE_ERROR_LOG_INTERVAL_MS = 60000;
+let lastCacheErrorLoggedAt = 0;
+
+function logCacheProblem(what, err) {
+  const now = Date.now();
+  if (now - lastCacheErrorLoggedAt < CACHE_ERROR_LOG_INTERVAL_MS) return;
+  lastCacheErrorLoggedAt = now;
+  logger.error('fusionRateBudget', `Catalyst Cache ${what} failed; using this instance's count (logged once a minute)`, err);
+}
+
+// A key nobody has written yet may come back empty or as an error,
+// depending on the Catalyst API; either way it counts as absent.
 async function cacheGet(segment, key) {
   if (!segment) return null;
   try {
     const value = await segment.getValue(key);
     return value === undefined || value === null || value === '' ? null : String(value);
-  } catch (err) {
-    logger.error('fusionRateBudget', `Catalyst Cache read failed for ${key}; using this instance's count`, err);
+  } catch {
     return null;
   }
 }
 
+// The SDK's put() inserts (POST) and update() replaces (PUT). Try update
+// first (one call once the key exists), then put for a new key, so this
+// works whether or not the live cache lets put() overwrite.
 async function cachePut(segment, key, value) {
   if (!segment) return false;
   try {
-    await segment.put(key, String(value), CACHE_EXPIRY_HOURS);
+    await segment.update(key, String(value), CACHE_EXPIRY_HOURS);
     return true;
-  } catch (err) {
-    logger.error('fusionRateBudget', `Catalyst Cache write failed for ${key}; using this instance's count`, err);
-    return false;
+  } catch {
+    try {
+      await segment.put(key, String(value), CACHE_EXPIRY_HOURS);
+      return true;
+    } catch (err) {
+      logCacheProblem(`write of ${key}`, err);
+      return false;
+    }
   }
 }
 
@@ -126,6 +147,7 @@ function isLimitError(err) {
 function _resetForTests() {
   localCounts.clear();
   localCooldowns.clear();
+  lastCacheErrorLoggedAt = 0;
 }
 
 module.exports = { takeSlot, recordRateLimited, budgetPerMinute, isLimitError, _resetForTests, _test: { limitError } };
