@@ -19,6 +19,20 @@ function isTrue(value) {
   return value === true || String(value).toLowerCase() === 'true' || String(value) === '1';
 }
 
+/**
+ * Reads a yes/no value as true, false or unknown (undefined). Anything that
+ * is not clearly one or the other is unknown, so a consent nobody recorded
+ * is never turned into a refusal. Unlike isTrue(), it never defaults to
+ * false (audit H1).
+ */
+function parseTriState(value) {
+  if (value === true || value === false) return value;
+  const text = String(value ?? '').trim().toLowerCase();
+  if (['true', 'yes', 'y', '1'].includes(text)) return true;
+  if (['false', 'no', 'n', '0'].includes(text)) return false;
+  return undefined;
+}
+
 function mapZohoLeadToExternal(zohoLead, fieldMappings, { excludeSourceFields = [] } = {}) {
   const payload = {};
   const missingRequired = [];
@@ -244,6 +258,7 @@ function mapStatus(status, statusMappings, direction, options = {}) {
 }
 
 module.exports = {
+  parseTriState,
   mapZohoLeadToExternal,
   mapExternalLeadToZoho,
   mapStatus,

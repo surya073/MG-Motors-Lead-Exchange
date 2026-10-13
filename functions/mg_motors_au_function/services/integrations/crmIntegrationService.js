@@ -483,7 +483,46 @@ async function handleConsentMismatch(catalystApp, integration, leadRow, zohoLead
 
 
 
-function buildOutboundPayload(leadRow, fieldMappings, statusMappings) {
+const FUSION_LOST_STATUSES = new Set(['lost', 'prospect lost']);
+
+/**
+ * Fusion SD only (audit H1, FUSION_REMEDIATION_PLAN.md Batch 4):
+ * - a boolean field goes out as true or false; an unknown or unreadable
+ *   value is left out, which Fusion records as "unstated", never as false;
+ * - a create leaves out optional fields that are empty (an update still
+ *   sends them: clearing a value is Batch 10's change);
+ * - lostReason goes out only with a lost status, which is the only time
+ *   Fusion applies it, and only when it has a value.
+ */
+function applyFusionPayloadRules(payload, fieldMappings, operation) {
+  fieldMappings
+    .filter((mapping) => mapping.data_type === 'boolean' && Object.hasOwn(payload, mapping.target_field))
+    .forEach((mapping) => {
+      const value = leadMappingService.parseTriState(payload[mapping.target_field]);
+      if (value === undefined) delete payload[mapping.target_field];
+      else payload[mapping.target_field] = value;
+    });
+
+  if (operation === 'CREATE_LEAD') {
+    Object.keys(payload).forEach((key) => {
+      const value = payload[key];
+      if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+        delete payload[key];
+      }
+    });
+  }
+
+  if (Object.hasOwn(payload, 'lostReason')) {
+    const statusField = fieldMappings.find((mapping) => mapping.source_field === 'lead_status')?.target_field;
+    const fusionStatus = statusField ? pathPolicy.normalizeStatus(payload[statusField]) : '';
+    if (!FUSION_LOST_STATUSES.has(fusionStatus) || !String(payload.lostReason ?? '').trim()) {
+      delete payload.lostReason;
+    }
+  }
+  return payload;
+}
+
+function buildOutboundPayload(leadRow, fieldMappings, statusMappings, { crmType, operation } = {}) {
   // lead_status must be transformed exactly once, into the target field
   // selected by the admin. The previous implementation first copied the
   // raw value through the field map and then wrote the translated value to
@@ -520,6 +559,7 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings) {
     );
   }
 
+  if (crmType === 'FUSION_SD') applyFusionPayloadRules(payload, fieldMappings, operation);
   return payload;
 }
 
@@ -950,7 +990,10 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       configError.code = 'INVALID_CRM_CONFIGURATION';
       throw configError;
     }
-    const payload = buildOutboundPayload(leadRow, fieldMappings, statusMappings);
+    const payload = buildOutboundPayload(leadRow, fieldMappings, statusMappings, {
+      crmType: integration.crm_type,
+      operation,
+    });
     const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
     const enquiryIdFieldMapping = fieldMappings.find(
       (mapping) => mapping.source_field === 'enquiry_id' && mapping.target_field

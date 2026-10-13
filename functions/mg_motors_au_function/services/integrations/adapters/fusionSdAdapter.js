@@ -210,9 +210,39 @@ async function sendWithTokenRetry(catalystApp, integration, send) {
   }
 }
 
+// Fusion refuses request bodies over 32 KB. A lead that large is carrying
+// long free text (a customer message or chat transcript an admin mapped), so
+// the longest text values are shortened, with a marker, until the body fits
+// and the lead is still delivered (answer to Q2). The same input always gives
+// the same body, so a retry repeats it under the same Idempotency-Key.
+const MAX_BODY_BYTES = 32000;
+const TRUNCATION_MARKER = ' [truncated]';
+
+function bodyWithinLimit(payload) {
+  let body = nestDottedKeys(payload);
+  let size = Buffer.byteLength(JSON.stringify(body));
+  if (size <= MAX_BODY_BYTES) return body;
+
+  const trimmed = { ...payload };
+  const shortened = [];
+  while (size > MAX_BODY_BYTES) {
+    const [key, value] = Object.entries(trimmed)
+      .filter(([, v]) => typeof v === 'string')
+      .sort(([, a], [, b]) => Buffer.byteLength(b) - Buffer.byteLength(a))[0] || [];
+    if (!key || value.length <= TRUNCATION_MARKER.length) break; // nothing left to shorten
+    const keep = Math.max(0, value.length - (size - MAX_BODY_BYTES) - TRUNCATION_MARKER.length - 8);
+    trimmed[key] = `${value.slice(0, keep)}${TRUNCATION_MARKER}`;
+    if (!shortened.includes(key)) shortened.push(key);
+    body = nestDottedKeys(trimmed);
+    size = Buffer.byteLength(JSON.stringify(body));
+  }
+  logger.info('fusionSdAdapter', `Body over ${MAX_BODY_BYTES} bytes; shortened: ${shortened.join(', ')} (now ${size} bytes)`);
+  return body;
+}
+
 async function createLead(catalystApp, integration, payload, { idempotencyKey } = {}) {
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
-  const body = nestDottedKeys(payload);
+  const body = bodyWithinLimit(payload);
 
   const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
     method: integration.http_method || 'POST',
@@ -338,7 +368,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
     throw err;
   }
   const url = await assertSafeUrl(`${integration.base_url}${updatePath(integration, externalLeadId)}`);
-  const body = nestDottedKeys(payload);
+  const body = bodyWithinLimit(payload);
 
   const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
     method: 'PATCH',
