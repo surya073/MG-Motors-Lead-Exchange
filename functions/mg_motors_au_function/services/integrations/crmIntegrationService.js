@@ -22,6 +22,7 @@ const {
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
 const { cachedForRun } = require('./mappingRunCache');
+const sentPayloadSnapshot = require('./sentPayloadSnapshot');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -1133,10 +1134,16 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
         : {}),
     };
 
+    let mappingRowId = existingMapping?.ROWID;
     if (existingMapping) {
       await mappingTable.updateRow({ ROWID: existingMapping.ROWID, ...mappingUpdate });
     } else {
-      await mappingTable.insertRow(mappingUpdate);
+      mappingRowId = (await mappingTable.insertRow(mappingUpdate))?.ROWID;
+    }
+    // FUSION_CHANGES_ONLY_PATCH (Batch 10): keep the full payload just sent,
+    // so the next update can send only what changed. Never fails the sync.
+    if (sentPayloadSnapshot.usesChangesOnlyPatch(integration)) {
+      await sentPayloadSnapshot.store(catalystApp, mappingRowId, payload);
     }
 
     // Happy 1 is complete only after MG records the dealer acknowledgement.

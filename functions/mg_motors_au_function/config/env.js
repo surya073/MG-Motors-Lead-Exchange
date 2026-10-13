@@ -302,6 +302,18 @@ function isFullSyncStrictSnapshotEnabled() {
   return String(process.env.FULL_SYNC_STRICT_SNAPSHOT || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * FUSION_CHANGES_ONLY_PATCH=true: a Fusion SD update sends only the fields
+ * that changed since the last payload sent (kept, encrypted, in
+ * lead_integrations.last_sent_payload), and a dealer change applied to MG
+ * updates that snapshot, so an MG edit never re-sends a status over the
+ * dealer's own (FUSION_REMEDIATION_PLAN.md, Batch 10). Add the column first.
+ * Read on every call.
+ */
+function isFusionChangesOnlyPatchEnabled() {
+  return String(process.env.FUSION_CHANGES_ONLY_PATCH || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -323,4 +335,5 @@ module.exports = {
   isDurableSyncCheckpointEnabled,
   isMappingCachePerRunEnabled,
   isFullSyncStrictSnapshotEnabled,
+  isFusionChangesOnlyPatchEnabled,
 };
