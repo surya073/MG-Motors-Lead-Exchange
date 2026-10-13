@@ -238,6 +238,12 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Q13 | Buckby MG (725001), the dealer currently in focus, points at Fusion's QA environment (`https://qa.fusionamspro.com/api/leadapi`, read 13 Oct 2026). Should it move to Fusion's production URL, and when? | Buckby go-live (admin config change) |
 | Q14 | Which Source values does each Fusion dealer have? Batch 4 sends MG's Nature of Enquiry as Fusion `leadSource`. Fusion confirmed "Test Drive"; other values (Service Booking, General Enquiry, …) appear in the lead's notes once Fusion's change ships. | Display only |
 | Q15 | Is MG's `Receive_Offers_Updates` a checkbox (always true or false), or can it be left unanswered? The lead sync stores false when Zoho has no value, for every dealer. Batch 4 left that alone and only stops Fusion receiving a value that is not clearly true or false. If MG can leave it unanswered, the sync must store "unknown" instead. | Consent accuracy for all dealers |
+| Q16 | Which Fusion webhook fields may update MG? With the Batch 4 preset, Fusion's lead_source would overwrite MG's Nature of Enquiry, and phone formatting differences would raise Unhappy 6 alerts. | Batch 5 translator |
+| Q17 | A webhook for a `lead_id` MG never sent (a lead the dealer created itself): hold it as Unhappy 7 or acknowledge it silently? | Batch 5 |
+| Q18 | Fusion's `dealer_id` is "your own id for this dealer if you gave them one, otherwise ours". Reject an event whose `dealer_id` isn't MG's dealer code? | Batch 5 |
+| Q19 | A Fusion dealer with both a signing secret and an `X-Webhook-Token` secret: require both, or the signature plus the token only when it is sent? | Batch 5 verifier |
+| Q20 | Fusion: a real signed sample from Buckby's production account, to confirm (a) the signing secret's encoding (`whsec_<base64>` or plain), (b) that `lead.updated` carries the same `lead_id` as Fusion's 201 to our create, and (c) that `status` uses the enquiryStatus words (Open, Won, Delivered, Lost, Prospect Lost) rather than the dealer's own status names. | Switching `FUSION_INBOUND_V2` on |
+| Q21 | Buckby MG's 6 lead mappings were all sent at or before the 12:16 switch to Fusion production (13 Oct), so their Fusion `lead_id`s are probably QA ids. Production webhooks will not match them (Unhappy 7). Re-deliver those leads to production? | Buckby inbound for existing leads |
 
 ### Answers (13 Oct 2026)
 
@@ -262,6 +268,10 @@ Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
 | Q10, Q11 | Keep Batch 3's safe handling. Ask Fusion. | Open (Fusion) |
 | Q12 | Keep it Fusion-only. No GENERIC_REST dealer exists (13 Oct). | Revisit when one is onboarded |
 | Q13 | Answered by the switch itself: Buckby MG (725001) moved to Fusion production (`https://app.fusionamspro.com/api/leadapi`) at 12:16 on 13 Oct 2026, with inbound turned on. 568026 stays on QA. | None |
+| Q16 | Status only. Every other webhook field is ignored for Fusion (13 Oct 2026). | Batch 5 |
+| Q17 | Keep today's Unhappy 7 hold (one alert per lead, answered 202). It can't be replayed for Fusion before Batch 6. | Batch 5 |
+| Q18 | Log a mismatch, don't reject. Reject only when `dealer_id` is a different MG dealer's code. The per-dealer signing secret already proves the sender. | Batch 5 |
+| Q19 | A valid signature is required; an `X-Webhook-Token` header, when sent, must also match. | Batch 5 |
 
 Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
