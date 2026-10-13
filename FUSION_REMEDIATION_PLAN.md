@@ -254,6 +254,7 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Q29 | Lead outcome: the matrix maps Fusion Won > Delivered to Retail Order, Fleet Order or On-Sold Demo (which one is not knowable), Lost → Lost, Test Drive → a `testdrive` activity; it notes "Ask Fusion" for a Retail/Fleet field and a department field. It also sends Update Pending as Open (Q1 leaves it out) and PMA Unassigned as nothing. | Enquiry outcome (Q1 left it out) |
 | Q30 | Batch 8's 15 s timeout on MG Zoho calls: on by default, or off until `ZOHO_API_TIMEOUT_MS` is set? It changes behaviour for every dealer (AU008 too). | Batch 8 |
 | Q31 | Batch 8's heavier items: S4's dirty marker (`pending_resync`, a new `lead_integrations` column) and L6 (credential save race and AES-GCM AAD, which needs every stored credential re-encrypted). Include them? | Batch 8 |
+| Q32 | Batch 10's changes-only PATCH: when an MG text field is emptied, clear it at Fusion (send `null`, the plan's "explicit clears become null") or leave Fusion's value (omit it)? | Batch 10 |
 
 ### Answers (13 Oct 2026)
 
@@ -290,6 +291,7 @@ Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
 | Q30 | Off until `ZOHO_API_TIMEOUT_MS` is set (suggested value 15000). | Batch 8 |
 | Q31 | Skip both for now; they stay as follow-ups. Batch 8 needs no schema change and never touches stored credentials. | Follow-up |
 | Q26 | Fixed on `fusion/batch-8-rate-limits` (`598bee8`). PMA Unassigned and Finance Intro are valid MG statuses (Dropped and Lost stay valid). The Fusion preset maps Fusion Lost ↔ MG Lost Lead (inbound only; 568026's live map already does) and sends Finance Intro as Open. For Fusion only, PMA Unassigned is never sent as a status (all 35 such leads had no dealer on 13 Oct). AU008's map (Lost Lead↔Lost Lead, Dropped↔Dropped, Lost↔Lost (final)) is untouched. Finance Intro → Open is an assumption from Q1 (every worked status goes out as Open); MG to confirm. | Admin: re-load and save the Fusion status map for Buckby MG (725001), which still has Fusion Lost → MG Contacted |
+| Q32 | Leave Fusion's value: an emptied MG field is omitted, never sent as `null`, as Batch 4 already does. Consent and status are never cleared. | Batch 10 |
 
 Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
