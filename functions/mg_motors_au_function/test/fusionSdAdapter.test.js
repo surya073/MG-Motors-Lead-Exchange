@@ -805,3 +805,30 @@ test('the update summary is trimmed, and absent when Fusion reports none of thos
   body = { status: 200, data: { lead_id: fixtures.FUSION_TEST_LEAD_ID, enquiry_updated: true }, headers: {} };
   assert.equal((await fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, {})).dealerResponse, undefined);
 });
+
+// Buckby MG (725001), 12-13 Oct 2026: Fusion's token endpoint twice took
+// over 10 s to answer and the deliveries were logged AUTHENTICATION_FAILED,
+// which reads as wrong keys. A timeout or a connection that cannot be made
+// is a connection problem, labelled like one on create and update.
+test('a token request that times out or cannot connect is a connection error, not AUTHENTICATION_FAILED', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'super-secret-key');
+  let failure = Object.assign(new Error('timeout of 10000ms exceeded'), { code: 'ECONNABORTED' });
+  t.mock.method(axios, 'post', async () => {
+    throw failure;
+  });
+
+  for (const networkError of [failure, Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })]) {
+    failure = networkError;
+    await assert.rejects(
+      () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, updateIntegration()),
+      (err) => {
+        assert.equal(err.code, 'EXTERNAL_CRM_ERROR', networkError.code);
+        assert.equal(err.response, undefined, 'no HTTP status, so it is retried as temporary');
+        assert.match(err.message, /did not respond/);
+        assert.ok(!JSON.stringify(err).includes('super-secret-key'));
+        return true;
+      }
+    );
+  }
+});

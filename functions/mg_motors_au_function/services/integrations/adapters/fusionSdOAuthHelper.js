@@ -77,8 +77,15 @@ async function requestNewToken(catalystApp, integration) {
       'fusionSdOAuthHelper',
       `Token request failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
     );
-    const wrapped = new Error('Failed to obtain Fusion SD access token');
-    wrapped.code = 'AUTHENTICATION_FAILED';
+    // Fusion answered with an error: the keys or the client are refused. No
+    // answer at all (a timeout or a connection that could not be made) is a
+    // connection problem, labelled as createLead/updateLead label one, so it
+    // is not mistaken for wrong keys; it has no status and is retried as
+    // temporary.
+    const wrapped = err.response
+      ? new Error('Failed to obtain Fusion SD access token')
+      : new Error('Fusion SD token endpoint did not respond');
+    wrapped.code = err.response ? 'AUTHENTICATION_FAILED' : 'EXTERNAL_CRM_ERROR';
     // Only the HTTP status is kept, so Test Connection can show it. A network
     // error has no response and therefore no status.
     if (err.response) wrapped.response = { status: err.response.status };
