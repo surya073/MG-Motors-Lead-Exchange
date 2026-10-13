@@ -269,9 +269,15 @@ async function runInboundReplaySweepInternal(catalystApp) {
       const leadMapping = mappingRows[0][LEAD_INTEGRATIONS_TABLE];
 
       const integration = await getIntegration(integrationId);
-      // A dealer CRM that cannot be read back (Fusion SD) cannot be replayed:
-      // its held rows are left untouched rather than failing on every sweep.
-      if (!integration || (integration.crm_type && !crmAdapterFactory.supports(integration.crm_type, 'getLead'))) {
+      // A dealer CRM that cannot be read back (Fusion SD) is replayed from its
+      // stored webhook events when INBOUND_EVENT_STORE is on (Batch 6);
+      // otherwise its held rows are left untouched rather than failing on
+      // every sweep.
+      const readable = Boolean(integration) &&
+        (!integration.crm_type || crmAdapterFactory.supports(integration.crm_type, 'getLead'));
+      const fromStoredEvents = Boolean(integration) && !readable &&
+        crmIntegrationService.canReplayFromStoredEvents(integration);
+      if (!integration || (!readable && !fromStoredEvents)) {
         results.stillWaiting += 1;
         continue;
       }
@@ -297,13 +303,21 @@ async function runInboundReplaySweepInternal(catalystApp) {
 
       results.attempted += 1;
       replaysByDealer.set(integrationId, (replaysByDealer.get(integrationId) || 0) + 1);
-      const replay = await crmIntegrationService.replayInboundLead(
-        catalystApp,
-        integration,
-        externalLeadId,
-        undefined,
-        { replay: true }
-      );
+      const replay = fromStoredEvents
+        ? await crmIntegrationService.replayInboundLeadFromStoredEvent(
+          catalystApp,
+          integration,
+          externalLeadId,
+          undefined,
+          { replay: true }
+        )
+        : await crmIntegrationService.replayInboundLead(
+          catalystApp,
+          integration,
+          externalLeadId,
+          undefined,
+          { replay: true }
+        );
 
       if (replay?.held) {
         await markReplayAttempted(catalystApp, logRows[0]);

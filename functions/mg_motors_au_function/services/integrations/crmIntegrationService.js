@@ -1684,6 +1684,24 @@ async function recordScenario(catalystApp, {
  * resolved (mapping, status sync, write-back, logging) is identical
  * for both, and lives in processResolvedInboundLead().
  */
+/**
+ * The dealer lead id and the flat record the shared inbound path maps, from a
+ * (non-Zoho) webhook body. Fusion SD posts a flat body keyed by lead_id, and
+ * only its status comes back to MG (Batch 5, Q16; FUSION_INBOUND_V2 only).
+ * `hasStatus` is false only for a Fusion body without a status.
+ */
+function resolveInboundRecord(integration, externalPayload, fieldMappings) {
+  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled()) {
+    const translated = translateFusionWebhook(externalPayload, fieldMappings);
+    return {
+      externalLeadId: translated.externalLeadId,
+      record: translated.record,
+      hasStatus: Object.prototype.hasOwnProperty.call(translated.record, translated.statusTarget),
+    };
+  }
+  return { externalLeadId: externalPayload.id || externalPayload.leadId, record: externalPayload, hasStatus: true };
+}
+
 async function processInboundWebhook(catalystApp, integration, externalPayload, zohoCrmService) {
   if (integration.crm_type === 'ZOHO_CRM') {
     return processInboundWebhookForZohoCrm(catalystApp, integration, externalPayload, zohoCrmService);
@@ -1693,23 +1711,15 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
   const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
 
-  let externalLeadId = externalPayload.id || externalPayload.leadId;
-  let externalRecord = externalPayload;
-  // Fusion SD posts a flat body keyed by lead_id; only its status comes back
-  // to MG (Batch 5, Q16). FUSION_INBOUND_V2 only.
-  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled()) {
-    const translated = translateFusionWebhook(externalPayload, fieldMappings);
-    externalLeadId = translated.externalLeadId;
-    externalRecord = translated.record;
-    if (externalLeadId && !Object.prototype.hasOwnProperty.call(externalRecord, translated.statusTarget)) {
-      // Notes, activities and the like: nothing for MG to take, and nothing
-      // to hold. Acknowledged so Fusion does not retry it.
-      logger.info(
-        'crmIntegrationService',
-        `Fusion webhook for ${externalLeadId} (dealer ${integration.dealer_code}) has no status; nothing to apply to MG`
-      );
-      return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
-    }
+  const { externalLeadId, record: externalRecord, hasStatus } = resolveInboundRecord(integration, externalPayload, fieldMappings);
+  if (externalLeadId && !hasStatus) {
+    // Fusion notes, activities and the like: nothing for MG to take, and
+    // nothing to hold. Acknowledged so Fusion does not retry it.
+    logger.info(
+      'crmIntegrationService',
+      `Fusion webhook for ${externalLeadId} (dealer ${integration.dealer_code}) has no status; nothing to apply to MG`
+    );
+    return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
   }
   if (!externalLeadId) {
     await writeLog(catalystApp, {
@@ -1869,6 +1879,64 @@ async function replayInboundLead(
     null,
     { replay }
   );
+}
+
+/**
+ * Whether held updates for this dealer are replayed from stored webhook
+ * events: a CRM that cannot be read back (Fusion SD) with
+ * INBOUND_EVENT_STORE on (Batch 6, audit M8).
+ */
+function canReplayFromStoredEvents(integration) {
+  return usesInboundEventStore(integration) && !crmAdapterFactory.supports(integration.crm_type, 'getLead');
+}
+
+const STORED_EVENTS_TO_SCAN = 10;
+
+/**
+ * Replays a held dealer update from the newest stored webhook event for that
+ * dealer lead that carries a status (newer events may hold only notes). The
+ * event that was applied is marked SUCCESS. Returns a held result, writing
+ * nothing, when no usable event is stored.
+ */
+async function replayInboundLeadFromStoredEvent(
+  catalystApp, integration, externalLeadId, zohoCrmService = oemCrmService, { replay = true } = {}
+) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${WEBHOOK_EVENTS_TABLE} WHERE integration_id = ${integration.ROWID} AND external_lead_id = '${safeQuoteForZcql(externalLeadId)}' ORDER BY CREATEDTIME DESC, ROWID DESC LIMIT ${STORED_EVENTS_TO_SCAN}`
+  );
+  const [fieldMappings, statusMappings] = await Promise.all([
+    getFieldMappings(catalystApp, integration.ROWID),
+    getStatusMappings(catalystApp, integration.ROWID),
+  ]);
+
+  for (const wrapped of rows) {
+    const event = wrapped[WEBHOOK_EVENTS_TABLE];
+    if (!event.payload_encrypted) continue;
+    let payload;
+    try {
+      payload = JSON.parse(integrationAuthService.decrypt(event.payload_encrypted));
+    } catch (err) {
+      logger.error('crmIntegrationService', `Stored webhook event ${event.ROWID} could not be read; skipped`, err);
+      continue;
+    }
+    if (!payload || typeof payload !== 'object') continue;
+    const resolved = resolveInboundRecord(integration, payload, fieldMappings);
+    if (String(resolved.externalLeadId || '') !== String(externalLeadId) || !resolved.hasStatus) continue;
+
+    const result = await processResolvedInboundLead(
+      catalystApp, integration, externalLeadId, resolved.record,
+      fieldMappings, statusMappings, crypto.randomUUID(), zohoCrmService, null, { replay }
+    );
+    if (!result?.held) {
+      try {
+        await markWebhookEventStatus(catalystApp, event.ROWID, 'SUCCESS');
+      } catch (err) {
+        logger.error('crmIntegrationService', `Could not mark stored webhook event ${event.ROWID} SUCCESS`, err);
+      }
+    }
+    return result;
+  }
+  return { skipped: true, held: true, reason: 'NO_STORED_EVENT' };
 }
 
 /**
@@ -2668,6 +2736,8 @@ module.exports = {
   replayStoppedLead,
   processInboundWebhook,
   replayInboundLead,
+  replayInboundLeadFromStoredEvent,
+  canReplayFromStoredEvents,
   checkAndRecordWebhookEvent,
   markWebhookEventStatus,
   testConnection,
