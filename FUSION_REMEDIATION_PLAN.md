@@ -252,6 +252,8 @@ Store the last-sent canonical payload per mapping (the fingerprint already exist
 | Q27 | MG's field matrix (`CRM fields for Exchange.xlsx`, 13 Oct) makes Nature of Enquiry, Lead source and Customer Message MG-only, and lets dealers update first/last name, email, mobile, postcode, marketing opt-in, lead outcome, department and model/variant/powertrain. Today every dealer (AU008 included) can change the first three, and email/mobile are MG-protected (`DEALER_PROTECTED_FIELDS` default). Apply the matrix to non-Fusion dealers? | Dealer field ownership (all dealers) |
 | Q28 | The same matrix lets a Fusion dealer update more than the status (Batch 5 sends only the status back, Q16). Widen Fusion's inbound fields after the real sample (Q20)? Fusion stores phone as bare digits (`412345678`, guide of 29 Sep), so phone would always differ from MG's `04…`. | Batch 5 follow-up |
 | Q29 | Lead outcome: the matrix maps Fusion Won > Delivered to Retail Order, Fleet Order or On-Sold Demo (which one is not knowable), Lost → Lost, Test Drive → a `testdrive` activity; it notes "Ask Fusion" for a Retail/Fleet field and a department field. It also sends Update Pending as Open (Q1 leaves it out) and PMA Unassigned as nothing. | Enquiry outcome (Q1 left it out) |
+| Q30 | Batch 8's 15 s timeout on MG Zoho calls: on by default, or off until `ZOHO_API_TIMEOUT_MS` is set? It changes behaviour for every dealer (AU008 too). | Batch 8 |
+| Q31 | Batch 8's heavier items: S4's dirty marker (`pending_resync`, a new `lead_integrations` column) and L6 (credential save race and AES-GCM AAD, which needs every stored credential re-encrypted). Include them? | Batch 8 |
 
 ### Answers (13 Oct 2026)
 
@@ -285,6 +287,8 @@ Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
 | Q23 | Off until `WEBHOOK_EVENT_RETENTION_DAYS` is set. When set, it runs once a day in fast-recover and in daily-error-report. | Batch 6 |
 | Q24 | Only when proven: inbound on, `FUSION_INBOUND_V2` on, a signing secret stored, and at least one signed Fusion webhook processed successfully for that dealer. Until then the dealer is left out of the SLA sweep. | Batch 7 |
 | Q25 | Build it now behind `SLA_DEALER_ACTION_CLOCK` (default off); add the column in the console first. | Batch 7 |
+| Q30 | Off until `ZOHO_API_TIMEOUT_MS` is set (suggested value 15000). | Batch 8 |
+| Q31 | Skip both for now; they stay as follow-ups. Batch 8 needs no schema change and never touches stored credentials. | Follow-up |
 
 Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
