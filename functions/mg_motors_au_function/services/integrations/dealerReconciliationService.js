@@ -94,7 +94,7 @@ const HELD_MAPPING_STATES = new Set(['HELD', 'CONSENT_HOLD']);
  *   reprocessing it. Used by the frequent fast-recovery pass; the daily
  *   /cron/reconcile-dealer-leads run keeps full reprocessing.
  */
-async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly = false } = {}) {
+async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly = false, deadline } = {}) {
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE}${
       RECONCILE_DEALER_CODES.length ? ` WHERE${dealerScopeClause('dealer_code')}` : ''
@@ -241,14 +241,21 @@ async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly 
   // RECONCILE_CONCURRENCY at a time: a full dealer (~60 records) finishes in
   // seconds rather than ~30s, well inside the function's execution limit.
   for (let index = 0; index < mappingRows.length; index += RECONCILE_CONCURRENCY) {
+    // CRON_WORK_BUDGET_MS (Batch 8, S3): the rest waits for the next pass.
+    if (deadline && Date.now() >= deadline) {
+      results.deferred = mappingRows.length - index;
+      break;
+    }
     await Promise.all(mappingRows.slice(index, index + RECONCILE_CONCURRENCY).map(processOne));
   }
 
-  try {
-    await reconcileNeverCreated(catalystApp, integrations, results);
-  } catch (err) {
-    results.failed += 1;
-    logger.error('dealerReconciliationService', 'Never-created reconciliation pass failed', err);
+  if (!(deadline && Date.now() >= deadline)) {
+    try {
+      await reconcileNeverCreated(catalystApp, integrations, results);
+    } catch (err) {
+      results.failed += 1;
+      logger.error('dealerReconciliationService', 'Never-created reconciliation pass failed', err);
+    }
   }
 
   logger.info('dealerReconciliationService', `Sweep complete: ${JSON.stringify(results)}`);

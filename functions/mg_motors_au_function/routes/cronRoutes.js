@@ -15,7 +15,19 @@ const integrationAlertBatchService = require('../services/integrations/integrati
 const alertContext = require('../services/integrations/alertContext');
 const { syncModifiedLeads } = require('../services/leadSyncService');
 const dashboardStats = require('../services/dashboardStatsService');
-const { getOutboundRetryConfig } = require('../config/env');
+const { getOutboundRetryConfig, getCronWorkBudgetMs } = require('../config/env');
+
+// CRON_WORK_BUDGET_MS (Batch 8, S3): when set, sweeps start no new work after
+// this moment; unset, no deadline (undefined), as before.
+function workDeadline(startedAt) {
+  const budget = getCronWorkBudgetMs();
+  return budget ? startedAt + budget : undefined;
+}
+
+// The sweep option for that deadline: `{ deadline }`, or nothing at all.
+function deadlineOption(deadline) {
+  return deadline ? { deadline } : {};
+}
 
 // Background sweeps: alerts they raise are recorded but not emailed (see
 // alertContext.js). The daily report and test alert are not wrapped.
@@ -186,7 +198,7 @@ router.post('/cron/retry-outbound-syncs', backgroundRun, async (req, res) => {
 
   try {
     const catalystApp = catalyst.initialize(req);
-    const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp);
+    const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, deadlineOption(workDeadline(Date.now())));
     logger.info('cronRoutes', 'Outbound retry sweep completed via cron', results);
     res.status(200).json({ success: true, results });
   } catch (err) {
@@ -221,10 +233,12 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
 
   try {
     const fastRecoverStartedAt = Date.now();
+    const deadline = workDeadline(fastRecoverStartedAt);
     const catalystApp = catalyst.initialize(req);
     const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
       ignoreSchedule: !getOutboundRetryConfig().fastRecoverHonourSchedule,
       includeRoutingHolds: true,
+      ...deadlineOption(deadline),
     });
     if (results.recovered > 0) {
       logger.info('cronRoutes', `Fast recovery delivered ${results.recovered} lead(s)`);
@@ -233,7 +247,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
     // are released as soon as they can be applied. Its own failure must not
     // hide the outbound results above.
     try {
-      results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp);
+      results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, deadlineOption(deadline));
     } catch (replayErr) {
       logger.error('cronRoutes', 'Inbound replay within fast recovery failed', replayErr);
       results.inboundReplay = { error: replayErr.message };
@@ -256,6 +270,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
       try {
         results.reconciliation = await dealerReconciliationService.runDealerReconciliation(catalystApp, {
           heldExistenceOnly: true,
+          ...deadlineOption(deadline),
         });
       } catch (reconcileErr) {
         logger.error('cronRoutes', 'Reconciliation within fast recovery failed', reconcileErr);
@@ -297,7 +312,7 @@ router.post('/cron/replay-inbound-events', backgroundRun, async (req, res) => {
   }
   try {
     const catalystApp = catalyst.initialize(req);
-    const results = await inboundReplayScheduler.runInboundReplaySweep(catalystApp);
+    const results = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, deadlineOption(workDeadline(Date.now())));
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Inbound replay sweep failed', err);
@@ -327,7 +342,7 @@ router.post('/cron/reconcile-dealer-leads', backgroundRun, async (req, res) => {
   }
   try {
     const catalystApp = catalyst.initialize(req);
-    const results = await dealerReconciliationService.runDealerReconciliation(catalystApp);
+    const results = await dealerReconciliationService.runDealerReconciliation(catalystApp, deadlineOption(workDeadline(Date.now())));
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Dealer reconciliation failed', err);

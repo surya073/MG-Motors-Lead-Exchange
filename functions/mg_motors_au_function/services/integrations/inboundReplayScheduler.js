@@ -176,7 +176,7 @@ async function selectReplayCandidates(catalystApp, now = Date.now()) {
   return [...head, ...tailRows.filter((r) => !seen.has(r[INTEGRATION_LOGS_TABLE].ROWID))];
 }
 
-async function runInboundReplaySweepInternal(catalystApp) {
+async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
   const queuedRows = await selectReplayCandidates(catalystApp);
   const results = {
     queued: queuedRows.length,
@@ -244,8 +244,15 @@ async function runInboundReplaySweepInternal(catalystApp) {
 
   const replaysByDealer = new Map(); // integration_id -> replays attempted so far this sweep
 
+  let groupsVisited = 0;
   for (const logRows of groups.values()) {
     if (results.attempted >= MAX_REPLAYS_PER_SWEEP) break;
+    // CRON_WORK_BUDGET_MS (Batch 8, S3): the rest waits for the next sweep.
+    if (deadline && Date.now() >= deadline) {
+      results.deferred = groups.size - groupsVisited;
+      break;
+    }
+    groupsVisited += 1;
     const { integration_id: integrationId, external_lead_id: externalLeadId } = logRows[0];
 
     if ((replaysByDealer.get(integrationId) || 0) >= MAX_REPLAYS_PER_DEALER_PER_SWEEP) {

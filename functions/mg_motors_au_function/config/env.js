@@ -247,6 +247,20 @@ function getCrmApiPerDealerLimit() {
   return limit > 0 ? limit : null;
 }
 
+/**
+ * CRON_WORK_BUDGET_MS: once this long has passed since a cron request began,
+ * the outbound retry, inbound replay and reconciliation sweeps start no new
+ * work; the rest waits for the next run (FUSION_REMEDIATION_PLAN.md, Batch 8,
+ * audit S3; suggested 25000 under Advanced I/O's 30 s limit). Unset, or not a
+ * positive whole number, means no budget, as before. Read on every call.
+ */
+function getCronWorkBudgetMs() {
+  const text = String(process.env.CRON_WORK_BUDGET_MS || '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const ms = Number(text);
+  return ms > 0 ? ms : null;
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -263,4 +277,5 @@ module.exports = {
   zohoTimeoutOption,
   getFusionRateBudgetConfig,
   getCrmApiPerDealerLimit,
+  getCronWorkBudgetMs,
 };

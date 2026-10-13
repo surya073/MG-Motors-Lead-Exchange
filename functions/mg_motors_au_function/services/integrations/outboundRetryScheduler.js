@@ -108,6 +108,8 @@ async function selectRetryCandidates(catalystApp, now = Date.now()) {
 
 async function runOutboundRetrySweepInternal(catalystApp, options) {
   const ignoreSchedule = Boolean(options && options.ignoreSchedule);
+  // CRON_WORK_BUDGET_MS (Batch 8, S3): no new batch is started after this.
+  const deadline = options && options.deadline;
   const now = new Date(Date.now());
 
   const dueRows = await selectRetryCandidates(catalystApp, now.getTime());
@@ -231,12 +233,16 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   // starve every valid retry behind them. They are examined (two cheap lookups)
   // and passed over, nothing is written to them, and the sweep carries on.
   for (let index = 0; index < dueNow.length && results.attempted < MAX_LEADS_PER_SWEEP;) {
+    if (deadline && Date.now() >= deadline) {
+      results.deferred = dueNow.length - index;
+      break;
+    }
     const size = Math.min(OUTBOUND_RETRY_CONCURRENCY, MAX_LEADS_PER_SWEEP - results.attempted);
     await Promise.all(dueNow.slice(index, index + size).map(processOne));
     index += size;
   }
 
-  if (options && options.includeRoutingHolds) {
+  if (options && options.includeRoutingHolds && !(deadline && Date.now() >= deadline)) {
     results.routingHolds = await reprocessRoutingHolds(catalystApp);
   }
 
