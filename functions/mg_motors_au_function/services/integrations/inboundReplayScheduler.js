@@ -4,6 +4,7 @@ const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
 const crmAdapterFactory = require('./crmAdapterFactory');
 const { guardSweep } = require('./sweepOverlapGuard');
+const { withMappingCache } = require('./mappingRunCache');
 const { tailWindow, countFrom } = require('./sweepWindow');
 
 const INTEGRATION_LOGS_TABLE = 'integration_logs';
@@ -389,6 +390,6 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
 
 // Guarded against re-entrant overlap on the same warm instance — see
 // sweepOverlapGuard.js. Exported name/signature unchanged.
-const runInboundReplaySweep = guardSweep('inboundReplaySweep', runInboundReplaySweepInternal);
+const runInboundReplaySweep = guardSweep('inboundReplaySweep', withMappingCache(runInboundReplaySweepInternal));
 
 module.exports = { runInboundReplaySweep, _test: { selectReplayCandidates, HEAD_ROWS, TAIL_ROWS } };

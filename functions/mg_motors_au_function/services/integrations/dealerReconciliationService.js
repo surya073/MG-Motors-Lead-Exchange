@@ -6,6 +6,7 @@ const crmIntegrationService = require('./crmIntegrationService');
 const crmAdapterFactory = require('./crmAdapterFactory');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { guardSweep } = require('./sweepOverlapGuard');
+const { withMappingCache } = require('./mappingRunCache');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -542,6 +543,6 @@ async function reportMissingDealerRecord(catalystApp, integration, mapping, resu
 
 // Guarded against re-entrant overlap on the same warm instance — see
 // sweepOverlapGuard.js. Exported name/signature unchanged.
-const runDealerReconciliation = guardSweep('dealerReconciliation', runDealerReconciliationInternal);
+const runDealerReconciliation = guardSweep('dealerReconciliation', withMappingCache(runDealerReconciliationInternal));
 
 module.exports = { runDealerReconciliation };

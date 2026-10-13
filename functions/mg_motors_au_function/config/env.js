@@ -282,6 +282,15 @@ function isDurableSyncCheckpointEnabled() {
   return String(process.env.DURABLE_SYNC_CHECKPOINT || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * MAPPING_CACHE_PER_RUN=true: a sweep or sync run reads each dealer's field
+ * and status mappings once instead of once per lead (FUSION_REMEDIATION_PLAN
+ * .md, Batch 9a, audit S6). Read when a run starts.
+ */
+function isMappingCachePerRunEnabled() {
+  return String(process.env.MAPPING_CACHE_PER_RUN || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -301,4 +310,5 @@ module.exports = {
   getCronWorkBudgetMs,
   isSyncClaimFailClosed,
   isDurableSyncCheckpointEnabled,
+  isMappingCachePerRunEnabled,
 };

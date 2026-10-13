@@ -21,6 +21,7 @@ const {
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
+const { cachedForRun } = require('./mappingRunCache');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -207,11 +208,14 @@ async function getIntegrationByDealerCode(catalystApp, dealerCode) {
   return rows.length > 0 ? rows[0][DEALER_INTEGRATIONS_TABLE] : null;
 }
 
+// Read once per dealer per sweep when MAPPING_CACHE_PER_RUN is on (Batch 9a).
 async function getFieldMappings(catalystApp, integrationId) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${FIELD_MAPPINGS_TABLE} WHERE integration_id = ${integrationId}`
-  );
-  return rows.map((r) => r[FIELD_MAPPINGS_TABLE]);
+  return cachedForRun('field', integrationId, async () => {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${FIELD_MAPPINGS_TABLE} WHERE integration_id = ${integrationId}`
+    );
+    return rows.map((r) => r[FIELD_MAPPINGS_TABLE]);
+  });
 }
 
 /**
@@ -228,10 +232,12 @@ async function findLeadMappingForIntegration(catalystApp, integration, zohoLeadI
 }
 
 async function getStatusMappings(catalystApp, integrationId) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${STATUS_MAPPINGS_TABLE} WHERE integration_id = ${integrationId}`
-  );
-  return rows.map((r) => r[STATUS_MAPPINGS_TABLE]);
+  return cachedForRun('status', integrationId, async () => {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${STATUS_MAPPINGS_TABLE} WHERE integration_id = ${integrationId}`
+    );
+    return rows.map((r) => r[STATUS_MAPPINGS_TABLE]);
+  });
 }
 
 // OUTBOUND_RETRY_POLICY=classified: after the Nth failed attempt in a row the

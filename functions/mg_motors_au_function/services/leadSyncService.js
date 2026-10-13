@@ -7,6 +7,7 @@ const {
   updateOemLead,
 } = require('./zohoCrmService');
 const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled } = require('../config/env');
+const { withMappingCache } = require('./integrations/mappingRunCache');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
@@ -527,7 +528,7 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
  * validation, duplicate classification (Happy 3), per-dealer claims, dealer
  * dispatch, scenario counting, logging — is the single existing code path.
  */
-async function runLeadSync(catalystApp, {
+async function runLeadSyncInternal(catalystApp, {
   trigger,
   triggeredBy,
   loadRecords,
@@ -890,6 +891,9 @@ async function runLeadSync(catalystApp, {
 }
 
 // ---------------------------------------------------------------------------
+// One mapping cache per sync run (MAPPING_CACHE_PER_RUN, Batch 9a, S6).
+const runLeadSync = withMappingCache(runLeadSyncInternal);
+
 // Incremental sync (webhook path)
 // ---------------------------------------------------------------------------
 

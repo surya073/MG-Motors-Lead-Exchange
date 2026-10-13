@@ -4,6 +4,7 @@ const logger = require('../../utils/logger');
 const crmIntegrationService = require('./crmIntegrationService');
 const pathPolicy = require('./pathPolicyService');
 const { guardSweep } = require('./sweepOverlapGuard');
+const { withMappingCache } = require('./mappingRunCache');
 const stats = require('../dashboardStatsService');
 const { ROTATION_BUCKET_MS, tailWindow, countFrom } = require('./sweepWindow');
 
@@ -360,6 +361,6 @@ async function reprocessRoutingHolds(catalystApp) {
 // sweepOverlapGuard.js for exactly what this does and does not protect
 // against. Exported name/signature unchanged for every existing caller
 // (cronRoutes.js).
-const runOutboundRetrySweep = guardSweep('outboundRetrySweep', runOutboundRetrySweepInternal);
+const runOutboundRetrySweep = guardSweep('outboundRetrySweep', withMappingCache(runOutboundRetrySweepInternal));
 
 module.exports = { runOutboundRetrySweep, _test: { reprocessRoutingHolds, selectRetryCandidates, HEAD_ROWS, TAIL_ROWS } };
