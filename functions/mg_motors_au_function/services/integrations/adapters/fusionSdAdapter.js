@@ -411,11 +411,18 @@ async function testConnection(catalystApp, integration) {
   }
 }
 
+// Whether a value can be a Fusion lead id, e.g. one an admin types in to link
+// an ACK_UNRESOLVED lead.
+function isValidLeadId(value) {
+  return asLeadId(value) !== undefined;
+}
+
 module.exports = {
   createLead,
   updateLead,
   getLead,
   testConnection,
   capabilities,
+  isValidLeadId,
   _test: { classifyFusionError, nestDottedKeys, updatePath, extractExternalLeadId },
 };

@@ -778,6 +778,147 @@ async function recordSkippedUpdate(catalystApp, integration, zohoLeadId, existin
   return { skipped: true, reason: DEALER_UPDATES_DISABLED };
 }
 
+/**
+ * C1 (Fusion SD only): the dealer accepted a create (2xx) but returned no
+ * lead id we can trust. It may well hold the lead now, so creating it again
+ * could duplicate it. The mapping becomes ACK_UNRESOLVED, which nothing
+ * re-creates (see attemptExternalCrmSync) and the retry sweep never reads,
+ * until an admin links the dealer's lead id (linkUnresolvedLead). The hash
+ * of the payload sent identifies the submission without storing customer
+ * data.
+ */
+async function recordUnresolvedAcknowledgement(catalystApp, integration, leadRow, existingMapping, {
+  payload, result, acknowledgementError, requestReference, attemptStartedAt,
+}) {
+  const zohoLeadId = leadRow.crm_record_id;
+  const now = new Date();
+  const mappingFields = {
+    sync_status: 'ACK_UNRESOLVED',
+    last_attempted_at: toCatalystDateTime(now),
+    last_error: 'DEALER_ACK_MISSING_ID',
+  };
+  const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
+  if (existingMapping) {
+    await mappingTable.updateRow({ ROWID: existingMapping.ROWID, ...mappingFields });
+  } else {
+    await mappingTable.insertRow({
+      dealer_code: integration.dealer_code,
+      zoho_lead_id: zohoLeadId,
+      integration_id: integration.ROWID,
+      ...mappingFields,
+    });
+  }
+  await setLeadSyncState(catalystApp, leadRow, 'ACK_UNRESOLVED');
+
+  const reason = `DEALER_ACK_MISSING_ID: ${acknowledgementError.message}`.slice(0, 500);
+  await writeLog(catalystApp, {
+    integration_id: integration.ROWID,
+    dealer_code: integration.dealer_code,
+    direction: 'ZOHO_TO_EXTERNAL_CRM',
+    operation: 'CREATE_LEAD',
+    zoho_lead_id: zohoLeadId,
+    status: 'FAILED',
+    http_status: result.httpStatus,
+    error_message: reason,
+    request_reference: requestReference,
+    field_changes: JSON.stringify([
+      {
+        field: 'delivery_timing',
+        sent_at: attemptStartedAt.toISOString(),
+        failed_at: now.toISOString(),
+        duration_ms: now.getTime() - attemptStartedAt.getTime(),
+      },
+      { field: 'submitted_payload', sha256: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex') },
+    ]),
+  }, { scenarioCode: 'Unhappy 11', notify: true, leadRow, reason });
+
+  return { skipped: true, reason: 'ACK_UNRESOLVED', scenarioCode: 'Unhappy 11' };
+}
+
+/**
+ * Links an ACK_UNRESOLVED lead to the dealer lead id an admin looked up, and
+ * completes the delivery as a create would have (Happy 1): the mapping is
+ * SYNCED with the id, so later edits are sent as updates, and MG records the
+ * dealer acknowledgement ("Not Contacted"). If that write-back fails, the
+ * next sync of the lead retries it (last_error ZOHO_ACK_UPDATE_FAILED).
+ */
+async function linkUnresolvedLead(catalystApp, integration, leadRow, externalLeadId) {
+  const zohoLeadId = leadRow.crm_record_id;
+  const mapping = await findLeadMappingForIntegration(catalystApp, integration, zohoLeadId);
+  if (mapping?.sync_status !== 'ACK_UNRESOLVED') {
+    const err = new Error(`Lead ${zohoLeadId} is not waiting for its dealer lead id`);
+    err.code = 'LEAD_NOT_UNRESOLVED';
+    throw err;
+  }
+
+  const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
+  await mappingTable.updateRow({
+    ROWID: mapping.ROWID,
+    external_crm_lead_id: externalLeadId,
+    sync_status: 'SYNCED',
+    last_synced_at: toCatalystDateTime(),
+    last_sync_direction: 'ZOHO_TO_EXTERNAL_CRM',
+    retry_count: '0',
+    last_error: '',
+  });
+
+  let acknowledged = true;
+  try {
+    await oemCrmService.updateOemLead(zohoLeadId, { Lead_Status: 'Not Contacted' });
+  } catch (err) {
+    acknowledged = false;
+    logger.error('crmIntegrationService', `Acknowledgement write-back failed for linked lead ${zohoLeadId}`, err);
+    await mappingTable.updateRow({ ROWID: mapping.ROWID, last_error: 'ZOHO_ACK_UPDATE_FAILED' });
+  }
+  if (leadRow.ROWID) {
+    await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+      ROWID: leadRow.ROWID,
+      ...(acknowledged ? { lead_status: 'Not Contacted' } : {}),
+      sync_status: 'SYNCED',
+      last_synced_at: toCatalystDateTime(),
+      ...(leadRow.dealer_crm_record_id ? {} : { dealer_crm_record_id: externalLeadId }),
+    });
+  }
+
+  await writeLog(catalystApp, {
+    integration_id: integration.ROWID,
+    dealer_code: integration.dealer_code,
+    direction: 'ZOHO_TO_EXTERNAL_CRM',
+    operation: 'CREATE_LEAD',
+    zoho_lead_id: zohoLeadId,
+    external_lead_id: externalLeadId,
+    status: acknowledged ? 'SUCCESS' : 'FAILED',
+    error_message: acknowledged ? undefined : 'ZOHO_ACK_UPDATE_FAILED',
+    request_reference: crypto.randomUUID(),
+  }, acknowledged
+    ? { scenarioCode: 'Happy 1', scenarioMessage: `Linked by an admin to the dealer's lead ${externalLeadId}` }
+    : { scenarioCode: 'Unhappy 4', notify: true, leadRow, reason: 'ZOHO_ACK_UPDATE_FAILED' });
+
+  return { ok: true, externalLeadId, acknowledged };
+}
+
+/**
+ * An admin replays a lead whose automatic retries stopped (RETRY_EXHAUSTED):
+ * its attempt count and failure streak start again and it is sent now. A
+ * success is recorded as a recovery (Happy 4); a failure is counted afresh.
+ * An ACK_UNRESOLVED lead is not replayable: a new create could duplicate it.
+ */
+async function replayStoppedLead(catalystApp, integration, leadRow) {
+  const mapping = await findLeadMappingForIntegration(catalystApp, integration, leadRow.crm_record_id);
+  if (mapping?.sync_status !== 'RETRY_EXHAUSTED') {
+    const err = new Error(`Lead ${leadRow.crm_record_id} has no stopped delivery to replay`);
+    err.code = 'LEAD_NOT_REPLAYABLE';
+    throw err;
+  }
+  await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+    ROWID: mapping.ROWID,
+    sync_status: 'FAILED',
+    retry_count: '0',
+    failure_streak_started_at: '',
+  });
+  return syncLeadToExternalCrm(catalystApp, integration, leadRow);
+}
+
 async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference) {
   let operation = 'CREATE_LEAD';
   let existingMapping = null;
@@ -790,6 +931,13 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       findLeadMappingForIntegration(catalystApp, integration, zohoLeadId),
     ]);
     existingMapping = currentMapping;
+    // C1: the dealer may already hold this lead (it accepted the create but
+    // returned no id), so it is never created again, by a retry or a later
+    // edit. An admin links the dealer's lead id instead (linkUnresolvedLead).
+    if (existingMapping?.sync_status === 'ACK_UNRESOLVED' && !existingMapping.external_crm_lead_id) {
+      logger.info('crmIntegrationService', `Lead ${zohoLeadId} waits for its dealer lead id to be linked; not re-created.`);
+      return { skipped: true, reason: 'ACK_UNRESOLVED' };
+    }
     operation = existingMapping?.external_crm_lead_id ? 'UPDATE_LEAD' : 'CREATE_LEAD';
     const configuration = validateIntegrationConfiguration(
       integration,
@@ -850,6 +998,11 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           `Dealer accepted the request (HTTP ${result.httpStatus ?? 'unknown'}) but returned no recognized record-ID field (response fields seen: ${responseShape})`
         );
         acknowledgementError.code = 'DEALER_ACK_MISSING_ID';
+        if (integration.crm_type === 'FUSION_SD') {
+          return recordUnresolvedAcknowledgement(catalystApp, integration, leadRow, existingMapping, {
+            payload, result, acknowledgementError, requestReference, attemptStartedAt,
+          });
+        }
         throw acknowledgementError;
       }
     }
@@ -2277,6 +2430,8 @@ module.exports = {
   getFieldMappings,
   getStatusMappings,
   syncLeadToExternalCrm,
+  linkUnresolvedLead,
+  replayStoppedLead,
   processInboundWebhook,
   replayInboundLead,
   checkAndRecordWebhookEvent,

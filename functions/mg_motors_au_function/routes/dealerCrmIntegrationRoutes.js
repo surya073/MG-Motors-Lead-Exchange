@@ -8,6 +8,7 @@ const integrationAuthService = require('../services/integrations/integrationAuth
 const { findTargetFieldProblem } = require('../services/integrations/leadMappingService');
 const { assertSafeUrl } = require('../services/integrations/adapters/genericRestAdapter');
 const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
+const { isValidLeadId } = require('../services/integrations/adapters/fusionSdAdapter');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
@@ -629,6 +630,55 @@ router.post('/:dealerCode/integration/sync', requireAdminRole, async (req, res) 
     res.json({ ok: true, result });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `Retry sync failed for ${dealerCode}`, err);
+    res.status(500).json({ error: err.code || 'INTERNAL_ERROR' });
+  }
+});
+
+async function findDealerLead(catalystApp, dealerCode, crmRecordId) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(crmRecordId)}' AND dealer_code = '${safeQuoteForZcql(dealerCode)}' LIMIT 1`
+  );
+  return rows.length > 0 ? rows[0][LEADS_TABLE] : null;
+}
+
+// C1: an admin links a lead the dealer accepted without returning an id
+// (ACK_UNRESOLVED) to the dealer's lead id, looked up in the dealer's CRM.
+router.post('/:dealerCode/integration/link-lead', requireAdminRole, async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { dealerCode } = req.params;
+  const { crmRecordId, externalLeadId } = req.body || {};
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+    const leadId = String(externalLeadId || '').trim();
+    if (!crmRecordId || !isValidLeadId(leadId)) return res.status(400).json({ error: 'INVALID_EXTERNAL_LEAD_ID' });
+    const leadRow = await findDealerLead(catalystApp, dealerCode, crmRecordId);
+    if (!leadRow) return res.status(404).json({ error: 'LEAD_MAPPING_NOT_FOUND' });
+    const result = await crmIntegrationService.linkUnresolvedLead(catalystApp, integration, leadRow, leadId);
+    res.json({ ok: true, result });
+  } catch (err) {
+    if (err.code === 'LEAD_NOT_UNRESOLVED') return res.status(409).json({ error: err.code });
+    logger.error('dealerCrmIntegrationRoutes', `Linking a lead failed for ${dealerCode}`, err);
+    res.status(500).json({ error: err.code || 'INTERNAL_ERROR' });
+  }
+});
+
+// An admin replays a lead whose automatic retries stopped (RETRY_EXHAUSTED).
+router.post('/:dealerCode/integration/replay', requireAdminRole, async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { dealerCode } = req.params;
+  const { crmRecordId } = req.body || {};
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+    if (!crmRecordId) return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
+    const leadRow = await findDealerLead(catalystApp, dealerCode, crmRecordId);
+    if (!leadRow) return res.status(404).json({ error: 'LEAD_MAPPING_NOT_FOUND' });
+    const result = await crmIntegrationService.replayStoppedLead(catalystApp, integration, leadRow);
+    res.json({ ok: true, result });
+  } catch (err) {
+    if (err.code === 'LEAD_NOT_REPLAYABLE') return res.status(409).json({ error: err.code });
+    logger.error('dealerCrmIntegrationRoutes', `Replay failed for ${dealerCode}`, err);
     res.status(500).json({ error: err.code || 'INTERNAL_ERROR' });
   }
 });
