@@ -6,7 +6,7 @@ const {
   fetchOemLeadsModifiedSince,
   updateOemLead,
 } = require('./zohoCrmService');
-const { getLeadSyncSince, isLeadNamePartsEnabled } = require('../config/env');
+const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled } = require('../config/env');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
@@ -971,8 +971,12 @@ function parseCatalystUtc(value) {
  * LEAD_SYNC_SINCE.
  */
 async function getIncrementalWatermark(catalystApp, now = new Date()) {
+  // DURABLE_SYNC_CHECKPOINT (Batch 9a, S11): ask for the latest clean run
+  // directly, so any number of failed runs after it cannot hide it.
   const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM sync_logs WHERE sync_trigger = '${INCREMENTAL_TRIGGER}' ORDER BY CREATEDTIME DESC LIMIT 0, 20`
+    isDurableSyncCheckpointEnabled()
+      ? `SELECT * FROM sync_logs WHERE sync_trigger = '${INCREMENTAL_TRIGGER}' AND sync_type = 'Lead_Sync' AND status IN ('Success', 'Partial') AND (records_failed = 0 OR records_failed IS NULL) ORDER BY CREATEDTIME DESC LIMIT 0, 1`
+      : `SELECT * FROM sync_logs WHERE sync_trigger = '${INCREMENTAL_TRIGGER}' ORDER BY CREATEDTIME DESC LIMIT 0, 20`
   );
   for (const wrapped of rows) {
     const log = wrapped.sync_logs;

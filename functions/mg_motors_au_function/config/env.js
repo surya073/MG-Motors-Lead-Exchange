@@ -272,6 +272,16 @@ function isSyncClaimFailClosed() {
   return String(process.env.SYNC_CLAIM_FAIL_CLOSED || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * DURABLE_SYNC_CHECKPOINT=true: the incremental lead sync resumes from the
+ * latest clean Incremental run however long ago it was, instead of looking
+ * only at the latest 20 runs and otherwise falling back 24 hours
+ * (FUSION_REMEDIATION_PLAN.md, Batch 9a, audit S11). Read on every call.
+ */
+function isDurableSyncCheckpointEnabled() {
+  return String(process.env.DURABLE_SYNC_CHECKPOINT || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -290,4 +300,5 @@ module.exports = {
   getCrmApiPerDealerLimit,
   getCronWorkBudgetMs,
   isSyncClaimFailClosed,
+  isDurableSyncCheckpointEnabled,
 };
