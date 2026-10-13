@@ -914,6 +914,11 @@ export default function DealerCRMConfig() {
       if (response?.error === "FIELD_MAPPING_AMBIGUOUS") {
         message = `Each MG and dealer field may appear only once. Check ${response.sourceField || "the source field"} and ${response.targetField || "the target field"}.`;
       }
+      if (response?.error === "FIELD_MAPPING_INVALID" && response?.targetField) {
+        message = response.reason === "PARENT_AND_CHILD"
+          ? `“${response.targetField}” and “${response.conflictsWith}” can't both be dealer fields: one contains the other.`
+          : `“${response.targetField}” is not a valid dealer field name.`;
+      }
       showAlert("error", message, {
         title: "Save failed",
       });

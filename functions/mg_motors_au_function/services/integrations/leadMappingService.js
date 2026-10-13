@@ -68,6 +68,47 @@ function mapExternalLeadToZoho(externalPayload, fieldMappings, { excludeSourceFi
   return update;
 }
 
+// Property names that lead into Object.prototype or a constructor when a
+// target is used as a property path. No CRM field is called this.
+const RESERVED_TARGET_SEGMENTS = new Set(['__proto__', 'prototype', 'constructor']);
+
+/**
+ * Checks dealer field-mapping targets before they are saved and returns the
+ * first problem, or null.
+ *   - Any CRM: a dot-separated segment named __proto__, prototype or
+ *     constructor (RESERVED_SEGMENT).
+ *   - `nested` (an adapter that expands "contact.email" into
+ *     { contact: { email } }, i.e. Fusion SD): an empty segment
+ *     (EMPTY_SEGMENT), or a target that is the parent of another, such as
+ *     "contact" and "contact.email" (PARENT_AND_CHILD), since one would
+ *     overwrite the other in the nested body.
+ */
+function findTargetFieldProblem(targets, { nested = false } = {}) {
+  const all = targets.map(String);
+  for (const target of all) {
+    const segments = target.split('.');
+    if (segments.some((segment) => RESERVED_TARGET_SEGMENTS.has(segment))) {
+      return { targetField: target, reason: 'RESERVED_SEGMENT' };
+    }
+    if (nested && segments.includes('')) {
+      return { targetField: target, reason: 'EMPTY_SEGMENT' };
+    }
+  }
+  if (!nested) return null;
+
+  const targetSet = new Set(all);
+  for (const target of all) {
+    const segments = target.split('.');
+    for (let length = 1; length < segments.length; length += 1) {
+      const parent = segments.slice(0, length).join('.');
+      if (targetSet.has(parent)) {
+        return { targetField: parent, conflictsWith: target, reason: 'PARENT_AND_CHILD' };
+      }
+    }
+  }
+  return null;
+}
+
 const DIRECTION_ALIASES = Object.freeze({
   ZOHO_TO_EXTERNAL: 'ZOHO_TO_EXTERNAL',
   ZOHO_TO_EXTERNAL_CRM: 'ZOHO_TO_EXTERNAL',
@@ -183,4 +224,10 @@ function mapStatus(status, statusMappings, direction, options = {}) {
   return candidates[0].result;
 }
 
-module.exports = { mapZohoLeadToExternal, mapExternalLeadToZoho, mapStatus };
+module.exports = {
+  mapZohoLeadToExternal,
+  mapExternalLeadToZoho,
+  mapStatus,
+  findTargetFieldProblem,
+  RESERVED_TARGET_SEGMENTS,
+};

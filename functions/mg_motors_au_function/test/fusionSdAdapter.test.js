@@ -418,3 +418,33 @@ test('crmAdapterFactory.supports: only an explicit false opts a CRM type out of 
   assert.equal(crmAdapterFactory.supports('ZOHO_CRM', 'getLead'), true);
   assert.equal(crmAdapterFactory.supports('NOT_A_CRM', 'getLead'), false);
 });
+
+test('nestDottedKeys never writes through __proto__, prototype or constructor', () => {
+  const { nestDottedKeys } = fusionSdAdapter._test;
+  try {
+    const body = nestDottedKeys({
+      '__proto__.polluted': 'yes',
+      'contact.__proto__.polluted': 'yes',
+      'constructor.prototype.polluted': 'yes',
+      prototype: 'yes',
+      'contact.email': 'a@example.com',
+    });
+
+    assert.equal({}.polluted, undefined, 'Object.prototype must stay untouched');
+    assert.deepEqual(body, { contact: { email: 'a@example.com' } });
+  } finally {
+    delete Object.prototype.polluted;
+  }
+});
+
+test('nestDottedKeys keeps the first of two colliding targets instead of overwriting it', () => {
+  const { nestDottedKeys } = fusionSdAdapter._test;
+  assert.deepEqual(
+    nestDottedKeys({ contact: 'value first', 'contact.firstName': 'Jane' }),
+    { contact: 'value first' }
+  );
+  assert.deepEqual(
+    nestDottedKeys({ 'contact.firstName': 'Jane', contact: 'value second' }),
+    { contact: { firstName: 'Jane' } }
+  );
+});

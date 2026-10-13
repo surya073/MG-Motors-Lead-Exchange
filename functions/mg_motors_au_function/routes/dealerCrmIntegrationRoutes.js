@@ -5,6 +5,7 @@ const catalyst = require('zcatalyst-sdk-node');
 const logger = require('../utils/logger');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
+const { findTargetFieldProblem } = require('../services/integrations/leadMappingService');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
@@ -329,6 +330,15 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
       }
       seenFieldSources.add(source);
       seenFieldTargets.add(normalizedTarget);
+    }
+    // Fusion SD expands dotted targets into a nested body
+    // (fusionSdAdapter.nestDottedKeys); other CRM types send them as flat keys.
+    const targetProblem = findTargetFieldProblem(
+      validFieldMappings.map((mapping) => mapping.target_field),
+      { nested: integration.crm_type === 'FUSION_SD' }
+    );
+    if (targetProblem) {
+      return res.status(400).json({ error: 'FIELD_MAPPING_INVALID', ...targetProblem });
     }
     const configuredSourceFields = new Set(validFieldMappings.map((mapping) => mapping.source_field));
     const missingRequiredFields = pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS.filter(
