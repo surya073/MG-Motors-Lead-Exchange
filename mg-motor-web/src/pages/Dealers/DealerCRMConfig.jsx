@@ -885,8 +885,13 @@ export default function DealerCRMConfig() {
   const loadStatusPicklist = async () => {
     try {
       const result = await dealerCrmIntegrationService.getStatusPicklist();
+      // MG's label can differ from the value stored (e.g. "Lost" stores
+      // Lost Lead), so both are shown when they differ.
       setOemStatusOptions(
-        (result?.values || []).map((v) => ({ value: v.value, label: v.display_label || v.value }))
+        (result?.values || []).map((v) => ({
+          value: v.value,
+          label: v.display_label && v.display_label !== v.value ? `${v.display_label} (${v.value})` : v.value,
+        }))
       );
     } catch (err) {
       showAlert("error", "Couldn't load OEM status list.", { title: "Load failed" });
@@ -1204,7 +1209,17 @@ export default function DealerCRMConfig() {
     !editingStatusRows.has(index);
 
   const ourFieldLabel = (value) => OUR_FIELD_OPTIONS.find((o) => o.value === value)?.label || humanizeFieldName(value);
-  const ourStatusLabel = (value) => oemStatusOptions.find((o) => o.value === value)?.label || value || "—";
+  // A mapped MG status that is no longer in MG's list (e.g. the older Dropped
+  // and Lost values) is still shown, and marked, instead of looking empty.
+  const legacyStatusLabel = (value) => `${value} (not in MG's list)`;
+  const ourStatusLabel = (value) =>
+    oemStatusOptions.find((o) => o.value === value)?.label ||
+    (value && oemStatusOptions.length ? legacyStatusLabel(value) : value) ||
+    "—";
+  const statusOptionsFor = (value) =>
+    value && oemStatusOptions.length && !oemStatusOptions.some((o) => o.value === value)
+      ? [...oemStatusOptions, { value, label: legacyStatusLabel(value) }]
+      : oemStatusOptions;
 
   return (
     <div className="dealer-crm-config">
@@ -2155,7 +2170,7 @@ export default function DealerCRMConfig() {
                                 ariaLabel="Our status"
                                 value={mapping.source_status}
                                 onChange={(v) => handleStatusMappingChange(index, "source_status", v)}
-                                options={[{ value: "", label: "Select status…" }, ...oemStatusOptions]}
+                                options={[{ value: "", label: "Select status…" }, ...statusOptionsFor(mapping.source_status)]}
                               />
                               <span className="dealer-crm-config__mapping-arrow">→</span>
                               <input
