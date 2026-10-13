@@ -144,7 +144,7 @@ router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res
           return;
         }
         const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
-        const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, event.externalLeadId));
+        const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, event.externalLeadId), integration.ROWID);
         const raw = fetched && fetched.raw;
         const record = Array.isArray(raw && raw.data) ? raw.data[0] : raw;
         if (!record || typeof record !== 'object') {

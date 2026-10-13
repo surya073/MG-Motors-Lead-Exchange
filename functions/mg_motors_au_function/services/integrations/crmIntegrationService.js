@@ -1036,7 +1036,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
         integration,
         existingMapping.external_crm_lead_id,
         payload
-      ));
+      ), integration.ROWID);
       if (result.skipped) {
         return recordSkippedUpdate(catalystApp, integration, zohoLeadId, existingMapping, result, requestReference);
       }
@@ -1049,7 +1049,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           idempotencyKey: zohoLeadId,
           idempotencyField: enquiryIdFieldMapping?.target_field,
         }
-      ));
+      ), integration.ROWID);
       if (!result.externalLeadId) {
         const responseShape = summarizeResponseShape(result.raw).join(', ').slice(0, 300) || 'empty/unreadable body';
         const acknowledgementError = new Error(
@@ -1796,7 +1796,7 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
   for (const externalLeadId of ids) {
     const requestReference = crypto.randomUUID();
     try {
-      const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
+      const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId), integration.ROWID);
       const zohoRecord = fetched.raw?.data?.[0];
 
       if (!zohoRecord) {
@@ -1854,7 +1854,7 @@ async function replayInboundLead(
   // FIELD_MAPPING_INVALID.
   let fetched;
   try {
-    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
+    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId), integration.ROWID);
   } catch (err) {
     if (err.response?.status === 404 || err.response?.status === 204) {
       const missing = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);
@@ -2704,7 +2704,7 @@ async function markWebhookEventStatus(catalystApp, eventRowId, status, errorMess
 
 async function testConnection(catalystApp, integration) {
   const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
-  const result = await withCrmApiLimit(integration.crm_type, () => adapter.testConnection(catalystApp, integration));
+  const result = await withCrmApiLimit(integration.crm_type, () => adapter.testConnection(catalystApp, integration), integration.ROWID);
 
   await catalystApp.datastore().table(DEALER_INTEGRATIONS_TABLE).updateRow({
     ROWID: integration.ROWID,

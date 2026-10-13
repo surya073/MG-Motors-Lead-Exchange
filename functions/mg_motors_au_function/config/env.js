@@ -234,6 +234,19 @@ function getFusionRateBudgetConfig() {
   };
 }
 
+/**
+ * CRM_API_PER_DEALER_LIMIT caps how many CRM calls one dealer integration can
+ * have in flight, within its crm_type's pool (FUSION_REMEDIATION_PLAN.md,
+ * Batch 8). Unset, or not a positive whole number, means no per-dealer cap,
+ * as before. Read when a dealer's limiter is first created.
+ */
+function getCrmApiPerDealerLimit() {
+  const text = String(process.env.CRM_API_PER_DEALER_LIMIT || '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const limit = Number(text);
+  return limit > 0 ? limit : null;
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -249,4 +262,5 @@ module.exports = {
   getZohoApiTimeoutMs,
   zohoTimeoutOption,
   getFusionRateBudgetConfig,
+  getCrmApiPerDealerLimit,
 };

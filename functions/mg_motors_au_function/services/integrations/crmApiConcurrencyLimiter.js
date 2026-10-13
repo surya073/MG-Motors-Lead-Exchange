@@ -75,6 +75,8 @@
  * no new retry mechanism is introduced.
  */
 
+const { getCrmApiPerDealerLimit } = require('../../config/env');
+
 const DEFAULT_CRM_API_CONCURRENCY_LIMIT = 10;
 const configuredLimit = Number(process.env.CRM_API_CONCURRENCY_LIMIT);
 const CRM_API_CONCURRENCY_LIMIT = Number.isFinite(configuredLimit) && configuredLimit >= 1
@@ -159,7 +161,7 @@ function getSemaphore(crmType) {
  * a slot is ever granted, so `release()` is correctly never reached for a
  * rejected acquisition (nothing to release).
  */
-async function withCrmApiLimit(crmType, fn) {
+async function withTypeLimit(crmType, fn) {
   const semaphore = getSemaphore(crmType);
   await semaphore.acquire();
   try {
@@ -169,9 +171,42 @@ async function withCrmApiLimit(crmType, fn) {
   }
 }
 
+// Per-dealer fairness (Batch 8, CRM_API_PER_DEALER_LIMIT): one dealer's
+// calls wait for a slot of their own before taking one of the type's
+// shared slots, so a busy dealer can hold at most its cap of them.
+const dealerSemaphores = new Map();
+
+function getDealerSemaphore(crmType, dealerKey, limit) {
+  const key = `${crmType || 'UNKNOWN'}:${dealerKey}`;
+  if (!dealerSemaphores.has(key)) {
+    dealerSemaphores.set(key, new Semaphore(limit, { crmType: crmType || 'UNKNOWN', maxQueueDepth: CRM_API_MAX_QUEUE_DEPTH }));
+  }
+  return dealerSemaphores.get(key);
+}
+
+/**
+ * `dealerKey` (the dealer integration's ROWID) is optional; without it, or
+ * with CRM_API_PER_DEALER_LIMIT unset, only the crm_type pool applies.
+ */
+async function withCrmApiLimit(crmType, fn, dealerKey) {
+  const perDealerLimit = dealerKey !== undefined && dealerKey !== null && dealerKey !== ''
+    ? getCrmApiPerDealerLimit()
+    : null;
+  if (!perDealerLimit) return withTypeLimit(crmType, fn);
+
+  const dealerSemaphore = getDealerSemaphore(crmType, String(dealerKey), perDealerLimit);
+  await dealerSemaphore.acquire();
+  try {
+    return await withTypeLimit(crmType, fn);
+  } finally {
+    dealerSemaphore.release();
+  }
+}
+
 /** Test-only: clears per-crm_type semaphore state between test runs. */
 function _resetForTests() {
   semaphoresByCrmType.clear();
+  dealerSemaphores.clear();
 }
 
 module.exports = {

@@ -426,7 +426,7 @@ async function assertDealerRecordExists(catalystApp, integration, externalLeadId
   const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
   let fetched;
   try {
-    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId));
+    fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId), integration.ROWID);
   } catch (err) {
     if (err.response?.status === 404 || err.response?.status === 204) {
       const missing = new Error(`Dealer record ${externalLeadId} no longer exists at the dealer CRM`);
