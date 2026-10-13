@@ -110,3 +110,60 @@ test('no Fusion dealers: the sweep reads exactly what it did before', async (t) 
   assert.equal(db.queries.some((q) => q.includes('webhook_events')), false);
   assert.equal(db.queries.some((q) => q.includes('NOT IN')), false);
 });
+
+// Review of Batch 7: the return-channel check must never stop the SLA sweep
+// for every dealer. A lookup that fails leaves that Fusion dealer exempt for
+// this sweep (never breached on a guess), and dealers outside
+// DEALER_ACTION_SLA_DEALERS are not checked at all.
+test('a failing credential lookup leaves that Fusion dealer exempt; AU008 is still judged', async (t) => {
+  const db = setup(t);
+  integrationAuthService.hasCredential.mock.mockImplementation(async () => { throw new Error('datastore busy'); });
+  const results = await sweep(db);
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.deepEqual(results.exemptNoReturnChannel, [{ dealerCode: '725001', reason: 'CHECK_FAILED' }]);
+});
+
+test('a failing webhook-event lookup leaves that Fusion dealer exempt; AU008 is still judged', async (t) => {
+  const db = setup(t);
+  const zcql = db.app.zcql;
+  db.app.zcql = () => ({
+    executeZCQLQuery: async (sql) => {
+      if (sql.includes('FROM webhook_events')) throw new Error('INVALID_TABLE webhook_events');
+      return zcql().executeZCQLQuery(sql);
+    },
+  });
+  const results = await sweep(db);
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.deepEqual(results.exemptNoReturnChannel, [{ dealerCode: '725001', reason: 'CHECK_FAILED' }]);
+});
+
+test('a Fusion dealer outside DEALER_ACTION_SLA_DEALERS is not checked at all', async (t) => {
+  const before = process.env.DEALER_ACTION_SLA_DEALERS;
+  process.env.DEALER_ACTION_SLA_DEALERS = 'AU008';
+  t.after(() => { if (before === undefined) delete process.env.DEALER_ACTION_SLA_DEALERS; else process.env.DEALER_ACTION_SLA_DEALERS = before; });
+  const db = setup(t, { webhookEvents: [] });
+  const results = await sweep(db);
+  assert.equal(integrationAuthService.hasCredential.mock.callCount(), 0);
+  assert.equal(db.queries.some((q) => q.includes('FROM webhook_events')), false);
+  assert.deepEqual(results.exemptNoReturnChannel, []);
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED', 'out of scope, as before');
+});
+
+test('if the Fusion integrations cannot even be listed, no Fusion lead is breached; AU008 is still judged', async (t) => {
+  const db = setup(t);
+  const zcql = db.app.zcql;
+  db.app.zcql = () => ({
+    executeZCQLQuery: async (sql) => {
+      if (sql.includes("crm_type = 'FUSION_SD'")) throw new Error('datastore busy');
+      return zcql().executeZCQLQuery(sql);
+    },
+  });
+  const before = { ...db.tables.lead_integrations[1] };
+  const results = await sweep(db);
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.deepEqual(db.tables.lead_integrations[1], before, 'Fusion mapping untouched');
+  assert.equal(results.skippedNoReturnChannel, 1);
+});

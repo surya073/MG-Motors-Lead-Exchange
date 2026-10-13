@@ -51,10 +51,12 @@ const SLA_MS = SLA_MINUTES * 60 * 1000;
 // Optional dealer scope (comma-separated dealer codes). Unset = every
 // dealer, which is the production behaviour. Used so a shortened test SLA
 // only touches the dealer under test.
-const SLA_DEALER_CODES = String(process.env.DEALER_ACTION_SLA_DEALERS || '')
-  .split(',')
-  .map((code) => code.trim())
-  .filter(Boolean);
+function slaDealerCodes() {
+  return String(process.env.DEALER_ACTION_SLA_DEALERS || '')
+    .split(',')
+    .map((code) => code.trim())
+    .filter(Boolean);
+}
 
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
@@ -140,16 +142,34 @@ async function fusionReturnChannelGap(catalystApp, integration) {
  * breached nor rewritten, and cannot crowd other dealers out of the window.
  */
 async function findIntegrationsWithoutReturnChannel(catalystApp) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE crm_type = 'FUSION_SD'`
-  );
+  // Never stops the sweep: a dealer whose check cannot be completed is left
+  // out of this sweep (never breached on a guess), and if even the list of
+  // Fusion dealers cannot be read, none of them is judged this time.
+  let rows;
+  try {
+    rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE crm_type = 'FUSION_SD'`
+    );
+  } catch (err) {
+    logger.error('slaMonitorService', 'Could not list Fusion integrations for the return-channel check', err);
+    return { exempt: [], excludeAllFusion: true };
+  }
+  // Dealers outside DEALER_ACTION_SLA_DEALERS are not judged anyway.
+  const scope = slaDealerCodes();
   const exempt = [];
   for (const wrapped of rows) {
     const integration = wrapped[DEALER_INTEGRATIONS_TABLE];
-    const reason = await fusionReturnChannelGap(catalystApp, integration);
+    if (scope.length && !scope.includes(integration.dealer_code)) continue;
+    let reason;
+    try {
+      reason = await fusionReturnChannelGap(catalystApp, integration);
+    } catch (err) {
+      logger.error('slaMonitorService', `Return-channel check failed for ${integration.dealer_code}; not judged this sweep`, err);
+      reason = 'CHECK_FAILED';
+    }
     if (reason) exempt.push({ integrationId: integration.ROWID, dealerCode: integration.dealer_code, reason });
   }
-  return exempt;
+  return { exempt, excludeAllFusion: false };
 }
 
 /**
@@ -167,6 +187,7 @@ async function findIntegrationsWithoutReturnChannel(catalystApp) {
  */
 async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = [], clock = 'last_synced_at') {
   const cutoff = toCatalystDateTime(new Date(now.getTime() - SLA_MS));
+  const SLA_DEALER_CODES = slaDealerCodes();
   const where =
     `WHERE sync_status = 'SYNCED' AND ${clock} IS NOT NULL AND ${clock} < '${cutoff}'${
       SLA_DEALER_CODES.length
@@ -217,7 +238,12 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
   const startedAt = clock();
   const deadline = options.deadline ?? (startedAt + (options.timeBudgetMs ?? SLA_TIME_BUDGET_MS));
 
-  const exempt = await findIntegrationsWithoutReturnChannel(catalystApp);
+  const { exempt, excludeAllFusion } = await findIntegrationsWithoutReturnChannel(catalystApp);
+  // Checked again per lead once its integration is read, which also covers
+  // the case where the Fusion integrations could not be listed.
+  const exemptIds = new Set(exempt.map((e) => String(e.integrationId)));
+  const lacksReturnChannel = (integration) => integration?.crm_type === 'FUSION_SD'
+    && (excludeAllFusion || exemptIds.has(String(integration.ROWID)));
   if (exempt.length > 0) {
     // The channel-health note: which dealers are not judged, and why.
     logger.info(
@@ -241,6 +267,7 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
     deferred: 0,
     skippedConcurrent: 0,
     skippedAlreadyHandled: 0,
+    skippedNoReturnChannel: 0,
   };
 
   const rotate = (mapping) =>
@@ -310,6 +337,11 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
           const acknowledgedAt = pathPolicy.parseTimestamp(fresh[clockCol]);
           if (!acknowledgedAt || now.getTime() - acknowledgedAt.getTime() < SLA_MS) {
             results.skippedAlreadyHandled += 1;
+            return;
+          }
+          // No proven return channel (Batch 7, C3): not judged, nothing rewritten.
+          if (lacksReturnChannel(integration)) {
+            results.skippedNoReturnChannel += 1;
             return;
           }
           if (!isIntegrationHealthy(integration)) {
