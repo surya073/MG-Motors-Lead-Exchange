@@ -66,9 +66,20 @@ function isIntegrationHealthy(integration) {
 }
 
 // The column the SLA runs from: the dealer-action clock (Batch 7, Q25), or
-// last_synced_at as before.
-function clockColumn() {
-  return isSlaDealerActionClockEnabled() ? 'last_dealer_action_at' : 'last_synced_at';
+// last_synced_at as before. With the flag on but the column not created yet,
+// the backfill query fails and this sweep uses last_synced_at instead.
+async function resolveClockColumn(catalystApp) {
+  if (!isSlaDealerActionClockEnabled()) return { clockCol: 'last_synced_at', backfilled: 0 };
+  try {
+    return { clockCol: 'last_dealer_action_at', backfilled: await backfillDealerActionClock(catalystApp) };
+  } catch (err) {
+    logger.error(
+      'slaMonitorService',
+      'SLA_DEALER_ACTION_CLOCK is on but lead_integrations.last_dealer_action_at cannot be read; this sweep uses last_synced_at',
+      err
+    );
+    return { clockCol: 'last_synced_at', backfilled: 0 };
+  }
 }
 
 const BACKFILL_ROWS = 100;
@@ -154,9 +165,8 @@ async function findIntegrationsWithoutReturnChannel(catalystApp) {
  * rewritten to achieve this: `last_synced_at` is the dealer-acknowledgement
  * time quoted as evidence in the Unhappy 10 record and must not be disturbed.
  */
-async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = []) {
+async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = [], clock = 'last_synced_at') {
   const cutoff = toCatalystDateTime(new Date(now.getTime() - SLA_MS));
-  const clock = clockColumn();
   const where =
     `WHERE sync_status = 'SYNCED' AND ${clock} IS NOT NULL AND ${clock} < '${cutoff}'${
       SLA_DEALER_CODES.length
@@ -215,11 +225,10 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
       `Dealer-action SLA not applied (no proven return channel): ${exempt.map((e) => `${e.dealerCode} ${e.reason}`).join(', ')}`
     );
   }
-  const backfilled = isSlaDealerActionClockEnabled() ? await backfillDealerActionClock(catalystApp) : 0;
-  const clockCol = clockColumn();
-  const { rows, overdue } = await selectOverdueMappings(catalystApp, now, exempt.map((e) => e.integrationId));
+  const { clockCol, backfilled } = await resolveClockColumn(catalystApp);
+  const { rows, overdue } = await selectOverdueMappings(catalystApp, now, exempt.map((e) => e.integrationId), clockCol);
   const results = {
-    ...(isSlaDealerActionClockEnabled() ? { backfilledDealerActionClock: backfilled } : {}),
+    ...(isSlaDealerActionClockEnabled() ? { backfilledDealerActionClock: backfilled, dealerActionClock: clockCol } : {}),
     exemptNoReturnChannel: exempt.map(({ dealerCode, reason }) => ({ dealerCode, reason })),
     candidates: rows.length,
     overdue,

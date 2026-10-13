@@ -796,6 +796,27 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   return outcome;
 }
 
+/**
+ * SLA_DEALER_ACTION_CLOCK (Batch 7): restarts the dealer's SLA clock. Written
+ * on its own and never fails the caller, so switching the flag on before the
+ * lead_integrations.last_dealer_action_at column exists breaks nothing.
+ */
+async function stampDealerActionClock(catalystApp, mappingRowId) {
+  if (!isSlaDealerActionClockEnabled() || !mappingRowId) return;
+  try {
+    await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+      ROWID: mappingRowId,
+      last_dealer_action_at: toCatalystDateTime(),
+    });
+  } catch (err) {
+    logger.error(
+      'crmIntegrationService',
+      `Could not record the dealer-action time on mapping ${mappingRowId} (does lead_integrations.last_dealer_action_at exist?)`,
+      err
+    );
+  }
+}
+
 async function rereadLead(catalystApp, leadRow) {
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
@@ -957,8 +978,9 @@ async function linkUnresolvedLead(catalystApp, integration, leadRow, externalLea
     last_sync_direction: 'ZOHO_TO_EXTERNAL_CRM',
     retry_count: '0',
     last_error: '',
-    ...(isSlaDealerActionClockEnabled() ? { last_dealer_action_at: toCatalystDateTime() } : {}),
   });
+  // Delivered now: the dealer's SLA clock starts (Batch 7).
+  await stampDealerActionClock(catalystApp, mapping.ROWID);
 
   let acknowledged = true;
   try {
@@ -1142,11 +1164,6 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       retry_count: '0',
       last_attempted_at: toCatalystDateTime(attemptStartedAt),
       last_error: '',
-      // The dealer's SLA clock starts when the lead is first delivered
-      // (Batch 7, SLA_DEALER_ACTION_CLOCK). Updates and retries leave it.
-      ...(operation === 'CREATE_LEAD' && isSlaDealerActionClockEnabled()
-        ? { last_dealer_action_at: toCatalystDateTime() }
-        : {}),
     };
 
     let mappingRowId = existingMapping?.ROWID;
@@ -1155,6 +1172,9 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     } else {
       mappingRowId = (await mappingTable.insertRow(mappingUpdate))?.ROWID;
     }
+    // The dealer's SLA clock starts when the lead is first delivered
+    // (Batch 7, SLA_DEALER_ACTION_CLOCK). Updates and retries leave it.
+    if (operation === 'CREATE_LEAD') await stampDealerActionClock(catalystApp, mappingRowId);
     // FUSION_CHANGES_ONLY_PATCH (Batch 10): keep the full payload just sent,
     // so the next update can send only what changed. Never fails the sync.
     if (sentPayloadSnapshot.usesChangesOnlyPatch(integration)) {
@@ -2530,9 +2550,9 @@ async function attemptInboundLeadUpdate(
         existingLeadRow, internalUpdate, fieldMappings
       ),
       last_error: conflicts.length > 0 ? 'OWNERSHIP_CONFLICT' : '',
-      // A dealer change reached MG: the dealer acted (Batch 7).
-      ...(isSlaDealerActionClockEnabled() ? { last_dealer_action_at: toCatalystDateTime() } : {}),
     });
+    // A dealer change reached MG: the dealer acted (Batch 7).
+    await stampDealerActionClock(catalystApp, mapping.ROWID);
 
     // FUSION_CHANGES_ONLY_PATCH (Batch 10, field ownership): Fusion already
     // holds what the dealer just changed, so record it as sent; a later MG
