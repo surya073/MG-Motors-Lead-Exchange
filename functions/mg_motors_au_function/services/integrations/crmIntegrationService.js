@@ -1970,6 +1970,14 @@ async function processResolvedInboundLead(
   return claimResult;
 }
 
+// Fusion enquiryStatus values with no MG meaning (Q1, 13 Oct 2026).
+const FUSION_UNAPPLIED_STATUSES = new Set(['won', 'delivered']);
+
+function hasProgressedBeyondWaiting(mgStatus) {
+  const status = String(mgStatus ?? '').trim();
+  return status !== '' && status !== '-None-' && !pathPolicy.isWaitingForDealerActionStatus(status);
+}
+
 async function attemptInboundLeadUpdate(
   catalystApp, integration, externalLeadId, externalRecord,
   fieldMappings, statusMappings, requestReference, zohoCrmService,
@@ -2047,6 +2055,7 @@ async function attemptInboundLeadUpdate(
   let isStatusSync = affectedFields
     ? affectedFields.includes(statusTargetField)
     : Object.prototype.hasOwnProperty.call(externalRecord, statusTargetField);
+  const fusionV2 = integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled();
 
   // Unhappy 9 is decided on the dealer's RAW value, before the status
   // map can erase the distinction. Captured here so it survives into
@@ -2062,6 +2071,16 @@ async function attemptInboundLeadUpdate(
         { validDestinationValues: pathPolicy.getMgLeadStatusSet() }
       );
     } catch (err) {
+      // Fusion Won / Delivered leave MG unchanged (Q1) unless an admin adds
+      // an inbound row for them. Not held: a Fusion lead cannot be read
+      // back or replayed (no getLead), so a hold would never clear.
+      if (fusionV2 && FUSION_UNAPPLIED_STATUSES.has(pathPolicy.normalizeStatus(incomingStatusValue))) {
+        logger.info(
+          'crmIntegrationService',
+          `Fusion status "${incomingStatusValue}" for lead ${mapping.zoho_lead_id} (dealer ${integration.dealer_code}) leaves MG unchanged`
+        );
+        return { skipped: true, reason: 'FUSION_STATUS_NOT_APPLIED' };
+      }
       const rawStatusScenario = pathPolicy.classifyDealerStatus(incomingStatusValue);
       const heldScenarioCode = rawStatusScenario?.code === 'Unhappy 9'
         ? 'Unhappy 9'
@@ -2120,6 +2139,24 @@ async function attemptInboundLeadUpdate(
   // rejection reason, so it is never lost.
   if (isStatusSync && pathPolicy.classifyDealerStatus(rawDealerStatus)?.code === 'Unhappy 9') {
     mappedUpdate.lead_status = 'Not Qualified';
+  }
+
+  // Every MG status a dealer works on goes to Fusion as "Open" (Q1), so
+  // Fusion "Open" coming back is no news. It only moves a lead that is still
+  // waiting for the dealer (Update Pending); one MG has progressed keeps its
+  // status. Not held or alerted: nothing is wrong.
+  if (
+    fusionV2 &&
+    isStatusSync &&
+    mappedUpdate.lead_status !== undefined &&
+    pathPolicy.isWaitingForDealerActionStatus(mappedUpdate.lead_status) &&
+    hasProgressedBeyondWaiting(existingLeadRow.lead_status)
+  ) {
+    delete mappedUpdate.lead_status;
+    isStatusSync = false;
+    if (Object.keys(mappedUpdate).length === 0) {
+      return { skipped: true, reason: 'FUSION_OPEN_KEPT_MG_STATUS' };
+    }
   }
 
   // Once Unhappy 10 has raised Unattended Alert, a repeated dealer
