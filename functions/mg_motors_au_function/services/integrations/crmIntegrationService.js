@@ -2520,6 +2520,48 @@ function durableEventColumns(integration, rawBody, externalLeadId) {
   }
 }
 
+// Catalyst datetime columns written by toCatalystDateTime() are UTC.
+function parseUtcDateTime(value) {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/.exec(String(value || '').trim());
+  if (!match) return null;
+  const parsed = Date.parse(`${match[1]}T${match[2]}Z`);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Batch 6, audit C4: a repeat of an event id is a true duplicate only when the
+ * first delivery SUCCEEDED. One still being processed (RECEIVED under a live
+ * lease) is "in progress". One that FAILED, was held (PENDING) or was
+ * abandoned (RECEIVED, lease expired: the instance died) is processed again
+ * under a new lease, so it is never acknowledged without being done.
+ */
+async function claimRepeatedWebhookEvent(catalystApp, dedupeKey) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${WEBHOOK_EVENTS_TABLE} WHERE dedupe_key = '${safeQuoteForZcql(dedupeKey)}' LIMIT 1`
+  );
+  const existing = rows.length > 0 ? rows[0][WEBHOOK_EVENTS_TABLE] : null;
+  if (!existing || existing.processing_status === 'SUCCESS') {
+    logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
+    return { isDuplicate: true };
+  }
+  const leaseEnds = parseUtcDateTime(existing.lease_until);
+  if (existing.processing_status === 'RECEIVED' && leaseEnds !== null && leaseEnds > Date.now()) {
+    logger.info('crmIntegrationService', `Webhook event still in progress (dedupe_key=${dedupeKey})`);
+    return { isDuplicate: true, inProgress: true };
+  }
+  await catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE).updateRow({
+    ROWID: existing.ROWID,
+    processing_status: 'RECEIVED',
+    attempt_count: (Number(existing.attempt_count) || 1) + 1,
+    lease_until: leaseUntil(),
+  });
+  logger.info(
+    'crmIntegrationService',
+    `Webhook event ${dedupeKey} was ${existing.processing_status}; processing it again`
+  );
+  return { isDuplicate: false, eventRowId: existing.ROWID, reprocessed: true };
+}
+
 async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eventId, { externalLeadId = null } = {}) {
   const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
 
@@ -2548,8 +2590,7 @@ async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eve
       return { isDuplicate: false, eventRowId: inserted.ROWID };
     } catch (err) {
       if (isDuplicateConstraintError(err)) {
-        logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
-        return { isDuplicate: true };
+        return claimRepeatedWebhookEvent(catalystApp, dedupeKey);
       }
       // Most likely the Batch 6 columns have not been created yet.
       logger.error(

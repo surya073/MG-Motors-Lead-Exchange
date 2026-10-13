@@ -126,10 +126,13 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
     const externalLeadId = (payload && typeof payload === 'object')
       ? (payload.lead_id || payload.id || payload.leadId || null)
       : null;
-    const { isDuplicate, eventRowId } = await crmIntegrationService.checkAndRecordWebhookEvent(
+    const { isDuplicate, inProgress, eventRowId } = await crmIntegrationService.checkAndRecordWebhookEvent(
       catalystApp, integration, rawBody, eventId, { externalLeadId }
     );
 
+    if (inProgress) {
+      return res.status(202).json({ ok: true, status: 'IN_PROGRESS' });
+    }
     if (isDuplicate) {
       return res.status(200).json({ ok: true, status: 'DUPLICATE' });
     }

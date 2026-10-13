@@ -131,3 +131,67 @@ test('a normal-length event id keeps today\'s dedupe key', async (t) => {
   await record(db, ZOHO, 'evt-42');
   assert.equal(db.tables.webhook_events[0].dedupe_key, `${ZOHO.ROWID}:evt-42`);
 });
+
+// Batch 6, C4: a repeated event id is no longer always "duplicate". Never
+// answer 200 for work that was not done: only a SUCCESS event is a true
+// duplicate; one still being processed (RECEIVED, live lease) is "in
+// progress"; a FAILED, PENDING or abandoned (RECEIVED, lease expired) one is
+// processed again, under a new lease.
+const { toCatalystDateTime } = require('../utils/dateFormat');
+
+function seeded(t, existing, options) {
+  const db = setup(t, options);
+  db.tables.webhook_events.push({
+    integration_id: FUSION.ROWID, dealer_code: '725001', event_id: 'msg_1', dedupe_key: `${FUSION.ROWID}:msg_1`,
+    attempt_count: 1, ...existing,
+  });
+  return db;
+}
+const inSeconds = (s) => toCatalystDateTime(new Date(Date.now() + s * 1000));
+
+test('C4: a repeat of a SUCCESS event is a duplicate', async (t) => {
+  const db = seeded(t, { processing_status: 'SUCCESS', lease_until: inSeconds(-500) });
+  assert.deepEqual(await record(db, FUSION, 'msg_1'), { isDuplicate: true });
+  assert.equal(db.tables.webhook_events[0].attempt_count, 1);
+});
+
+test('C4: a repeat while the first delivery is still being processed is "in progress", not processed twice', async (t) => {
+  const db = seeded(t, { processing_status: 'RECEIVED', lease_until: inSeconds(60) });
+  assert.deepEqual(await record(db, FUSION, 'msg_1'), { isDuplicate: true, inProgress: true });
+  assert.equal(db.tables.webhook_events[0].attempt_count, 1);
+});
+
+for (const [label, existing] of [
+  ['abandoned (RECEIVED, lease expired: the instance died)', { processing_status: 'RECEIVED', lease_until: inSeconds(-1) }],
+  ['FAILED', { processing_status: 'FAILED', lease_until: inSeconds(-300) }],
+  ['PENDING (held)', { processing_status: 'PENDING', lease_until: inSeconds(-300) }],
+  ['FAILED that finished inside its lease', { processing_status: 'FAILED', lease_until: inSeconds(90) }],
+]) {
+  test(`C4: a repeat of a ${label} event is processed again under a new lease`, async (t) => {
+    const db = seeded(t, existing);
+    const result = await record(db, FUSION, 'msg_1');
+    assert.deepEqual(result, { isDuplicate: false, eventRowId: '1000', reprocessed: true });
+    const row = db.tables.webhook_events[0];
+    assert.equal(db.tables.webhook_events.length, 1);
+    assert.equal(row.processing_status, 'RECEIVED');
+    assert.equal(row.attempt_count, 2);
+    assert.ok(Date.parse(`${row.lease_until.replace(' ', 'T')}Z`) > Date.now() + 100 * 1000);
+  });
+}
+
+test('C4: an old row without the Batch 6 columns is processed again too', async (t) => {
+  const db = setup(t);
+  db.tables.webhook_events.push({ integration_id: FUSION.ROWID, event_id: 'msg_1', dedupe_key: `${FUSION.ROWID}:msg_1`, processing_status: 'FAILED' });
+  const result = await record(db, FUSION, 'msg_1');
+  assert.equal(result.reprocessed, true);
+  assert.equal(db.tables.webhook_events[0].attempt_count, 2);
+});
+
+test('flag off, or another CRM type: a repeat of a FAILED event is a duplicate, as today', async (t) => {
+  const off = seeded(t, { processing_status: 'FAILED' }, { store: null });
+  assert.deepEqual(await record(off, FUSION, 'msg_1'), { isDuplicate: true });
+
+  const zoho = setup(t);
+  zoho.tables.webhook_events.push({ integration_id: ZOHO.ROWID, event_id: 'e1', dedupe_key: `${ZOHO.ROWID}:e1`, processing_status: 'FAILED' });
+  assert.deepEqual(await record(zoho, ZOHO, 'e1'), { isDuplicate: true });
+});

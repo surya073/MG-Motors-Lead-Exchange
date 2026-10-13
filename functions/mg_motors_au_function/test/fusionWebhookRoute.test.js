@@ -143,3 +143,19 @@ test('Q18, flag off: dealer_id is not checked, as today', async (t) => {
   assert.equal(result.status, 200);
   assert.equal(processed.length, 1);
 });
+
+test('Batch 6: an event still in progress is answered 202 IN_PROGRESS and not processed again', async (t) => {
+  const { post, processed } = await setup(t);
+  crmIntegrationService.checkAndRecordWebhookEvent.mock.mockImplementation(async () => ({ isDuplicate: true, inProgress: true }));
+  const result = await post('725001', { lead_id: 'lead_1', status: 'Lost' }, FUSION_HEADERS);
+  assert.equal(result.status, 202);
+  assert.equal(result.body.status, 'IN_PROGRESS');
+  assert.equal(processed.length, 0);
+});
+
+test('Batch 6: the dealer lead id is passed along to be stored with the event', async (t) => {
+  const { post } = await setup(t);
+  await post('725001', { lead_id: 'lead_XYZ', status: 'Lost' }, FUSION_HEADERS);
+  const call = crmIntegrationService.checkAndRecordWebhookEvent.mock.calls[0];
+  assert.deepEqual(call.arguments[4], { externalLeadId: 'lead_XYZ' });
+});
