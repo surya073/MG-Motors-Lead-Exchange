@@ -644,7 +644,7 @@ router.get('/oem-crm/status-picklist', requireAdminOrViewRole, async (req, res) 
   }
 });
 
-router.get('/leads/:crmRecordId/timeline', async (req, res) => {
+router.get('/leads/:crmRecordId/timeline', requireAdminOrViewRole, async (req, res) => {
   const catalystApp = catalyst.initialize(req);
   const { crmRecordId } = req.params;
   try {
