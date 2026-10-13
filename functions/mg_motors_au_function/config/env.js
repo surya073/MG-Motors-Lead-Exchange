@@ -261,6 +261,17 @@ function getCronWorkBudgetMs() {
   return ms > 0 ? ms : null;
 }
 
+/**
+ * SYNC_CLAIM_FAIL_CLOSED=true: when a lead's sync claim cannot be stored, the
+ * sync is deferred (outbound to the retry sweep, inbound to the replay sweep)
+ * instead of running without duplicate protection, and the lead is re-read
+ * under its claim before its payload is built (FUSION_REMEDIATION_PLAN.md,
+ * Batch 8, audit S4). Unset keeps today's fail-open behaviour.
+ */
+function isSyncClaimFailClosed() {
+  return String(process.env.SYNC_CLAIM_FAIL_CLOSED || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -278,4 +289,5 @@ module.exports = {
   getFusionRateBudgetConfig,
   getCrmApiPerDealerLimit,
   getCronWorkBudgetMs,
+  isSyncClaimFailClosed,
 };

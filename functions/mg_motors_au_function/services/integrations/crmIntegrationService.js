@@ -17,6 +17,7 @@ const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
 const {
   getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
+  isSyncClaimFailClosed,
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
@@ -756,13 +757,48 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   // instance; this is the cross-instance half, backed by a DB-enforced
   // unique constraint (see outboundSyncClaimService.js for the exact
   // mechanism and its one required Catalyst Console migration step).
-  return outboundSyncClaimService.withOutboundSyncClaim(
+  const outcome = await outboundSyncClaimService.withOutboundSyncClaim(
     catalystApp,
     integration.ROWID,
     zohoLeadId,
     requestReference,
-    () => attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference)
+    async () => attemptExternalCrmSync(
+      catalystApp,
+      integration,
+      // SYNC_CLAIM_FAIL_CLOSED (Batch 8, S4): build the payload from the lead
+      // as it is now, read under the claim, not as the caller last saw it.
+      isSyncClaimFailClosed() ? await rereadLead(catalystApp, leadRow) : leadRow,
+      zohoLeadId,
+      requestReference
+    )
   );
+
+  // The claim could not be stored (SYNC_CLAIM_FAIL_CLOSED): nothing was sent.
+  // Queue it for the retry sweep as our own (LOCAL) failure, without an
+  // alert; it is not the dealer's fault.
+  if (outcome?.skipped && outcome.reason === 'CLAIM_UNAVAILABLE') {
+    try {
+      await recordOutboundFailureAndCheckEscalation(
+        catalystApp, integration, zohoLeadId,
+        Object.assign(new Error('Sync claim could not be stored; delivery deferred'), { code: 'CLAIM_UNAVAILABLE' })
+      );
+    } catch (err) {
+      logger.error('crmIntegrationService', `Could not queue lead ${zohoLeadId} for retry after a claim failure`, err);
+    }
+  }
+  return outcome;
+}
+
+async function rereadLead(catalystApp, leadRow) {
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(leadRow.crm_record_id)}' LIMIT 1`
+    );
+    return rows.length > 0 ? { ...leadRow, ...rows[0][LEADS_TABLE] } : leadRow;
+  } catch (err) {
+    logger.error('crmIntegrationService', `Could not re-read lead ${leadRow.crm_record_id} under its claim; using the row given`, err);
+    return leadRow;
+  }
 }
 
 // True when this integration's latest outbound update was already refused
@@ -2013,7 +2049,10 @@ async function processResolvedInboundLead(
     )
   );
 
-  if (claimResult?.skipped && claimResult.reason === 'CONCURRENT_SYNC_IN_PROGRESS') {
+  if (claimResult?.skipped && ['CONCURRENT_SYNC_IN_PROGRESS', 'CLAIM_UNAVAILABLE'].includes(claimResult.reason)) {
+    // CLAIM_UNAVAILABLE: the claim could not be stored (SYNC_CLAIM_FAIL_CLOSED,
+    // Batch 8); held for the replay sweep the same way.
+    const holdCode = claimResult.reason === 'CLAIM_UNAVAILABLE' ? 'CLAIM_UNAVAILABLE' : 'CONCURRENT_UPDATE_IN_PROGRESS';
     // A fresh (non-replay) delivery that loses the claim race must not be
     // silently dropped — nothing would ever pick it up again. Hold it the
     // same way every other "can't apply this right now" case in this
@@ -2031,15 +2070,19 @@ async function processResolvedInboundLead(
         zoho_lead_id: mapping.zoho_lead_id,
         external_lead_id: externalLeadId,
         status: 'FAILED',
-        error_message: 'CONCURRENT_UPDATE_IN_PROGRESS',
+        error_message: holdCode,
         request_reference: requestReference,
       }, {
         scenarioCode: 'Unhappy 4',
-        scenarioMessage: 'Another update for this lead was already in progress; queued for automatic retry.',
-        notify: mapping.last_error !== 'CONCURRENT_UPDATE_IN_PROGRESS',
-        reason: 'A concurrent inbound or outbound operation for this lead was already in progress when this update arrived; it will be retried automatically.',
+        scenarioMessage: holdCode === 'CLAIM_UNAVAILABLE'
+          ? 'The update could not be locked against concurrent changes; queued for automatic retry.'
+          : 'Another update for this lead was already in progress; queued for automatic retry.',
+        notify: mapping.last_error !== holdCode,
+        reason: holdCode === 'CLAIM_UNAVAILABLE'
+          ? 'The sync claim for this lead could not be stored, so the update was not applied without duplicate protection; it will be retried automatically.'
+          : 'A concurrent inbound or outbound operation for this lead was already in progress when this update arrived; it will be retried automatically.',
       });
-      await markMappingHeld(catalystApp, mapping.ROWID, 'CONCURRENT_UPDATE_IN_PROGRESS');
+      await markMappingHeld(catalystApp, mapping.ROWID, holdCode);
     }
     return { ...claimResult, held: true };
   }

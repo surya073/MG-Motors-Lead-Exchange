@@ -15,8 +15,9 @@
  *              CRM rejected with a 2xx (Zoho), a dealer that accepted a
  *              create without returning an id, or a configuration error:
  *              repeating the same request cannot succeed.
- *   LOCAL      raised on our side: the CRM API queue is full, or the OEM
- *              write-back after a delivery failed.
+ *   LOCAL      raised on our side: the CRM API queue is full, our Fusion
+ *              request budget is used up, a sync claim could not be
+ *              stored, or the OEM write-back after a delivery failed.
  *
  * Only TRANSIENT and LOCAL failures are worth retrying automatically. A
  * request that got no response at all is TRANSIENT even when its code says
@@ -30,7 +31,15 @@ const DEALER_ERROR_CLASS = Object.freeze({
   LOCAL: 'LOCAL',
 });
 
-const LOCAL_CODES = new Set(['CRM_API_QUEUE_FULL', 'ZOHO_ACK_UPDATE_FAILED']);
+// Batch 8: our own Fusion request budget refusing a request, and a sync
+// claim that could not be stored, are ours too (a Fusion 429 cool-down,
+// FUSION_COOLDOWN, is the dealer's and stays TRANSIENT).
+const LOCAL_CODES = new Set([
+  'CRM_API_QUEUE_FULL',
+  'ZOHO_ACK_UPDATE_FAILED',
+  'FUSION_RATE_BUDGET_EXHAUSTED',
+  'CLAIM_UNAVAILABLE',
+]);
 
 const PERMANENT_CODES = new Set([
   'DEALER_ACK_MISSING_ID',

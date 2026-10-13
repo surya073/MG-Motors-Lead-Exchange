@@ -1,6 +1,7 @@
 'use strict';
 
 const logger = require('../../utils/logger');
+const { isSyncClaimFailClosed } = require('../../config/env');
 const { toCatalystDateTime } = require('../../utils/dateFormat');
 const pathPolicy = require('./pathPolicyService');
 
@@ -166,7 +167,17 @@ async function withOutboundSyncClaim(catalystApp, integrationId, zohoLeadId, req
   try {
     claim = await acquireClaim(catalystApp, integrationId, zohoLeadId, requestReference);
   } catch (err) {
-    // FAILS OPEN, deliberately: acquireClaim only throws when it cannot
+    // SYNC_CLAIM_FAIL_CLOSED (Batch 8, audit S4): defer instead. The caller
+    // queues the work for its retry or replay sweep.
+    if (isSyncClaimFailClosed()) {
+      logger.error(
+        'outboundSyncClaimService',
+        `Could not acquire sync claim for lead ${zohoLeadId} (integration ${integrationId}) — deferred, not run without duplicate protection`,
+        err
+      );
+      return { skipped: true, reason: 'CLAIM_UNAVAILABLE' };
+    }
+    // FAILS OPEN, deliberately (unless SYNC_CLAIM_FAIL_CLOSED is on): acquireClaim only throws when it cannot
     // even confirm WHY the insert failed (most likely cause: the
     // outbound_sync_claims table hasn't been created yet in this
     // environment — see this file's header comment for the required
