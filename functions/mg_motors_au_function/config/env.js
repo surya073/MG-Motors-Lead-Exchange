@@ -217,6 +217,23 @@ function zohoTimeoutOption() {
   return timeout ? { timeout } : {};
 }
 
+/**
+ * Fusion SD request budget (FUSION_REMEDIATION_PLAN.md, Batch 8, audit S1):
+ * FUSION_RATE_BUDGET=true turns it on (default off). Each Fusion integration
+ * then sends at most FUSION_RATE_LIMIT_PER_MINUTE (default 300, Fusion's
+ * documented limit) x FUSION_RATE_HEADROOM (default 0.8) requests a minute,
+ * and waits out a 429's Retry-After. Read on every call.
+ */
+function getFusionRateBudgetConfig() {
+  const limit = Number(String(process.env.FUSION_RATE_LIMIT_PER_MINUTE || '').trim());
+  const headroom = Number(String(process.env.FUSION_RATE_HEADROOM || '').trim());
+  return {
+    enabled: String(process.env.FUSION_RATE_BUDGET || '').trim().toLowerCase() === 'true',
+    limitPerMinute: Number.isInteger(limit) && limit > 0 ? limit : 300,
+    headroom: headroom > 0 && headroom <= 1 ? headroom : 0.8,
+  };
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -231,4 +248,5 @@ module.exports = {
   isSlaDealerActionClockEnabled,
   getZohoApiTimeoutMs,
   zohoTimeoutOption,
+  getFusionRateBudgetConfig,
 };

@@ -6,6 +6,7 @@ const { assertSafeUrl } = require('./genericRestAdapter');
 const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
 const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
 const { isFusionInboundV2Enabled } = require('../../../config/env');
+const fusionRateBudget = require('../fusionRateBudget');
 
 /**
  * fusionSdAdapter.js
@@ -195,18 +196,38 @@ function nestDottedKeys(flat) {
  * caller to classify.
  */
 async function sendWithTokenRetry(catalystApp, integration, send) {
+  // Every request to Fusion spends from this integration's budget and
+  // respects a 429 cool-down (Batch 8, FUSION_RATE_BUDGET; a no-op when off).
+  const sendCounted = async (token) => {
+    await fusionRateBudget.takeSlot(catalystApp, integration);
+    try {
+      return await send(token);
+    } catch (err) {
+      if (err.response?.status === 429) {
+        await fusionRateBudget.recordRateLimited(
+          catalystApp,
+          integration,
+          retryAfterSeconds(err.response.headers?.['retry-after'] ?? err.response.headers?.['Retry-After'])
+        );
+      }
+      throw err;
+    }
+  };
+
   const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
   try {
-    return { response: await send(accessToken) };
+    return { response: await sendCounted(accessToken) };
   } catch (err) {
+    if (!err.response && fusionRateBudget.isLimitError(err)) throw err;
     if (err.response?.status !== 401) return { error: err };
   }
 
   invalidateToken(integration.ROWID, accessToken);
   const freshToken = await getAccessTokenForFusionSd(catalystApp, integration);
   try {
-    return { response: await send(freshToken) };
+    return { response: await sendCounted(freshToken) };
   } catch (err) {
+    if (!err.response && fusionRateBudget.isLimitError(err)) throw err;
     return { error: err };
   }
 }
