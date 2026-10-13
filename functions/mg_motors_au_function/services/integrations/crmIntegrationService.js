@@ -495,7 +495,11 @@ function validateIntegrationConfiguration(integration, fieldMappings, statusMapp
   const missingConfig = [];
   if (!integration?.base_url) missingConfig.push('base_url');
   if (!integration?.create_lead_endpoint) missingConfig.push('create_lead_endpoint');
-  if (!integration?.update_lead_endpoint) missingConfig.push('update_lead_endpoint');
+  // Fusion SD derives its PATCH path from the create endpoint
+  // (fusionSdAdapter.updatePath), so it never uses this field.
+  if (!integration?.update_lead_endpoint && integration?.crm_type !== 'FUSION_SD') {
+    missingConfig.push('update_lead_endpoint');
+  }
 
   const configuredSources = new Set(
     fieldMappings

@@ -207,3 +207,19 @@ test('Zoho creates use the supported upsert endpoint and enquiry-id duplicate ch
     }
   );
 });
+
+test('update_lead_endpoint is required except for Fusion SD, which derives its PATCH path', () => {
+  const requiredFields = require('../services/integrations/pathPolicyService')
+    .REQUIRED_DELIVERY_MAPPING_FIELDS
+    .map((source_field) => ({ source_field, target_field: `dealer_${source_field}` }));
+  const withoutUpdateEndpoint = (crm_type) => crmIntegration._test.validateIntegrationConfiguration(
+    { crm_type, base_url: 'https://dealer.example.com', create_lead_endpoint: '/v1/leads' },
+    requiredFields,
+    statusMappings,
+    'Update Pending'
+  );
+
+  assert.deepEqual(withoutUpdateEndpoint('FUSION_SD'), { valid: true, missingConfig: [] });
+  assert.deepEqual(withoutUpdateEndpoint('GENERIC_REST').missingConfig, ['update_lead_endpoint']);
+  assert.deepEqual(withoutUpdateEndpoint('ZOHO_CRM').missingConfig, ['update_lead_endpoint']);
+});
