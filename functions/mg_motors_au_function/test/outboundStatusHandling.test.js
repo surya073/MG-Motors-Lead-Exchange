@@ -172,16 +172,39 @@ test('one configuration alert per stretch of refused updates; it alerts again on
   assert.equal(updatesDisabledAlerts(), 2, 'refused again after a successful update');
 });
 
-// Open question Q6 (FUSION_REMEDIATION_PLAN.md): a FAILED mapping keeps
-// FAILED for now, as the plan says, so the retry sweep keeps re-sending it.
-test('a refused update keeps a FAILED mapping FAILED (open question Q6)', async (t) => {
+// Q6 (answered 13 Oct 2026): a lead that was waiting to retry is parked as
+// HELD, so the retry sweep (FAILED / FAILED_CRITICAL only) stops re-sending a
+// refused update on every run. Its next MG edit or a manual Retry sync sends
+// it again.
+test('a refused update parks a lead that was waiting to retry as HELD (Q6)', async (t) => {
   const { db, integration, leadRow } = setup(t, { mapping: { sync_status: 'FAILED', retry_count: '2', last_error: 'EXTERNAL_CRM_ERROR' } });
   fakeFusion(t, updatesDisabled);
 
   await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
 
-  assert.equal(db.tables.lead_integrations[0].sync_status, 'FAILED');
-  assert.equal(db.tables.lead_integrations[0].retry_count, '2');
+  const mapping = db.tables.lead_integrations[0];
+  assert.equal(mapping.sync_status, 'HELD');
+  assert.equal(mapping.last_error, 'DEALER_UPDATES_DISABLED');
+  assert.equal(mapping.retry_count, '2', 'the earlier failures stay on record');
+});
+
+test('an escalated lead (FAILED_CRITICAL) is parked the same way (Q6)', async (t) => {
+  const { db, integration, leadRow } = setup(t, { mapping: { sync_status: 'FAILED_CRITICAL', retry_count: '7' } });
+  fakeFusion(t, updatesDisabled);
+
+  await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+
+  assert.equal(db.tables.lead_integrations[0].sync_status, 'HELD');
+});
+
+test('a parked lead is sent again by its next update and is SYNCED once Fusion applies it (Q6)', async (t) => {
+  const { db, integration, leadRow } = setup(t, { mapping: { sync_status: 'HELD', last_error: 'DEALER_UPDATES_DISABLED' } });
+  fakeFusion(t, accepted);
+
+  const result = await crmIntegrationService.syncLeadToExternalCrm(db.app, integration, leadRow());
+
+  assert.equal(result.ok, true);
+  assert.equal(db.tables.lead_integrations[0].sync_status, 'SYNCED');
 });
 
 // --- H4: what Fusion did with an update is kept in the log ---

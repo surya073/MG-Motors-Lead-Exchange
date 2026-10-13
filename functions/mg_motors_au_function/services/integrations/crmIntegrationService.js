@@ -783,13 +783,20 @@ async function dealerUpdatesAlreadyDisabled(catalystApp, integration) {
 /**
  * The dealer refused an update because lead updates are switched off for
  * MG (Fusion 403 updates_not_enabled), so nothing was applied. The lead is
- * not marked SYNCED and no recovery is recorded: the mapping, the lead and
- * the integration keep their previous state (FUSION_REMEDIATION_PLAN.md Q6
- * covers a mapping that was waiting to retry). The skip is logged, and
- * admins get one alert per stretch of refused updates for the integration.
+ * not marked SYNCED and no recovery is recorded: the lead and the
+ * integration keep their previous state. A mapping that was waiting to retry
+ * (FAILED / FAILED_CRITICAL) is parked as HELD (Q6, 13 Oct 2026), so the
+ * retry sweep stops re-sending the refused update on every run; the lead's
+ * next MG edit or a manual Retry sync sends it again. The skip is logged,
+ * and admins get one alert per stretch of refused updates for the
+ * integration.
  */
 async function recordSkippedUpdate(catalystApp, integration, zohoLeadId, existingMapping, result, requestReference) {
   const alreadyAlerted = await dealerUpdatesAlreadyDisabled(catalystApp, integration);
+
+  if (['FAILED', 'FAILED_CRITICAL'].includes(existingMapping.sync_status)) {
+    await markMappingHeld(catalystApp, existingMapping.ROWID, DEALER_UPDATES_DISABLED);
+  }
 
   await writeLog(catalystApp, {
     integration_id: integration.ROWID,
