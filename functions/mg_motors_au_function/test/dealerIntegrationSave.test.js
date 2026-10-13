@@ -10,12 +10,14 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const axios = require('axios');
 const catalyst = require('zcatalyst-sdk-node');
 
 const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
 const { ADMIN_ROLE_ID } = require('../middleware/requireAdminRole');
 const routes = require('../routes/dealerCrmIntegrationRoutes');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
+const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
 
 const SAVED_BASE_URL = 'https://8.8.8.8/api/leadapi';
 
@@ -91,4 +93,25 @@ test('a public HTTPS base URL saves; so does one whose host does not resolve yet
 
   const noUrl = await saveIntegration({ base_url: '' });
   assert.equal(noUrl.status, 200, JSON.stringify(noUrl.body));
+});
+
+test('saving the integration drops the cached Fusion token, so new keys are used at once', async (t) => {
+  const { saveIntegration } = await setup(t);
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  let issued = 0;
+  t.mock.method(axios, 'post', async () => {
+    issued += 1;
+    return { data: { access_token: `tok-${issued}`, expires_in: 600 } };
+  });
+  const integration = { ROWID: '1000', base_url: SAVED_BASE_URL };
+  const getToken = () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration);
+
+  assert.equal(await getToken(), 'tok-1');
+  assert.equal(await getToken(), 'tok-1', 'cached until the save');
+
+  const saved = await saveIntegration({ fusion_access_key: 'new-access-key', fusion_secret_key: 'new-secret-key' });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+
+  assert.equal(await getToken(), 'tok-2');
 });

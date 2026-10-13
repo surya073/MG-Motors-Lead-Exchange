@@ -3,7 +3,7 @@
 const axios = require('axios');
 const logger = require('../../../utils/logger');
 const { assertSafeUrl } = require('./genericRestAdapter');
-const { getAccessTokenForFusionSd } = require('./fusionSdOAuthHelper');
+const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
 const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
 
 /**
@@ -175,31 +175,53 @@ function nestDottedKeys(flat) {
   return out;
 }
 
+/**
+ * Sends one Fusion request with a bearer token. A 401 can mean the cached
+ * token is stale (the keys were rotated, or saved on another instance), so
+ * the token is dropped and the request retried once with a fresh one. Token
+ * endpoint errors propagate as they are; a request error is returned for the
+ * caller to classify.
+ */
+async function sendWithTokenRetry(catalystApp, integration, send) {
+  const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
+  try {
+    return { response: await send(accessToken) };
+  } catch (err) {
+    if (err.response?.status !== 401) return { error: err };
+  }
+
+  invalidateToken(integration.ROWID);
+  const freshToken = await getAccessTokenForFusionSd(catalystApp, integration);
+  try {
+    return { response: await send(freshToken) };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
 async function createLead(catalystApp, integration, payload, { idempotencyKey } = {}) {
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
-  const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
+  const body = nestDottedKeys(payload);
 
-  let response;
-  try {
-    response = await axios.request({
-      method: integration.http_method || 'POST',
-      url: url.toString(),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-        // Fusion: "always send Idempotency-Key" — a retry after a timeout then
-        // returns the original lead instead of creating a duplicate.
-        ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
-      },
-      data: nestDottedKeys(payload),
-      timeout: 10000,
-    });
-  } catch (err) {
+  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
+    method: integration.http_method || 'POST',
+    url: url.toString(),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      // Fusion: "always send Idempotency-Key" — a retry after a timeout then
+      // returns the original lead instead of creating a duplicate.
+      ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
+    },
+    data: body,
+    timeout: 10000,
+  }));
+  if (error) {
     logger.error(
       'fusionSdAdapter',
-      `createLead failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
+      `createLead failed for integration ${integration.ROWID} (HTTP ${error.response?.status || 'network error'})`
     );
-    throw wrapFusionError(err, 'Fusion SD rejected the lead create request');
+    throw wrapFusionError(error, 'Fusion SD rejected the lead create request');
   }
 
   const externalLeadId = extractExternalLeadId(response);
@@ -290,33 +312,31 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
     throw err;
   }
   const url = await assertSafeUrl(`${integration.base_url}${updatePath(integration, externalLeadId)}`);
-  const accessToken = await getAccessTokenForFusionSd(catalystApp, integration);
+  const body = nestDottedKeys(payload);
 
-  let response;
-  try {
-    response = await axios.request({
-      method: 'PATCH',
-      url: url.toString(),
-      headers: {
-        'Content-Type': 'application/merge-patch+json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      data: nestDottedKeys(payload),
-      timeout: 10000,
-    });
-  } catch (err) {
-    if (isUpdatesNotEnabled(err)) {
+  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
+    method: 'PATCH',
+    url: url.toString(),
+    headers: {
+      'Content-Type': 'application/merge-patch+json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    data: body,
+    timeout: 10000,
+  }));
+  if (error) {
+    if (isUpdatesNotEnabled(error)) {
       logger.info(
         'fusionSdAdapter',
         `Dealer ${integration.dealer_code || integration.ROWID} has lead updates disabled for MG — update skipped (not an error)`
       );
-      return { externalLeadId, httpStatus: 403, raw: err.response.data, skipped: true };
+      return { externalLeadId, httpStatus: 403, raw: error.response.data, skipped: true };
     }
     logger.error(
       'fusionSdAdapter',
-      `updateLead failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
+      `updateLead failed for integration ${integration.ROWID} (HTTP ${error.response?.status || 'network error'})`
     );
-    throw wrapFusionError(err, 'Fusion SD rejected the lead update request');
+    throw wrapFusionError(error, 'Fusion SD rejected the lead update request');
   }
 
   return { externalLeadId, httpStatus: response.status, raw: response.data };
@@ -336,7 +356,8 @@ async function getLead() {
 async function testConnection(catalystApp, integration) {
   const start = Date.now();
   try {
-    await getAccessTokenForFusionSd(catalystApp, integration);
+    // Never the cached token: the check must reach Fusion with the saved keys.
+    await getAccessTokenForFusionSd(catalystApp, integration, { forceRefresh: true });
     return { httpStatus: 200, responseTimeMs: Date.now() - start, ok: true };
   } catch (err) {
     // An unsafe URL is a configuration error, reported as one the way

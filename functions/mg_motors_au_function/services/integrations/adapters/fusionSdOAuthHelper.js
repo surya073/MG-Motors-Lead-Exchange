@@ -35,9 +35,13 @@ const { assertSafeUrl } = require('./genericRestAdapter');
  *     adapter (see fusionSdAdapter.js) until that's confirmed too.
  */
 
-const tokenCache = new Map(); // integrationId -> { accessToken, expiresAt }
+const tokenCache = new Map(); // integrationId -> { accessToken, refreshAt }
 const inFlightRefreshes = new Map(); // integrationId -> Promise<string> (single-flight)
-const SAFETY_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
+// Fusion documents 600 s tokens; used when a response omits expires_in.
+const DEFAULT_TOKEN_LIFETIME_SEC = 600;
+// Refresh 5 min before expiry, but never more than half the lifetime, so a
+// short-lived token is still reused.
+const MAX_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const TOKEN_ENDPOINT_PATH = '/oauth2/token';
 
 async function requestNewToken(catalystApp, integration) {
@@ -77,6 +81,9 @@ async function requestNewToken(catalystApp, integration) {
     );
     const wrapped = new Error('Failed to obtain Fusion SD access token');
     wrapped.code = 'AUTHENTICATION_FAILED';
+    // Only the HTTP status is kept, so Test Connection can show it. A network
+    // error has no response and therefore no status.
+    if (err.response) wrapped.response = { status: err.response.status };
     throw wrapped;
   }
 
@@ -87,33 +94,55 @@ async function requestNewToken(catalystApp, integration) {
     throw err;
   }
 
-  tokenCache.set(integration.ROWID, {
+  const lifetimeSec = Number(expires_in);
+  const lifetimeMs = (Number.isFinite(lifetimeSec) && lifetimeSec > 0 ? lifetimeSec : DEFAULT_TOKEN_LIFETIME_SEC) * 1000;
+  return {
     accessToken: access_token,
-    expiresAt: Date.now() + (Number(expires_in) || 3600) * 1000,
-  });
-
-  return access_token;
+    refreshAt: Date.now() + lifetimeMs - Math.min(MAX_REFRESH_MARGIN_MS, lifetimeMs / 2),
+  };
 }
 
-async function getAccessTokenForFusionSd(catalystApp, integration) {
-  const cached = tokenCache.get(integration.ROWID);
-  if (cached && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS) {
+/**
+ * Returns the cached token while it is fresh. `forceRefresh` (Test
+ * Connection) always asks Fusion for a new one.
+ */
+async function getAccessTokenForFusionSd(catalystApp, integration, { forceRefresh = false } = {}) {
+  const integrationId = integration.ROWID;
+  const cached = tokenCache.get(integrationId);
+  if (!forceRefresh && cached && cached.refreshAt > Date.now()) {
     return cached.accessToken;
   }
 
   // Single-flight: if a refresh for this exact integration is already in
   // progress, reuse it instead of starting a second concurrent request.
-  const existingRefresh = inFlightRefreshes.get(integration.ROWID);
+  const existingRefresh = inFlightRefreshes.get(integrationId);
   if (existingRefresh) {
     return existingRefresh;
   }
 
-  const refreshPromise = requestNewToken(catalystApp, integration).finally(() => {
-    inFlightRefreshes.delete(integration.ROWID);
-  });
-  inFlightRefreshes.set(integration.ROWID, refreshPromise);
+  const refreshPromise = requestNewToken(catalystApp, integration)
+    .then((token) => {
+      // Not cached if invalidateToken ran meanwhile: this request may have
+      // used the keys that were just replaced.
+      if (inFlightRefreshes.get(integrationId) === refreshPromise) tokenCache.set(integrationId, token);
+      return token.accessToken;
+    })
+    .finally(() => {
+      if (inFlightRefreshes.get(integrationId) === refreshPromise) inFlightRefreshes.delete(integrationId);
+    });
+  inFlightRefreshes.set(integrationId, refreshPromise);
 
   return refreshPromise;
+}
+
+/**
+ * Drops an integration's cached token, e.g. after its keys or URL are saved,
+ * or when Fusion answers 401. The next caller fetches a new one. The cache is
+ * per process, so other instances recover through their own 401 handling.
+ */
+function invalidateToken(integrationId) {
+  tokenCache.delete(integrationId);
+  inFlightRefreshes.delete(integrationId);
 }
 
 /** Test-only: clears module-level caches between test runs. */
@@ -122,4 +151,4 @@ function _resetForTests() {
   inFlightRefreshes.clear();
 }
 
-module.exports = { getAccessTokenForFusionSd, _resetForTests };
+module.exports = { getAccessTokenForFusionSd, invalidateToken, _resetForTests };

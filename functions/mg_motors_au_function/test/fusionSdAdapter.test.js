@@ -7,6 +7,7 @@ const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
 const fusionSdAdapter = require('../services/integrations/adapters/fusionSdAdapter');
 const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
 const genericRestAdapter = require('../services/integrations/adapters/genericRestAdapter');
+const fixtures = require('./helpers/fusionFixtures');
 
 // Minimal fake Catalyst app + credential lookups, swapped in instead of a
 // real integrationAuthService call — these tests exercise the adapter's
@@ -536,4 +537,150 @@ test('createLead: a 2xx plain-text body such as "OK" is not taken as the lead id
   const result = await fusionSdAdapter.createLead({}, updateIntegration(), { 'contact.lastName': 'Testing' });
 
   assert.equal(result.externalLeadId, undefined);
+});
+
+// M7: token lifetime, invalidation and refresh on 401. Public IP literal
+// base URLs keep these offline-safe.
+function countTokens(t, { expiresIn = 600 } = {}) {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  const issued = { count: 0 };
+  t.mock.method(axios, 'post', async () => {
+    issued.count += 1;
+    return { data: { access_token: `tok-${issued.count}`, ...(expiresIn ? { expires_in: expiresIn } : {}) } };
+  });
+  return issued;
+}
+
+test('a token without expires_in is treated as 600 s and refreshed 5 minutes before that', async (t) => {
+  countTokens(t, { expiresIn: null });
+  let now = 1_700_000_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const integration = updateIntegration();
+
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-1');
+  now += 299 * 1000;
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-1');
+  now += 2 * 1000;
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-2');
+});
+
+test('a short-lived token is still reused, for half its lifetime', async (t) => {
+  countTokens(t, { expiresIn: 60 });
+  let now = 1_700_000_000_000;
+  t.mock.method(Date, 'now', () => now);
+  const integration = updateIntegration();
+
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-1');
+  now += 29 * 1000;
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-1');
+  now += 2 * 1000;
+  assert.equal(await fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration), 'tok-2');
+});
+
+test('invalidateToken makes the next caller fetch a new token; one fetched before it is not cached', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'secret');
+  let issued = 0;
+  let release;
+  t.mock.method(axios, 'post', async () => {
+    issued += 1;
+    const token = `tok-${issued}`;
+    if (issued === 2) await new Promise((resolve) => { release = resolve; });
+    return { data: { access_token: token, expires_in: 600 } };
+  });
+  const integration = updateIntegration();
+  const get = () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration);
+
+  assert.equal(await get(), 'tok-1');
+  fusionSdOAuthHelper.invalidateToken(integration.ROWID);
+  const inFlight = get();
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  // The keys are saved again while that request is still in flight.
+  fusionSdOAuthHelper.invalidateToken(integration.ROWID);
+  release();
+
+  assert.equal(await inFlight, 'tok-2', 'the caller that asked still gets its token');
+  assert.equal(await get(), 'tok-3', 'but it is not cached past the invalidation');
+});
+
+test('a 401 drops the cached token, refreshes it once and retries the request once', async (t) => {
+  const issued = countTokens(t);
+  const sentWith = [];
+  t.mock.method(axios, 'request', async (req) => {
+    sentWith.push(req.headers.Authorization);
+    if (sentWith.length === 1) throw fixtures.fusionProblemError('credential_revoked');
+    return fixtures.leadAcceptedResponse();
+  });
+
+  const result = await fusionSdAdapter.createLead({}, updateIntegration(), { 'contact.lastName': 'Testing' }, { idempotencyKey: 'z1' });
+
+  assert.equal(result.externalLeadId, fixtures.FUSION_TEST_LEAD_ID);
+  assert.deepEqual(sentWith, ['Bearer tok-1', 'Bearer tok-2']);
+  assert.equal(issued.count, 2, 'exactly one refresh');
+});
+
+test('a 401 that persists after the refresh fails as AUTHENTICATION_FAILED, with no further retries', async (t) => {
+  const issued = countTokens(t);
+  const request = t.mock.method(axios, 'request', async () => {
+    throw fixtures.fusionProblemError('credential_revoked');
+  });
+
+  await assert.rejects(
+    () => fusionSdAdapter.updateLead({}, updateIntegration(), fixtures.FUSION_TEST_LEAD_ID, { enquiryStatus: 'Open' }),
+    (err) => err.code === 'AUTHENTICATION_FAILED'
+  );
+  assert.equal(request.mock.callCount(), 2);
+  assert.equal(issued.count, 2);
+});
+
+test('only a 401 triggers the refresh; other errors fail on the first attempt', async (t) => {
+  const issued = countTokens(t);
+  const request = t.mock.method(axios, 'request', async () => {
+    throw fixtures.rateLimitedError();
+  });
+
+  await assert.rejects(
+    () => fusionSdAdapter.createLead({}, updateIntegration(), {}),
+    (err) => err.code === 'EXTERNAL_CRM_ERROR'
+  );
+  assert.equal(request.mock.callCount(), 1);
+  assert.equal(issued.count, 1);
+});
+
+test('testConnection always asks Fusion for a new token', async (t) => {
+  const issued = countTokens(t);
+  const integration = updateIntegration();
+
+  assert.equal((await fusionSdAdapter.testConnection({}, integration)).ok, true);
+  assert.equal((await fusionSdAdapter.testConnection({}, integration)).ok, true);
+  assert.equal(issued.count, 2);
+});
+
+test('a token error keeps its HTTP status for Test Connection; a network error has none', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'super-secret-key');
+  let failure = Object.assign(new Error('Request failed with status code 401'), {
+    response: { status: 401, data: { error: 'invalid_client' } },
+  });
+  t.mock.method(axios, 'post', async () => {
+    throw failure;
+  });
+  const integration = updateIntegration();
+
+  await assert.rejects(
+    () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, integration),
+    (err) => {
+      assert.equal(err.code, 'AUTHENTICATION_FAILED');
+      assert.deepEqual(err.response, { status: 401 });
+      assert.ok(!JSON.stringify(err).includes('super-secret-key'));
+      return true;
+    }
+  );
+  assert.equal((await fusionSdAdapter.testConnection({}, integration)).httpStatus, 401);
+
+  failure = Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+  const offline = await fusionSdAdapter.testConnection({}, integration);
+  assert.equal(offline.ok, false);
+  assert.equal(offline.httpStatus, 0, 'no response, so no status');
 });

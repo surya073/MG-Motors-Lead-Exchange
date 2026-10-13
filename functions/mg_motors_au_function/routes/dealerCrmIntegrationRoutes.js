@@ -7,6 +7,7 @@ const crmIntegrationService = require('../services/integrations/crmIntegrationSe
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const { findTargetFieldProblem } = require('../services/integrations/leadMappingService');
 const { assertSafeUrl } = require('../services/integrations/adapters/genericRestAdapter');
+const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 const oemPicklistService = require('../services/oemPicklistService');
@@ -216,6 +217,9 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
         await integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body.credential);
       }
     }
+    // A Fusion token cached for this integration may belong to the old keys
+    // or URL. (No-op for other CRM types.)
+    fusionSdOAuthHelper.invalidateToken(integration.ROWID);
     res.json({ integration: safeConfig({ ...integration, ...fields }) });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `PUT integration failed for ${dealerCode}`, err);
