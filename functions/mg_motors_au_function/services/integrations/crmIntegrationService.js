@@ -2711,15 +2711,43 @@ function isDuplicateConstraintError(err) {
 
 /**
  * Batch 6 (INBOUND_EVENT_STORE, Fusion SD only): the columns that make an
- * event durable. Null when the payload cannot be encrypted, in which case the
- * event is recorded as before rather than refused.
+ * event durable. With FUSION_INBOUND_V2 only the fields replay needs are
+ * stored (no customer details); a payload too large for its column is left
+ * out (the event keeps its lease, but cannot be replayed). Null when the
+ * payload cannot be encrypted, in which case the event is recorded as before
+ * rather than refused.
  */
+// webhook_events.payload_encrypted is a Text column (10,000 characters).
+const MAX_STORED_PAYLOAD_LENGTH = 10000;
+// What replay needs from a Fusion body when FUSION_INBOUND_V2 translates it:
+// only the status comes back to MG (Q16), so nothing else is stored.
+const FUSION_REPLAY_FIELDS = ['lead_id', 'dealer_id', 'status', 'pushed_at'];
+
+function payloadToStore(integration, rawBody) {
+  const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
+  if (!isFusionInboundV2Enabled()) return text;
+  try {
+    const body = JSON.parse(text);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return text;
+    return JSON.stringify(Object.fromEntries(
+      FUSION_REPLAY_FIELDS.filter((field) => field in body).map((field) => [field, body[field]])
+    ));
+  } catch {
+    return text;
+  }
+}
+
 function durableEventColumns(integration, rawBody, externalLeadId) {
   try {
+    const encrypted = integrationAuthService.encrypt(payloadToStore(integration, rawBody));
+    if (encrypted.length > MAX_STORED_PAYLOAD_LENGTH) {
+      logger.info(
+        'crmIntegrationService',
+        `Webhook payload for integration ${integration.ROWID} is too large to store; recorded without it (not replayable)`
+      );
+    }
     return {
-      payload_encrypted: integrationAuthService.encrypt(
-        Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody)
-      ),
+      payload_encrypted: encrypted.length <= MAX_STORED_PAYLOAD_LENGTH ? encrypted : null,
       external_lead_id: externalLeadId ? String(externalLeadId).slice(0, 255) : null,
       attempt_count: 1,
       lease_until: leaseUntil(),

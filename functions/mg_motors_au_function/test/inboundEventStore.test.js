@@ -195,3 +195,41 @@ test('flag off, or another CRM type: a repeat of a FAILED event is a duplicate, 
   zoho.tables.webhook_events.push({ integration_id: ZOHO.ROWID, event_id: 'e1', dedupe_key: `${ZOHO.ROWID}:e1`, processing_status: 'FAILED' });
   assert.deepEqual(await record(zoho, ZOHO, 'e1'), { isDuplicate: true });
 });
+
+// Review of Batch 6: the Text column holds 10,000 characters, and a Fusion
+// "whole lead" body with notes can exceed it once encrypted; the insert then
+// fell back to no payload, silently losing replay and C4. With
+// FUSION_INBOUND_V2, replay needs only lead_id, dealer_id, status and
+// pushed_at, so only those are kept: it fits, and no customer details are
+// stored. A body that still cannot fit is kept without its payload, with its
+// lease, so a repeat is still handled.
+const WHOLE_LEAD = {
+  lead_id: 'lead_01ABC', dealer_id: '725001', status: 'Lost', pushed_at: '2026-10-13T10:00:00Z',
+  first_name: 'Jane', email: 'jane@example.com', phone: '0412345678',
+  notes: Array.from({ length: 40 }, (_, i) => ({ type: 'note', text: `call ${i} `.repeat(30) })),
+};
+const bodyOf = (payload) => Buffer.from(JSON.stringify(payload));
+
+test('review: with FUSION_INBOUND_V2, only what replay needs is stored, so a long whole-lead body fits', async (t) => {
+  const db = setup(t);
+  withEnv(t, { FUSION_INBOUND_V2: 'true' });
+  const body = bodyOf(WHOLE_LEAD);
+  assert.ok(body.length > 10000, 'the raw body alone exceeds the column');
+  await crmIntegrationService.checkAndRecordWebhookEvent(db.app, FUSION, body, 'msg_big', { externalLeadId: 'lead_01ABC' });
+  const row = db.tables.webhook_events[0];
+  assert.ok(row.payload_encrypted.length <= 10000);
+  assert.deepEqual(JSON.parse(integrationAuthService.decrypt(row.payload_encrypted)), {
+    lead_id: 'lead_01ABC', dealer_id: '725001', status: 'Lost', pushed_at: '2026-10-13T10:00:00Z',
+  });
+});
+
+test('review: a body that cannot fit is stored without its payload but keeps its lease', async (t) => {
+  const db = setup(t);
+  withEnv(t, { FUSION_INBOUND_V2: null });
+  await crmIntegrationService.checkAndRecordWebhookEvent(db.app, FUSION, bodyOf(WHOLE_LEAD), 'msg_big', { externalLeadId: 'lead_01ABC' });
+  const row = db.tables.webhook_events[0];
+  assert.equal(row.payload_encrypted, null);
+  assert.equal(row.attempt_count, 1);
+  assert.ok(row.lease_until);
+  assert.equal(row.external_lead_id, 'lead_01ABC');
+});
