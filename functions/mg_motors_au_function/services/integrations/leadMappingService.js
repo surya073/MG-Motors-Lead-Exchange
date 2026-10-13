@@ -161,6 +161,25 @@ function mappedCandidates(status, statusMappings, direction) {
 }
 
 /**
+ * True when an MG status has a dealer -> MG row (e.g. Fusion "Won" -> MG
+ * "Contacted") but nothing that maps it MG -> dealer: an inbound-only
+ * mapping. There is no dealer value to send for it, so the outbound status
+ * field is left out, as for the MG-only workflow states.
+ */
+function isInboundOnlyStatus(mgStatus, statusMappings) {
+  const needle = normalizeStatus(mgStatus);
+  const rows = (statusMappings || []).filter(Boolean);
+  const mapsOutbound = rows.some((row) => {
+    const direction = normalizedDirection(row.direction);
+    return (!direction || direction === 'ZOHO_TO_EXTERNAL') && normalizeStatus(row.source_status) === needle;
+  });
+  const mapsInbound = rows.some((row) =>
+    normalizedDirection(row.direction) === 'EXTERNAL_TO_ZOHO' && normalizeStatus(row.target_status) === needle
+  );
+  return mapsInbound && !mapsOutbound;
+}
+
+/**
  * Translates a status using the row's direction. The old implementation
  * ignored `direction` and searched both forward and reverse rows as though
  * every row were MG -> dealer. With duplicated/reversed AU008 rows, query
@@ -228,6 +247,7 @@ module.exports = {
   mapZohoLeadToExternal,
   mapExternalLeadToZoho,
   mapStatus,
+  isInboundOnlyStatus,
   findTargetFieldProblem,
   RESERVED_TARGET_SEGMENTS,
 };

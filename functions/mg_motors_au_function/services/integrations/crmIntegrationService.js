@@ -475,11 +475,13 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings) {
   // workflow states. The approved register gives them no dealer value, so
   // inventing one would either fail the dealer picklist or falsely imply a
   // dealer action. The configured status field is still required so inbound
-  // dealer lifecycle values can be identified and translated.
+  // dealer lifecycle values can be identified and translated. A status mapped
+  // only dealer -> MG (inbound-only) has no dealer value either.
   if (
     leadRow.lead_status &&
     statusFieldMapping &&
-    !pathPolicy.isOemOnlyStatus(leadRow.lead_status)
+    !pathPolicy.isOemOnlyStatus(leadRow.lead_status) &&
+    !leadMappingService.isInboundOnlyStatus(leadRow.lead_status, statusMappings)
   ) {
     payload[statusFieldMapping.target_field] = leadMappingService.mapStatus(
       leadRow.lead_status,
@@ -510,7 +512,11 @@ function validateIntegrationConfiguration(integration, fieldMappings, statusMapp
     if (!configuredSources.has(field)) missingConfig.push(`field:${field}`);
   });
 
-  if (leadStatus && !pathPolicy.isOemOnlyStatus(leadStatus)) {
+  if (
+    leadStatus &&
+    !pathPolicy.isOemOnlyStatus(leadStatus) &&
+    !leadMappingService.isInboundOnlyStatus(leadStatus, statusMappings)
+  ) {
     try {
       leadMappingService.mapStatus(leadStatus, statusMappings, 'ZOHO_TO_EXTERNAL');
     } catch (_) {
@@ -1174,7 +1180,12 @@ function classifyLogScenario(
 
   // The requested 15-path register assigns a failed dealer -> MG status
   // update (including an unmapped raw status held for review) to Unhappy 4.
+  // An MG status with no dealer mapping on the way OUT is a dealer mapping
+  // problem instead: Unhappy 5, as syncLeadToExternalCrm classifies it.
   if (unmappedStatusValue || code.startsWith('STATUS_MAPPING_NOT_FOUND')) {
+    if (!unmappedStatusValue && direction === 'ZOHO_TO_EXTERNAL_CRM') {
+      return pathPolicy.scenario('Unhappy 5');
+    }
     return pathPolicy.scenario('Unhappy 4', {
       message: `Unmapped or invalid dealer status "${unmappedStatusValue || 'unknown'}" — held for mapping correction`,
     });
