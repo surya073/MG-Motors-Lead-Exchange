@@ -5,6 +5,7 @@ const logger = require('../../../utils/logger');
 const { assertSafeUrl } = require('./genericRestAdapter');
 const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
 const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
+const { isFusionInboundV2Enabled } = require('../../../config/env');
 
 /**
  * fusionSdAdapter.js
@@ -48,11 +49,11 @@ const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
  * id (`instance`, or `correlation_id` as the QA host sends it) reach thrown
  * errors and logs.
  *
- * Not supported: getLead (Fusion documents no read endpoint). Fusion does
- * document signed webhooks (Standard Webhooks), but the inbound receiver
- * cannot verify or translate them yet (audit finding H5), so `webhook`
- * stays false. Callers check `capabilities` via crmAdapterFactory.supports()
- * before using either.
+ * Not supported: getLead (Fusion documents no read endpoint). Fusion's
+ * signed webhooks (Standard Webhooks) are verified and translated only with
+ * FUSION_INBOUND_V2 on (Batch 5: webhookVerificationService.js and
+ * fusionSdInbound.js), so `webhook` follows that flag. Callers check
+ * `capabilities` via crmAdapterFactory.supports() before using either.
  */
 
 const capabilities = Object.freeze({
@@ -60,7 +61,7 @@ const capabilities = Object.freeze({
   updateLead: true, // PATCH /v1/leads/{lead_id}, RFC 7396 merge patch (needs the leads:update scope)
   getLead: false,
   statusUpdate: false,
-  webhook: false, // documented by Fusion; our receiver is not compatible yet (audit H5)
+  get webhook() { return isFusionInboundV2Enabled(); }, // Standard Webhooks receiver, FUSION_INBOUND_V2 (audit H5)
   duplicateSearch: false,
 });
 
