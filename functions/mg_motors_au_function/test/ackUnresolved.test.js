@@ -160,3 +160,22 @@ test('replaying a RETRY_EXHAUSTED lead resets its retries and delivers it (Happy
   assert.equal(unresolved.status, 409);
   assert.equal(unresolved.body.error, 'LEAD_NOT_REPLAYABLE');
 });
+
+test('replay refuses a disabled integration up front, like a manual sync, and leaves the stopped lead as it was', async (t) => {
+  const harness = setupOutbound(t, {
+    integration: { status: 'DISABLED' },
+    mapping: { sync_status: 'RETRY_EXHAUSTED', retry_count: '10', failure_streak_started_at: '2026-10-01 10:00:00', last_error: 'NOT_FOUND' },
+    lead: { sync_status: 'RETRY_EXHAUSTED' },
+  });
+  const calls = fakeAdapter(t, {});
+
+  const replayed = await adminRequest(t, harness.db, '/AU999/integration/replay', { crmRecordId: 'ZL1' });
+
+  assert.equal(replayed.status, 400);
+  assert.equal(replayed.body.error, 'INTEGRATION_DISABLED');
+  const mapping = harness.db.tables.lead_integrations[0];
+  assert.equal(mapping.sync_status, 'RETRY_EXHAUSTED');
+  assert.equal(mapping.retry_count, '10');
+  assert.equal(harness.db.tables.leads[0].sync_status, 'RETRY_EXHAUSTED');
+  assert.equal(calls.update.length + calls.create.length, 0);
+});

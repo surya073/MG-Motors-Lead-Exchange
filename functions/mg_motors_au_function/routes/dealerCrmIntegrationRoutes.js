@@ -671,6 +671,7 @@ router.post('/:dealerCode/integration/replay', requireAdminRole, async (req, res
   try {
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
     if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+    if (integration.status === 'DISABLED') return res.status(400).json({ error: 'INTEGRATION_DISABLED' });
     if (!crmRecordId) return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     const leadRow = await findDealerLead(catalystApp, dealerCode, crmRecordId);
     if (!leadRow) return res.status(404).json({ error: 'LEAD_MAPPING_NOT_FOUND' });
