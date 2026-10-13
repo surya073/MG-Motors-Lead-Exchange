@@ -597,6 +597,8 @@ export default function DealerCRMConfig() {
   const [oauthRefreshToken, setOauthRefreshToken] = useState("");
   const [fusionAccessKey, setFusionAccessKey] = useState("");
   const [fusionSecretKey, setFusionSecretKey] = useState("");
+  const [fusionSigningSecret, setFusionSigningSecret] = useState("");
+  const [hasWebhookSigningSecret, setHasWebhookSigningSecret] = useState(false);
 
    const savedConfigSnapshotRef = useRef(EMPTY_CONFIG);
 
@@ -609,9 +611,10 @@ export default function DealerCRMConfig() {
       Boolean(oauthClientSecret) ||
       Boolean(oauthRefreshToken) ||
       Boolean(fusionAccessKey) ||
-      Boolean(fusionSecretKey)
+      Boolean(fusionSecretKey) ||
+      Boolean(fusionSigningSecret)
     );
-  }, [config, credentialValue, oauthClientId, oauthClientSecret, oauthRefreshToken, fusionAccessKey, fusionSecretKey]);
+  }, [config, credentialValue, oauthClientId, oauthClientSecret, oauthRefreshToken, fusionAccessKey, fusionSecretKey, fusionSigningSecret]);
 
   const [expandedDealers, setExpandedDealers] = useState(() => new Set());
   const [dealerPage, setDealerPage] = useState(1);
@@ -707,6 +710,7 @@ export default function DealerCRMConfig() {
     setOauthRefreshToken("");
     setFusionAccessKey("");
     setFusionSecretKey("");
+    setFusionSigningSecret("");
     setEditingCredentials(false);
   };
 
@@ -723,6 +727,7 @@ export default function DealerCRMConfig() {
       setConfig(loaded);
       savedConfigSnapshotRef.current = loaded;
       setHasStoredCredential(Boolean(result?.hasCredential));
+      setHasWebhookSigningSecret(Boolean(result?.hasWebhookSigningSecret));
       resetCredentialInputs();
 
       const mappingsResult = await dealerCrmIntegrationService.getMappings(dealer.dealer_code);
@@ -745,6 +750,7 @@ export default function DealerCRMConfig() {
         setConfig(EMPTY_CONFIG);
         savedConfigSnapshotRef.current = EMPTY_CONFIG;
         setHasStoredCredential(false);
+        setHasWebhookSigningSecret(false);
         resetCredentialInputs();
         setFieldMappings(DEFAULT_FIELD_MAPPINGS);
         setStatusMappings(DEFAULT_STATUS_MAPPINGS);
@@ -910,6 +916,7 @@ export default function DealerCRMConfig() {
         oauth_refresh_token: oauthRefreshToken || undefined,
         fusion_access_key: fusionAccessKey || undefined,
         fusion_secret_key: fusionSecretKey || undefined,
+        fusion_webhook_signing_secret: fusionSigningSecret.trim() || undefined,
       });
 
       showAlert("success", `Saved connection settings for ${selectedDealer.dealer_name}.`, {
@@ -1713,6 +1720,24 @@ export default function DealerCRMConfig() {
                                   )}
                                 </>
                               )}
+                              {/* Fusion signs its status webhooks with a secret the dealer issues (Standard Webhooks). */}
+                              <div className="dealer-crm-config__field-row">
+                                <label>Webhook Signing Secret</label>
+                                <input
+                                  type="password"
+                                  value={fusionSigningSecret}
+                                  onChange={(e) => setFusionSigningSecret(e.target.value)}
+                                  placeholder={hasWebhookSigningSecret ? MASKED_CREDENTIAL_PLACEHOLDER : "whsec_..."}
+                                  autoComplete="new-password"
+                                  disabled={isViewUser}
+                                  title={viewOnlyTitle}
+                                />
+                                <span className="dealer-crm-config__field-hint">
+                                  {hasWebhookSigningSecret
+                                    ? "A signing secret is saved and encrypted. Enter a new one only to replace it."
+                                    : "The secret Fusion signs this dealer's webhooks with. Needed for status updates from Fusion."}
+                                </span>
+                              </div>
                             </>
                           ) : showMaskedCredentials ? (
                             <div className="dealer-crm-config__field-row">

@@ -109,7 +109,12 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
       const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[integration.auth_type];
       hasCredential = credType ? await integrationAuthService.hasCredential(catalystApp, integration.ROWID, credType) : false;
     }
-    res.json({ integration: safeConfig(integration), hasCredential });
+    // Fusion signs its webhooks with a secret the dealer issues (Standard
+    // Webhooks). Only whether one is stored is reported, never the value.
+    const extra = integration.crm_type === 'FUSION_SD'
+      ? { hasWebhookSigningSecret: await integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET') }
+      : {};
+    res.json({ integration: safeConfig(integration), hasCredential, ...extra });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET integration failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
@@ -212,6 +217,12 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
             integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body[bodyKey])
           )
       );
+      // The secret Fusion signs this dealer's webhooks with (Batch 5). Blank
+      // leaves the stored one alone, like the keys above.
+      const signingSecret = String(body.fusion_webhook_signing_secret || '').trim();
+      if (signingSecret) {
+        await integrationAuthService.saveCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET', signingSecret);
+      }
     } else if (body.credential && body.auth_type) {
       const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[body.auth_type];
       if (credType) {

@@ -152,6 +152,16 @@ function isLeadNamePartsEnabled() {
   return String(process.env.LEAD_NAME_PARTS || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * FUSION_INBOUND_V2=true turns on Fusion SD's Standard Webhooks receiver
+ * (FUSION_REMEDIATION_PLAN.md, Batch 5): the signed-webhook check and the
+ * translation of Fusion's flat lead body. Fusion SD dealers only. Unset keeps
+ * today's inbound path. Read on every call.
+ */
+function isFusionInboundV2Enabled() {
+  return String(process.env.FUSION_INBOUND_V2 || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -160,4 +170,5 @@ module.exports = {
   getSharedWebhookConfig,
   getOutboundRetryConfig,
   isLeadNamePartsEnabled,
+  isFusionInboundV2Enabled,
 };
