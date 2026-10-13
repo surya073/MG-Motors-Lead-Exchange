@@ -190,6 +190,7 @@ async function runInboundReplaySweepInternal(catalystApp) {
     expired: 0,
     failed: 0,
     dealerBudgetExhausted: 0,
+    closedUnreplayable: 0,
   };
 
   // One group per dealer record, oldest first.
@@ -197,7 +198,19 @@ async function runInboundReplaySweepInternal(catalystApp) {
   for (const wrapped of queuedRows) {
     const logRow = wrapped[INTEGRATION_LOGS_TABLE];
     if (!logRow.integration_id || !logRow.external_lead_id) {
-      results.stillWaiting += 1;
+      // Nothing identifies a dealer record to replay, so it would wait for
+      // ever; close it, keeping the original reason (Batch 6, audit L7).
+      try {
+        await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).updateRow({
+          ROWID: logRow.ROWID,
+          status: 'CLOSED',
+          error_message: `${logRow.error_message || ''} | closed: no dealer record to replay`.slice(0, 500),
+        });
+        results.closedUnreplayable += 1;
+      } catch (err) {
+        logger.error('inboundReplayScheduler', `Could not close unreplayable log ROWID=${logRow.ROWID}`, err);
+        results.stillWaiting += 1;
+      }
       continue;
     }
     const key = `${logRow.integration_id}:${logRow.external_lead_id}`;

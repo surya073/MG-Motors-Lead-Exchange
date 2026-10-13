@@ -126,3 +126,21 @@ test('a status the dealer map still cannot translate stays held, without a secon
   assert.equal(harness.alerts.mock.callCount(), 0);
   assert.equal(heldLog(harness).status, 'FAILED');
 });
+
+// Audit L7: a held row with no dealer integration or no dealer record id can
+// never be replayed; it is closed with a reason instead of waiting forever.
+test('a held row without an integration or dealer record id is closed with a reason (every CRM type)', async (t) => {
+  const harness = held(t, { store: null });
+  harness.db.tables.integration_logs.push(
+    { integration_id: null, external_lead_id: 'x', happy_unhappy_path_name: 'Unhappy 4', status: 'FAILED', error_message: 'MG_WRITE_BACK_FAILED:TRANSPORT', CREATEDTIME: '2026-10-13 08:00:00:000' },
+    { integration_id: '1000', external_lead_id: null, happy_unhappy_path_name: 'Unhappy 7', status: 'FAILED', error_message: 'LEAD_MAPPING_NOT_FOUND', CREATEDTIME: '2026-10-13 08:00:01:000' },
+  );
+  const results = await inboundReplayScheduler.runInboundReplaySweep(harness.db.app);
+  assert.equal(results.closedUnreplayable, 2);
+  const [a, b] = harness.db.tables.integration_logs.slice(-2);
+  for (const row of [a, b]) {
+    assert.equal(row.status, 'CLOSED');
+    assert.match(row.error_message, /closed: no dealer record to replay/);
+  }
+  assert.match(a.error_message, /^MG_WRITE_BACK_FAILED:TRANSPORT/, 'the original reason is kept');
+});

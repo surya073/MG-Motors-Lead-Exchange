@@ -81,7 +81,10 @@ export default function OutOfOrderEventsOffcanvas({ open, onClose, events, heldC
                   <li className="ooo-offcanvas__card" key={`${event.dealerCode}:${event.externalLeadId}`}>
                     <div className="ooo-offcanvas__card-top">
                       <span className="ooo-offcanvas__card-name">
-                        {event.customerName || (event.dealerRecordMissing ? "Not found at dealer" : "—")}
+                        {event.customerName ||
+                          (event.dealerRecordUnreadable
+                            ? "Not readable from dealer"
+                            : event.dealerRecordMissing ? "Not found at dealer" : "—")}
                       </span>
                       <Badge tone={meta.tone}>{meta.label}</Badge>
                     </div>

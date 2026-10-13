@@ -136,6 +136,13 @@ router.get('/admin/out-of-order-events', requireAdminOrViewRole, async (req, res
         }
         const integration = await integrations.get(event.dealerCode);
         if (!integration) return;
+        // A dealer CRM with no read-back (Fusion SD) is not asked: the record
+        // is "not readable from the dealer", not missing (Batch 6, L7).
+        if (integration.crm_type && !crmAdapterFactory.supports(integration.crm_type, 'getLead')) {
+          dealerDetailCache.set(cacheKey, { at: Date.now(), detail: { dealerRecordUnreadable: true } });
+          event.dealerRecordUnreadable = true;
+          return;
+        }
         const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
         const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, event.externalLeadId));
         const raw = fetched && fetched.raw;
