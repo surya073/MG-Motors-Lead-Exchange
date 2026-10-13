@@ -684,3 +684,19 @@ test('a token error keeps its HTTP status for Test Connection; a network error h
   assert.equal(offline.ok, false);
   assert.equal(offline.httpStatus, 0, 'no response, so no status');
 });
+
+test('concurrent requests that all hit a 401 share one token refresh', async (t) => {
+  const issued = countTokens(t);
+  t.mock.method(axios, 'request', async (req) => {
+    if (req.headers.Authorization === 'Bearer tok-1') throw fixtures.fusionProblemError('credential_revoked');
+    return fixtures.leadAcceptedResponse();
+  });
+  const integration = updateIntegration();
+
+  const results = await Promise.all(
+    Array.from({ length: 5 }, () => fusionSdAdapter.createLead({}, integration, { 'contact.lastName': 'Testing' }))
+  );
+
+  assert.ok(results.every((result) => result.externalLeadId === fixtures.FUSION_TEST_LEAD_ID));
+  assert.equal(issued.count, 2, 'the first token, then one shared refresh');
+});

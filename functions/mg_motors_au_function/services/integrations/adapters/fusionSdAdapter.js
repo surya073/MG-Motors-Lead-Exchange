@@ -172,7 +172,7 @@ async function sendWithTokenRetry(catalystApp, integration, send) {
     if (err.response?.status !== 401) return { error: err };
   }
 
-  invalidateToken(integration.ROWID);
+  invalidateToken(integration.ROWID, accessToken);
   const freshToken = await getAccessTokenForFusionSd(catalystApp, integration);
   try {
     return { response: await send(freshToken) };

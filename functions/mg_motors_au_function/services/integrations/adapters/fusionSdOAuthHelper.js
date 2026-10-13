@@ -134,11 +134,18 @@ async function getAccessTokenForFusionSd(catalystApp, integration, { forceRefres
 }
 
 /**
- * Drops an integration's cached token, e.g. after its keys or URL are saved,
- * or when Fusion answers 401. The next caller fetches a new one. The cache is
- * per process, so other instances recover through their own 401 handling.
+ * Drops an integration's cached token so the next caller fetches a new one.
+ * After its keys or URL are saved, everything goes, including a refresh in
+ * flight that may still use the old keys. After a 401, pass the token that
+ * failed: only that one is dropped, so concurrent callers that got the same
+ * 401 share one refresh. The cache is per process; other instances recover
+ * through their own 401 handling.
  */
-function invalidateToken(integrationId) {
+function invalidateToken(integrationId, failedToken) {
+  if (failedToken !== undefined) {
+    if (tokenCache.get(integrationId)?.accessToken === failedToken) tokenCache.delete(integrationId);
+    return;
+  }
   tokenCache.delete(integrationId);
   inFlightRefreshes.delete(integrationId);
 }
