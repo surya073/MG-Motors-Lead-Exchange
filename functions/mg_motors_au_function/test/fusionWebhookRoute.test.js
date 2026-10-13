@@ -108,3 +108,38 @@ test('an explicit X-Webhook-Id still wins for every dealer, as today', async (t)
   await post('725001', { lead_id: 'lead_1' }, { ...FUSION_HEADERS, 'x-webhook-id': 'legacy-id' });
   assert.deepEqual(recorded, ['legacy-id']);
 });
+
+// Q18: Fusion's dealer_id is "your own id for this dealer if you gave them
+// one, otherwise ours". A mismatch is logged; only a different MG dealer's
+// code is refused, since the per-dealer signing secret proves the sender.
+test('Q18: dealer_id equal to the route\'s dealer code (any case), absent or null is processed', async (t) => {
+  const { post, processed } = await setup(t);
+  for (const dealerId of ['725001', undefined, null]) {
+    const result = await post('725001', { lead_id: 'lead_1', status: 'Lost', dealer_id: dealerId }, FUSION_HEADERS);
+    assert.equal(result.status, 200, String(dealerId));
+  }
+  assert.equal(processed.length, 3);
+});
+
+test('Q18: Fusion\'s own dealer id (not an MG dealer code) is processed, not rejected', async (t) => {
+  const { post, processed } = await setup(t);
+  const result = await post('725001', { lead_id: 'lead_1', status: 'Lost', dealer_id: 'dlr_01M4FUSIONOWNID' }, FUSION_HEADERS);
+  assert.equal(result.status, 200);
+  assert.equal(processed.length, 1);
+});
+
+test('Q18: dealer_id naming a different MG dealer is refused with 401 and not recorded or processed', async (t) => {
+  const { post, processed, recorded } = await setup(t);
+  const result = await post('725001', { lead_id: 'lead_1', status: 'Lost', dealer_id: 'au008' }, FUSION_HEADERS);
+  assert.equal(result.status, 401);
+  assert.equal(result.body.error, 'WEBHOOK_DEALER_MISMATCH');
+  assert.equal(processed.length, 0);
+  assert.equal(recorded.length, 0);
+});
+
+test('Q18, flag off: dealer_id is not checked, as today', async (t) => {
+  const { post, processed } = await setup(t, { flag: null });
+  const result = await post('725001', { leadId: 'lead_1', enquiryStatus: 'Lost', dealer_id: 'AU008' }, FUSION_HEADERS);
+  assert.equal(result.status, 200);
+  assert.equal(processed.length, 1);
+});

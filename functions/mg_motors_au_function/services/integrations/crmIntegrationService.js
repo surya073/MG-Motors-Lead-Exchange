@@ -15,7 +15,8 @@ const outboundSyncClaimService = require('./outboundSyncClaimService');
 const dashboardStats = require('../dashboardStatsService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
-const { getOutboundRetryConfig } = require('../../config/env');
+const { getOutboundRetryConfig, isFusionInboundV2Enabled } = require('../../config/env');
+const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -1691,7 +1692,24 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
   const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
 
-  const externalLeadId = externalPayload.id || externalPayload.leadId;
+  let externalLeadId = externalPayload.id || externalPayload.leadId;
+  let externalRecord = externalPayload;
+  // Fusion SD posts a flat body keyed by lead_id; only its status comes back
+  // to MG (Batch 5, Q16). FUSION_INBOUND_V2 only.
+  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled()) {
+    const translated = translateFusionWebhook(externalPayload, fieldMappings);
+    externalLeadId = translated.externalLeadId;
+    externalRecord = translated.record;
+    if (externalLeadId && !Object.prototype.hasOwnProperty.call(externalRecord, translated.statusTarget)) {
+      // Notes, activities and the like: nothing for MG to take, and nothing
+      // to hold. Acknowledged so Fusion does not retry it.
+      logger.info(
+        'crmIntegrationService',
+        `Fusion webhook for ${externalLeadId} (dealer ${integration.dealer_code}) has no status; nothing to apply to MG`
+      );
+      return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
+    }
+  }
   if (!externalLeadId) {
     await writeLog(catalystApp, {
       integration_id: integration.ROWID,
@@ -1708,7 +1726,7 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
   }
 
   return processResolvedInboundLead(
-    catalystApp, integration, externalLeadId, externalPayload,
+    catalystApp, integration, externalLeadId, externalRecord,
     fieldMappings, statusMappings, requestReference, zohoCrmService
   );
 }

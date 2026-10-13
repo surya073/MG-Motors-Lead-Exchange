@@ -86,6 +86,23 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
 
+    // Fusion's dealer_id is MG's dealer code only if MG gave Fusion one, and
+    // Fusion's own id otherwise (Q18). The signing secret already proves the
+    // dealer, so a mismatch is only logged, unless it names another MG dealer.
+    if (isFusionV2(integration) && payload && typeof payload.dealer_id === 'string' && payload.dealer_id.trim()) {
+      const claimed = payload.dealer_id.trim();
+      if (claimed.toLowerCase() !== String(dealerCode).toLowerCase()) {
+        const otherDealer =
+          (await crmIntegrationService.findDealerByCode(catalystApp, claimed)) ||
+          (claimed !== claimed.toUpperCase() ? await crmIntegrationService.findDealerByCode(catalystApp, claimed.toUpperCase()) : null);
+        if (otherDealer) {
+          logger.error('webhookRoutes', `Fusion webhook on ${dealerCode}'s URL names another MG dealer (${claimed}); refused`);
+          return res.status(401).json({ error: 'WEBHOOK_DEALER_MISMATCH' });
+        }
+        logger.info('webhookRoutes', `Fusion webhook for ${dealerCode} carries dealer_id "${claimed}" (Fusion's own id); accepted`);
+      }
+    }
+
     if (integration.crm_type === 'ZOHO_CRM' && payload.module !== 'Leads') {
       return res.status(422).json({ error: 'UNSUPPORTED_WEBHOOK_MODULE' });
     }
