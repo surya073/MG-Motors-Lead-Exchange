@@ -15,7 +15,9 @@ const outboundSyncClaimService = require('./outboundSyncClaimService');
 const dashboardStats = require('../dashboardStatsService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
-const { getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled } = require('../../config/env');
+const {
+  getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
+} = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
 
@@ -912,6 +914,7 @@ async function linkUnresolvedLead(catalystApp, integration, leadRow, externalLea
     last_sync_direction: 'ZOHO_TO_EXTERNAL_CRM',
     retry_count: '0',
     last_error: '',
+    ...(isSlaDealerActionClockEnabled() ? { last_dealer_action_at: toCatalystDateTime() } : {}),
   });
 
   let acknowledged = true;
@@ -1081,6 +1084,11 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       retry_count: '0',
       last_attempted_at: toCatalystDateTime(attemptStartedAt),
       last_error: '',
+      // The dealer's SLA clock starts when the lead is first delivered
+      // (Batch 7, SLA_DEALER_ACTION_CLOCK). Updates and retries leave it.
+      ...(operation === 'CREATE_LEAD' && isSlaDealerActionClockEnabled()
+        ? { last_dealer_action_at: toCatalystDateTime() }
+        : {}),
     };
 
     if (existingMapping) {
@@ -2420,6 +2428,8 @@ async function attemptInboundLeadUpdate(
         existingLeadRow, internalUpdate, fieldMappings
       ),
       last_error: conflicts.length > 0 ? 'OWNERSHIP_CONFLICT' : '',
+      // A dealer change reached MG: the dealer acted (Batch 7).
+      ...(isSlaDealerActionClockEnabled() ? { last_dealer_action_at: toCatalystDateTime() } : {}),
     });
 
     // Always record what WAS applied (Happy 2 / Happy 5), even when the same

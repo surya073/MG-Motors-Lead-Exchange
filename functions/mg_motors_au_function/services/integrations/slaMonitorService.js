@@ -9,7 +9,7 @@ const { guardSweep } = require('./sweepOverlapGuard');
 const { tailWindow, countFrom } = require('./sweepWindow');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
 const integrationAuthService = require('./integrationAuthService');
-const { isFusionInboundV2Enabled } = require('../../config/env');
+const { isFusionInboundV2Enabled, isSlaDealerActionClockEnabled } = require('../../config/env');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -63,6 +63,39 @@ function safeQuoteForZcql(value) {
 function isIntegrationHealthy(integration) {
   const status = pathPolicy.normalizeStatus(integration?.status);
   return integration && !['error', 'disabled', 'not configured', 'configuring'].includes(status);
+}
+
+// The column the SLA runs from: the dealer-action clock (Batch 7, Q25), or
+// last_synced_at as before.
+function clockColumn() {
+  return isSlaDealerActionClockEnabled() ? 'last_dealer_action_at' : 'last_synced_at';
+}
+
+const BACKFILL_ROWS = 100;
+
+/**
+ * SLA_DEALER_ACTION_CLOCK: mappings delivered before the switch have no
+ * last_dealer_action_at; each sweep gives up to BACKFILL_ROWS of them their
+ * last_synced_at, the best evidence there is, and never overwrites one.
+ */
+async function backfillDealerActionClock(catalystApp) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT ROWID, last_synced_at FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status = 'SYNCED' AND last_dealer_action_at IS NULL AND last_synced_at IS NOT NULL LIMIT 0, ${BACKFILL_ROWS}`
+  );
+  let filled = 0;
+  for (const wrapped of rows) {
+    const row = wrapped[LEAD_INTEGRATIONS_TABLE];
+    try {
+      await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+        ROWID: row.ROWID,
+        last_dealer_action_at: row.last_synced_at,
+      });
+      filled += 1;
+    } catch (err) {
+      logger.error('slaMonitorService', `Could not start the dealer-action clock of mapping ${row.ROWID}`, err);
+    }
+  }
+  return filled;
 }
 
 function isEnabled(value) {
@@ -123,8 +156,9 @@ async function findIntegrationsWithoutReturnChannel(catalystApp) {
  */
 async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = []) {
   const cutoff = toCatalystDateTime(new Date(now.getTime() - SLA_MS));
+  const clock = clockColumn();
   const where =
-    `WHERE sync_status = 'SYNCED' AND last_synced_at IS NOT NULL AND last_synced_at < '${cutoff}'${
+    `WHERE sync_status = 'SYNCED' AND ${clock} IS NOT NULL AND ${clock} < '${cutoff}'${
       SLA_DEALER_CODES.length
         ? ` AND dealer_code IN (${SLA_DEALER_CODES.map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`
         : ''
@@ -134,7 +168,7 @@ async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = 
         ? ` AND integration_id NOT IN (${excludedIntegrationIds.map((id) => `'${String(id).replace(/\D/g, '')}'`).join(', ')})`
         : ''
     }`;
-  const ordered = `${where} ORDER BY last_synced_at ASC, ROWID ASC`;
+  const ordered = `${where} ORDER BY ${clock} ASC, ROWID ASC`;
   // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
   const slice = (offset, size) =>
     catalystApp.zcql().executeZCQLQuery(
@@ -181,8 +215,11 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
       `Dealer-action SLA not applied (no proven return channel): ${exempt.map((e) => `${e.dealerCode} ${e.reason}`).join(', ')}`
     );
   }
+  const backfilled = isSlaDealerActionClockEnabled() ? await backfillDealerActionClock(catalystApp) : 0;
+  const clockCol = clockColumn();
   const { rows, overdue } = await selectOverdueMappings(catalystApp, now, exempt.map((e) => e.integrationId));
   const results = {
+    ...(isSlaDealerActionClockEnabled() ? { backfilledDealerActionClock: backfilled } : {}),
     exemptNoReturnChannel: exempt.map(({ dealerCode, reason }) => ({ dealerCode, reason })),
     candidates: rows.length,
     overdue,
@@ -198,18 +235,19 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
   };
 
   const rotate = (mapping) =>
-    // Rotate on last_synced_at only (this sweep's ordering key).
+    // Rotate on this sweep's ordering key only (last_synced_at, or the
+    // dealer-action clock when SLA_DEALER_ACTION_CLOCK is on).
     // last_attempted_at is reconciliation's rotation key; touching it here every
     // run kept actioned leads permanently at the back of reconciliation's queue,
     // so a deleted dealer record on them was never checked (Unhappy 11 never raised).
     catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
       ROWID: mapping.ROWID,
-      last_synced_at: toCatalystDateTime(now),
+      [clockCol]: toCatalystDateTime(now),
     });
 
   const processOne = async (wrapped) => {
     const mapping = wrapped[LEAD_INTEGRATIONS_TABLE];
-    const candidateAck = pathPolicy.parseTimestamp(mapping.last_synced_at);
+    const candidateAck = pathPolicy.parseTimestamp(mapping[clockCol]);
     if (!candidateAck || now.getTime() - candidateAck.getTime() < SLA_MS) {
       results.skippedNotDue += 1;
       return;
@@ -260,7 +298,7 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
           }
           // Judge age on the CURRENT acknowledgement time (a concurrent sweep may
           // have rotated the row since the candidate list was read).
-          const acknowledgedAt = pathPolicy.parseTimestamp(fresh.last_synced_at);
+          const acknowledgedAt = pathPolicy.parseTimestamp(fresh[clockCol]);
           if (!acknowledgedAt || now.getTime() - acknowledgedAt.getTime() < SLA_MS) {
             results.skippedAlreadyHandled += 1;
             return;
@@ -303,7 +341,7 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
             // SLA age, integration-health result and the status left unactioned.
             reason:
               `No dealer action within the ${SLA_MINUTES}-minute SLA. ` +
-              `Acknowledged by dealer ${acknowledgedAt.toISOString()}; ` +
+              `${clockCol === 'last_dealer_action_at' ? 'Last dealer action' : 'Acknowledged by dealer'} ${acknowledgedAt.toISOString()}; ` +
               `SLA age ${Math.round((now.getTime() - acknowledgedAt.getTime()) / 60000)} min; ` +
               `integration health: ${integration.status || 'ACTIVE'} (no delivery error); ` +
               `MG status was "${leadRow.lead_status}", now "Unattended Alert".`,

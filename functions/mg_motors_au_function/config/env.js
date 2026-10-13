@@ -187,6 +187,17 @@ function getWebhookEventRetentionDays() {
   return days > 0 ? days : null;
 }
 
+/**
+ * SLA_DEALER_ACTION_CLOCK=true runs the dealer-action SLA (Unhappy 10) from
+ * lead_integrations.last_dealer_action_at (first delivery, then each dealer
+ * change applied to MG) instead of last_synced_at, which MG's own updates
+ * and retries also rewrite (FUSION_REMEDIATION_PLAN.md, Batch 7, Q25). Add
+ * the column first. Read on every call.
+ */
+function isSlaDealerActionClockEnabled() {
+  return String(process.env.SLA_DEALER_ACTION_CLOCK || '').trim().toLowerCase() === 'true';
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -198,4 +209,5 @@ module.exports = {
   isFusionInboundV2Enabled,
   isInboundEventStoreEnabled,
   getWebhookEventRetentionDays,
+  isSlaDealerActionClockEnabled,
 };
