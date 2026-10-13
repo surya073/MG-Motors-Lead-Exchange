@@ -289,6 +289,7 @@ Fusion's emails to MG, shared on 13 Oct 2026, also settled several points:
 | Q25 | Build it now behind `SLA_DEALER_ACTION_CLOCK` (default off); add the column in the console first. | Batch 7 |
 | Q30 | Off until `ZOHO_API_TIMEOUT_MS` is set (suggested value 15000). | Batch 8 |
 | Q31 | Skip both for now; they stay as follow-ups. Batch 8 needs no schema change and never touches stored credentials. | Follow-up |
+| Q26 | Fixed on `fusion/batch-8-rate-limits` (`598bee8`). PMA Unassigned and Finance Intro are valid MG statuses (Dropped and Lost stay valid). The Fusion preset maps Fusion Lost ↔ MG Lost Lead (inbound only; 568026's live map already does) and sends Finance Intro as Open. For Fusion only, PMA Unassigned is never sent as a status (all 35 such leads had no dealer on 13 Oct). AU008's map (Lost Lead↔Lost Lead, Dropped↔Dropped, Lost↔Lost (final)) is untouched. Finance Intro → Open is an assumption from Q1 (every worked status goes out as Open); MG to confirm. | Admin: re-load and save the Fusion status map for Buckby MG (725001), which still has Fusion Lost → MG Contacted |
 
 Batch 9 is skipped for now: there is no isolated Catalyst project for load testing.
 
