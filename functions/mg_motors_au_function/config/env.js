@@ -106,4 +106,45 @@ function getSharedWebhookConfig() {
   return { secret, dealerCodes };
 }
 
-module.exports = { getZohoConfig, getIntegrationCredentialsKey, getAiAssistantConfig, getLeadSyncSince, getSharedWebhookConfig };
+/**
+ * Outbound retry and escalation switches (FUSION_REMEDIATION_PLAN.md,
+ * Batch 3). Read on every call. Unset variables keep today's behaviour:
+ *   OUTBOUND_RETRY_POLICY         'classified' retries only TRANSIENT/LOCAL
+ *                                 failures, with capped exponential backoff
+ *                                 and the dealer's Retry-After; AUTH and
+ *                                 PERMANENT failures, and retries past the
+ *                                 limits below, stop as RETRY_EXHAUSTED.
+ *                                 Anything else (default): every failure is
+ *                                 retried at OUTBOUND_RETRY_INTERVAL_MINUTES,
+ *                                 without limit.
+ *   OUTBOUND_RETRY_MAX_ATTEMPTS   classified only; default 10.
+ *   OUTBOUND_RETRY_MAX_AGE_HOURS  classified only; default 48.
+ *   FAST_RECOVER_HONOUR_SCHEDULE  'true': /cron/fast-recover waits for each
+ *                                 lead's next_retry_at.
+ *   ESCALATION_TRANSIENT_ONLY     'true': only TRANSIENT failures of leads the
+ *                                 dealer has not received escalate to Dealer
+ *                                 Unavailable.
+ */
+function getOutboundRetryConfig() {
+  const positiveNumber = (name, fallback) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const isOn = (name) => String(process.env[name] || '').trim().toLowerCase() === 'true';
+  return {
+    classified: String(process.env.OUTBOUND_RETRY_POLICY || '').trim().toLowerCase() === 'classified',
+    maxAttempts: Math.floor(positiveNumber('OUTBOUND_RETRY_MAX_ATTEMPTS', 10)),
+    maxAgeHours: positiveNumber('OUTBOUND_RETRY_MAX_AGE_HOURS', 48),
+    fastRecoverHonourSchedule: isOn('FAST_RECOVER_HONOUR_SCHEDULE'),
+    escalationTransientOnly: isOn('ESCALATION_TRANSIENT_ONLY'),
+  };
+}
+
+module.exports = {
+  getZohoConfig,
+  getIntegrationCredentialsKey,
+  getAiAssistantConfig,
+  getLeadSyncSince,
+  getSharedWebhookConfig,
+  getOutboundRetryConfig,
+};

@@ -14,6 +14,8 @@ const oemCrmService = require('../zohoCrmService');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
 const dashboardStats = require('../dashboardStatsService');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
+const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
+const { getOutboundRetryConfig } = require('../../config/env');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -227,6 +229,20 @@ async function getStatusMappings(catalystApp, integrationId) {
   return rows.map((r) => r[STATUS_MAPPINGS_TABLE]);
 }
 
+// OUTBOUND_RETRY_POLICY=classified: after the Nth failed attempt in a row the
+// next retry waits 2, 5, 15, 30, 60, 120, 240, then 360 minutes, each ±20% so
+// leads that failed together do not all retry in the same minute. A dealer's
+// Retry-After (seconds) is honoured when it is longer, up to the same 6 hours.
+const RETRY_BACKOFF_MINUTES = [2, 5, 15, 30, 60, 120, 240];
+const MAX_RETRY_BACKOFF_MINUTES = 360;
+
+function retryDelayMs(attempt, retryAfterSeconds) {
+  const base = RETRY_BACKOFF_MINUTES[attempt - 1] ?? MAX_RETRY_BACKOFF_MINUTES;
+  const jittered = base * (0.8 + Math.random() * 0.4);
+  const dealerMinutes = Number(retryAfterSeconds) > 0 ? Number(retryAfterSeconds) / 60 : 0;
+  return Math.min(MAX_RETRY_BACKOFF_MINUTES, Math.max(jittered, dealerMinutes)) * 60 * 1000;
+}
+
 /**
  * Tracks how long an OUTBOUND (ZOHO_TO_EXTERNAL_CRM) sync has been
  * continuously failing for a given lead, using lead_integrations as the
@@ -251,6 +267,12 @@ async function getStatusMappings(catalystApp, integrationId) {
  *   escalate:true, so the caller logs Unhappy 3 on this and all
  *   subsequent failed retries until a success resets the row.
  *
+ * With OUTBOUND_RETRY_POLICY=classified (config/env.js), retries back off
+ * (retryDelayMs) and stop as RETRY_EXHAUSTED when the failure is AUTH or
+ * PERMANENT (dealerErrorClassifier) or the attempt/age limits are reached.
+ * The retry sweep only reads FAILED/FAILED_CRITICAL rows, so stopped rows
+ * wait for an admin replay or the next change to the lead.
+ *
  * Requires a 'FAILED_CRITICAL' value alongside 'FAILED'/'SYNCED'/
  * 'PENDING' on lead_integrations.sync_status.
  */
@@ -258,67 +280,63 @@ async function recordOutboundFailureAndCheckEscalation(catalystApp, integration,
   const mappingTable = catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE);
   const now = new Date();
   const lastError = (err?.code || err?.message || 'EXTERNAL_CRM_ERROR').slice(0, 500);
-  const nextRetryAtStr = toCatalystDateTime(new Date(now.getTime() + RETRY_INTERVAL_MINUTES * 60 * 1000));
+  const retryPolicy = getOutboundRetryConfig();
+  const errorClass = classifyDealerError(err);
 
+  // No mapping row yet (e.g. the very first CREATE_LEAD attempt failed): one
+  // is inserted below, with external_crm_lead_id unset, so the next retry is
+  // still a create.
   const existingMapping = await findLeadMappingForIntegration(catalystApp, integration, zohoLeadId);
 
-  if (!existingMapping) {
-    // No mapping row exists yet (e.g. the very first CREATE_LEAD attempt
-    // for this lead failed before any row was ever written). Start the
-    // failure clock now; external_crm_lead_id stays unset, so the
-    // CREATE_LEAD vs UPDATE_LEAD branch in syncLeadToExternalCrm is
-    // unaffected on the next retry.
+  // A new failure streak starts when the row was healthy or never failed.
+  const isNewStreak = !existingMapping?.failure_streak_started_at || existingMapping.sync_status === 'SYNCED';
+  const streakStartedAt = isNewStreak ? toCatalystDateTime(now) : existingMapping.failure_streak_started_at;
+  const retryCount = isNewStreak ? 1 : (parseInt(existingMapping.retry_count, 10) || 0) + 1;
+  const streakStart = pathPolicy.parseTimestamp(streakStartedAt);
+  const elapsedMs = streakStart ? now.getTime() - streakStart.getTime() : 0;
+  const crossesEscalationWindow = !isNewStreak && elapsedMs >= UNHAPPY_3_ESCALATION_WINDOW_MS;
+  const wasCritical = existingMapping?.sync_status === 'FAILED_CRITICAL';
+
+  // Classified policy only: stop retrying when it cannot help, or at the limits.
+  let stopped = null;
+  if (retryPolicy.classified) {
+    if (!isRetryableClass(errorClass)) stopped = 'NOT_RETRYABLE';
+    else if (retryCount >= retryPolicy.maxAttempts) stopped = 'ATTEMPT_LIMIT';
+    else if (elapsedMs >= retryPolicy.maxAgeHours * 60 * 60 * 1000) stopped = 'AGE_LIMIT';
+  }
+  const nextRetryAt = new Date(now.getTime() + (
+    retryPolicy.classified ? retryDelayMs(retryCount, err?.vendor?.retryAfter) : RETRY_INTERVAL_MINUTES * 60 * 1000
+  ));
+
+  const failureFields = {
+    sync_status: stopped ? 'RETRY_EXHAUSTED' : (crossesEscalationWindow ? 'FAILED_CRITICAL' : 'FAILED'),
+    ...(isNewStreak ? { failure_streak_started_at: streakStartedAt } : {}),
+    retry_count: String(retryCount),
+    next_retry_at: toCatalystDateTime(nextRetryAt),
+    last_attempted_at: toCatalystDateTime(now),
+    last_error: lastError,
+  };
+  if (existingMapping) {
+    await mappingTable.updateRow({ ROWID: existingMapping.ROWID, ...failureFields });
+  } else {
     await mappingTable.insertRow({
       dealer_code: integration.dealer_code,
       zoho_lead_id: zohoLeadId,
       integration_id: integration.ROWID,
-      sync_status: 'FAILED',
-      failure_streak_started_at: toCatalystDateTime(now),
-      retry_count: '1',
-      next_retry_at: nextRetryAtStr,
-      last_attempted_at: toCatalystDateTime(now),
-      last_error: lastError,
+      ...failureFields,
     });
-    return { escalate: false, firstFailure: true, newEscalation: false, existingMapping: null };
   }
-
-  const isNewStreak = !existingMapping.failure_streak_started_at || existingMapping.sync_status === 'SYNCED';
-  const streakStartedAt = isNewStreak ? toCatalystDateTime(now) : existingMapping.failure_streak_started_at;
-  const retryCount = isNewStreak ? 1 : (parseInt(existingMapping.retry_count, 10) || 0) + 1;
-
-  if (isNewStreak) {
-    // New failure streak (row was healthy, or never failed before).
-    await mappingTable.updateRow({
-      ROWID: existingMapping.ROWID,
-      sync_status: 'FAILED',
-      failure_streak_started_at: streakStartedAt,
-      retry_count: String(retryCount),
-      next_retry_at: nextRetryAtStr,
-      last_attempted_at: toCatalystDateTime(now),
-      last_error: lastError,
-    });
-    return { escalate: false, firstFailure: true, newEscalation: false, existingMapping };
-  }
-
-  const streakStart = pathPolicy.parseTimestamp(existingMapping.failure_streak_started_at);
-  const elapsedMs = streakStart ? now.getTime() - streakStart.getTime() : 0;
-  const crossesEscalationWindow = elapsedMs >= UNHAPPY_3_ESCALATION_WINDOW_MS;
-  const wasCritical = existingMapping.sync_status === 'FAILED_CRITICAL';
-
-  await mappingTable.updateRow({
-    ROWID: existingMapping.ROWID,
-    sync_status: crossesEscalationWindow ? 'FAILED_CRITICAL' : 'FAILED',
-    retry_count: String(retryCount),
-    next_retry_at: nextRetryAtStr,
-    last_attempted_at: toCatalystDateTime(now),
-    last_error: lastError,
-  });
 
   return {
     escalate: crossesEscalationWindow,
-    firstFailure: false,
+    firstFailure: isNewStreak,
     newEscalation: crossesEscalationWindow && !wasCritical,
-    existingMapping,
+    existingMapping: existingMapping || null,
+    errorClass,
+    retryCount,
+    // Set when retries stop (RETRY_EXHAUSTED): NOT_RETRYABLE, ATTEMPT_LIMIT or AGE_LIMIT.
+    stopped,
+    nextRetryAt: stopped ? null : nextRetryAt,
   };
 }
 
@@ -830,7 +848,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     }
 
     const wasRecovery = Boolean(
-      existingMapping && ['FAILED', 'FAILED_CRITICAL'].includes(existingMapping.sync_status)
+      existingMapping && ['FAILED', 'FAILED_CRITICAL', 'RETRY_EXHAUSTED'].includes(existingMapping.sync_status)
     );
     const failureStartedAt = pathPolicy.parseTimestamp(existingMapping?.failure_streak_started_at);
     const previousAttempts = Number(existingMapping?.retry_count || 0);
@@ -1011,7 +1029,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           await catalystApp.datastore().table(LEADS_TABLE).updateRow({
             ROWID: leadRow.ROWID,
             lead_status: DEALER_UNAVAILABLE_LEAD_STATUS,
-            sync_status: 'FAILED_CRITICAL',
+            sync_status: escalation.stopped ? 'RETRY_EXHAUSTED' : 'FAILED_CRITICAL',
           });
         }
         await oemCrmService.updateOemLead(zohoLeadId, { Lead_Status: DEALER_UNAVAILABLE_LEAD_STATUS });
@@ -1026,6 +1044,8 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     } else if (isInvalidConfiguration) {
       await setLeadSyncState(catalystApp, leadRow, 'ROUTING_HOLD');
       if (existingMapping) await markMappingHeld(catalystApp, existingMapping.ROWID, err.code);
+    } else if (escalation.stopped && !escalation.escalate) {
+      await setLeadSyncState(catalystApp, leadRow, 'RETRY_EXHAUSTED');
     } else if (!escalation.escalate) {
       await setLeadSyncState(catalystApp, leadRow, 'DELIVERY_FAILED');
     }
@@ -1058,6 +1078,15 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
         duration_ms: Date.now() - attemptStartedAt.getTime(),
       }] : []),
       ...(err.vendor ? [{ field: 'dealer_error', ...err.vendor }] : []),
+      // Classified retry policy only: the failure's class and what happens next.
+      ...(getOutboundRetryConfig().classified && escalation.errorClass ? [{
+        field: 'retry',
+        class: escalation.errorClass,
+        attempt: escalation.retryCount,
+        ...(escalation.stopped
+          ? { stopped: escalation.stopped }
+          : { next_retry_at: escalation.nextRetryAt.toISOString() }),
+      }] : []),
     ];
     await writeLog(catalystApp, {
       integration_id: integration.ROWID,
