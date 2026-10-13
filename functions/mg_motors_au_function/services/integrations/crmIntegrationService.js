@@ -1107,6 +1107,9 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           updatePayload = sentPayloadSnapshot.changedFields(previous, payload);
           if (Object.keys(updatePayload).length === 0) {
             logger.info('crmIntegrationService', `Nothing new to send for lead ${zohoLeadId} (dealer ${integration.dealer_code}); no update sent.`);
+            // The dealer already has everything: the lead is in sync, not
+            // PENDING (lead sync marks an edited lead PENDING before sending).
+            await setLeadSyncState(catalystApp, leadRow, 'SYNCED');
             return { skipped: true, reason: 'NO_CHANGES_TO_SEND' };
           }
         }

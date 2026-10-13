@@ -90,3 +90,16 @@ test('flag off: every update sends the full lead, as before', async (t) => {
   assert.equal(calls.update[1]['contact.email'], 'jane@example.com');
   assert.equal(calls.update[1]['contact.areaCode'], '7000');
 });
+
+// Review of Batch 10: lead sync marks an edited lead PENDING before it is
+// sent. When nothing it maps changed, nothing is sent, and the lead must not
+// stay PENDING for ever: the dealer already has everything.
+test('nothing new to send: the lead is marked SYNCED, not left PENDING', async (t) => {
+  const { harness, calls, sync } = setup(t);
+  await sync();
+  harness.db.tables.leads[0].sync_status = 'PENDING';
+  const result = await sync({ customer_message: 'not a mapped field' });
+  assert.equal(result.reason, 'NO_CHANGES_TO_SEND');
+  assert.equal(calls.update.length, 1);
+  assert.equal(harness.db.tables.leads[0].sync_status, 'SYNCED');
+});
