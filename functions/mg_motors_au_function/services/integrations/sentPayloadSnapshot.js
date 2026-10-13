@@ -66,4 +66,18 @@ async function store(catalystApp, mappingRowId, payload) {
   }
 }
 
-module.exports = { usesChangesOnlyPatch, serialize, read, store, MAX_STORED_LENGTH };
+/**
+ * The fields of `current` that differ from `previous`, for a merge-patch.
+ * A field MG emptied (empty, null or absent) is left out, so Fusion keeps its
+ * value (Q32: nothing at the dealer is ever cleared by MG).
+ */
+function changedFields(previous, current) {
+  const changes = {};
+  Object.entries(current || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (JSON.stringify(previous?.[key]) !== JSON.stringify(value)) changes[key] = value;
+  });
+  return changes;
+}
+
+module.exports = { usesChangesOnlyPatch, serialize, read, store, changedFields, MAX_STORED_LENGTH };

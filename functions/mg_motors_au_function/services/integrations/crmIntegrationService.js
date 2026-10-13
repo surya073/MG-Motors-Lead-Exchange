@@ -1074,11 +1074,26 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     attemptStartedAt = new Date();
     if (existingMapping?.external_crm_lead_id) {
       operation = 'UPDATE_LEAD';
+      // FUSION_CHANGES_ONLY_PATCH (Batch 10): a lead in sync sends only what
+      // changed since the payload last sent, so fields the dealer maintains
+      // (its status) are not re-sent over the dealer's own values. A lead
+      // waiting for a retry, or with no snapshot, is sent in full as before.
+      let updatePayload = payload;
+      if (sentPayloadSnapshot.usesChangesOnlyPatch(integration) && existingMapping.sync_status === 'SYNCED') {
+        const previous = sentPayloadSnapshot.read(existingMapping);
+        if (previous) {
+          updatePayload = sentPayloadSnapshot.changedFields(previous, payload);
+          if (Object.keys(updatePayload).length === 0) {
+            logger.info('crmIntegrationService', `Nothing new to send for lead ${zohoLeadId} (dealer ${integration.dealer_code}); no update sent.`);
+            return { skipped: true, reason: 'NO_CHANGES_TO_SEND' };
+          }
+        }
+      }
       result = await withCrmApiLimit(integration.crm_type, () => adapter.updateLead(
         catalystApp,
         integration,
         existingMapping.external_crm_lead_id,
-        payload
+        updatePayload
       ), integration.ROWID);
       if (result.skipped) {
         return recordSkippedUpdate(catalystApp, integration, zohoLeadId, existingMapping, result, requestReference);
