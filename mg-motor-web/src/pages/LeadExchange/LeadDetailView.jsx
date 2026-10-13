@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
+import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
+import { useAuth } from "../../contexts/AuthContext";
+import { APP_ROLES } from "../../constants/auth.constants";
 import {
   ChevronLeftIcon,
   PhoneIcon,
@@ -125,7 +128,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "API / integration failure",
     trigger: "Middleware",
-    match: ["Retry Pending", "Retrying", "DELIVERY_FAILED"],
+    match: ["Retry Pending", "Retrying", "DELIVERY_FAILED", "RETRY_EXHAUSTED"],
     description:
       "Push to the dealer failed with a timeout, 5xx, or connection error — a recoverable failure.",
     outcome:
@@ -221,7 +224,7 @@ const UNHAPPY_PATHS = [
     type: "unhappy",
     title: "Partial transaction",
     trigger: "Middleware",
-    match: ["Reconciling"],
+    match: ["Reconciling", "ACK_UNRESOLVED"],
     description: "The OEM recorded the enquiry but dealer creation failed, leaving a mismatch.",
     outcome: "A reconciliation job re-attempts delivery or flags the mismatch for review.",
   },
@@ -526,6 +529,8 @@ function resolveDisplayPath(lead) {
     "sla breach",
     "reconcile mismatch",
     "held",
+    "retry exhausted",
+    "ack unresolved",
   ]);
 
   // BUG THIS FIXES: this branch used to return `liveMatch`, but
@@ -798,9 +803,93 @@ function TimelineOffcanvas({ open, onClose, timeline, loading }) {
 }
 
 /* ----------------------------------------------------------------
+   Delivery actions (admins): a lead whose delivery stopped.
+     ACK_UNRESOLVED   the dealer accepted it without returning its id, so it
+                      is never sent again; link the id from the dealer's CRM.
+     RETRY_EXHAUSTED  automatic retries stopped; retry the delivery now.
+------------------------------------------------------------------ */
+function DeliveryActions({ lead, onDone }) {
+  const { user } = useAuth();
+  const [externalLeadId, setExternalLeadId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const state = String(lead.sync_status || "").toUpperCase();
+  const isAdmin = [APP_ROLES.ADMIN, APP_ROLES.SUPER_ADMIN].includes(user?.appRole);
+  if (!isAdmin || !["ACK_UNRESOLVED", "RETRY_EXHAUSTED"].includes(state)) return null;
+
+  const run = async (action, done) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await action();
+      setMessage({ tone: "success", text: done });
+      onDone?.();
+    } catch (err) {
+      setMessage({ tone: "error", text: err?.response?.data?.error || "The action failed. Try again." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="lead-detail__group lead-detail__delivery-actions">
+      <h3>Delivery needs attention</h3>
+      {state === "ACK_UNRESOLVED" ? (
+        <>
+          <p>
+            The dealer accepted this lead but returned no lead id, so it is not sent again. Find the lead in
+            the dealer's CRM and enter its id to link it.
+          </p>
+          <div className="lead-detail__delivery-form">
+            <input
+              type="text"
+              value={externalLeadId}
+              onChange={(e) => setExternalLeadId(e.target.value)}
+              placeholder="Dealer lead id, e.g. lead_01…"
+              aria-label="Dealer lead id"
+            />
+            <button
+              type="button"
+              className="lead-detail__action-btn lead-detail__action-btn--mail"
+              disabled={busy || !externalLeadId.trim()}
+              onClick={() =>
+                run(
+                  () => dealerCrmIntegrationService.linkLead(lead.dealer_code, lead.crm_record_id, externalLeadId.trim()),
+                  "Linked to the dealer's lead."
+                )
+              }
+            >
+              Link dealer lead id
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p>Automatic retries for this lead have stopped. Retry the delivery once the cause is fixed.</p>
+          <button
+            type="button"
+            className="lead-detail__action-btn lead-detail__action-btn--mail"
+            disabled={busy}
+            onClick={() =>
+              run(() => dealerCrmIntegrationService.replayLead(lead.dealer_code, lead.crm_record_id), "Delivery retried.")
+            }
+          >
+            Retry delivery
+          </button>
+        </>
+      )}
+      {message && (
+        <p className={`lead-detail__delivery-message lead-detail__delivery-message--${message.tone}`}>{message.text}</p>
+      )}
+    </section>
+  );
+}
+
+/* ----------------------------------------------------------------
    Lead Detail
 ------------------------------------------------------------------ */
-export default function LeadDetailView({ lead, onBack }) {
+export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   const [copied, setCopied] = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
@@ -995,6 +1084,8 @@ export default function LeadDetailView({ lead, onBack }) {
         journeyPaths={journeyPaths}
         failureDetail={latestFailureDetail}
       />
+
+      <DeliveryActions lead={lead} onDone={onLeadChanged} />
 
       <MoreDetailsCard val={val} lead={lead} />
 

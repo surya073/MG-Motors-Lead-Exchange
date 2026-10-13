@@ -113,6 +113,8 @@ const UNHAPPY_SYNC_STATUSES = new Set([
   "FAILED_CRITICAL",
   "SLA_BREACH",
   "HELD",
+  "RETRY_EXHAUSTED",
+  "ACK_UNRESOLVED",
 ]);
 
 // A lead can be classified Unhappy purely from sync_status/lead_status when
@@ -125,10 +127,12 @@ const SYNC_STATUS_TO_PATH = {
   ROUTING_HOLD: "Unhappy 5",
   DELIVERY_FAILED: "Unhappy 1",
   FAILED: "Unhappy 1",
+  RETRY_EXHAUSTED: "Unhappy 1",
   FAILED_CRITICAL: "Unhappy 3",
   SLA_BREACH: "Unhappy 10",
   HELD: "Unhappy 4",
   RECONCILE_MISMATCH: "Unhappy 11",
+  ACK_UNRESOLVED: "Unhappy 11",
   DUPLICATE_LINKED: "Happy 3",
 };
 
@@ -432,6 +436,16 @@ export default function LeadExchangePage() {
     navigate(ROUTES.LEAD_EXCHANGE);
   };
 
+  // After an admin action on the open lead (link / retry delivery), reload the
+  // list and the lead itself, since it may not be on the current page.
+  const refreshDetail = async () => {
+    await loadLeads({ refreshFacets: true });
+    if (leadId) {
+      const lead = await adminDashboardService.getLead(leadId).catch(() => null);
+      setFetchedDetail({ id: leadId, lead, done: true });
+    }
+  };
+
   const changeView = (next) => {
     setView(next);
     localStorage.setItem(VIEW_STORAGE_KEY, next);
@@ -648,7 +662,7 @@ export default function LeadExchangePage() {
       {leadId ? (
         <div className="lead-exchange__panel" key="detail">
           {detail ? (
-            <LeadDetailView lead={detail} onBack={closeDetail} />
+            <LeadDetailView lead={detail} onBack={closeDetail} onLeadChanged={refreshDetail} />
           ) : detailNotFound ? (
             <EmptyState
               title="Lead not found"

@@ -1460,3 +1460,57 @@
   font-weight: 600;
 }
 
+/* =========================================================
+   DELIVERY ACTIONS (admins): ACK_UNRESOLVED / RETRY_EXHAUSTED
+   ========================================================= */
+
+.lead-detail__delivery-actions p {
+  margin: 0 0 var(--space-3);
+
+  font-size: var(--fs-sm);
+
+  color: var(--color-text-secondary);
+}
+
+.lead-detail__delivery-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lead-detail__delivery-form input {
+  flex: 1 1 220px;
+
+  padding: 6px var(--space-3);
+
+  font-size: var(--fs-sm);
+
+  color: var(--color-text-primary);
+
+  background-color: var(--color-surface-alt);
+
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+}
+
+.lead-detail__delivery-actions .lead-detail__action-btn:disabled {
+  opacity: 0.55;
+
+  cursor: not-allowed;
+}
+
+.lead-detail__delivery-message {
+  margin: var(--space-3) 0 0;
+
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+}
+
+.lead-detail__delivery-message--success {
+  color: var(--color-success);
+}
+
+.lead-detail__delivery-message--error {
+  color: var(--color-danger);
+}

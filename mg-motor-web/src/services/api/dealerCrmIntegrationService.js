@@ -57,6 +57,22 @@ export const dealerCrmIntegrationService = {
     return data;
   },
 
+  // A lead the dealer accepted without returning its id (ACK_UNRESOLVED):
+  // link it to the dealer's lead id, looked up in the dealer's CRM.
+  async linkLead(dealerCode, crmRecordId, externalLeadId) {
+    const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/link-lead`, {
+      crmRecordId,
+      externalLeadId,
+    });
+    return data;
+  },
+
+  // A lead whose automatic retries stopped (RETRY_EXHAUSTED): send it again now.
+  async replayLead(dealerCode, crmRecordId) {
+    const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/replay`, { crmRecordId });
+    return data;
+  },
+
   async generateWebhookSecret(dealerCode) {
   const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/webhook-secret`);
   return data;
