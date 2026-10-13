@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const { getZohoConfig } = require('../config/env');
+const { getZohoConfig, zohoTimeoutOption } = require('../config/env');
 const logger = require('../utils/logger');
 
 /**
@@ -66,6 +66,7 @@ async function refreshAccessToken() {
       `${accountsDomain}/oauth/v2/token`,
       null,
       {
+        ...zohoTimeoutOption(),
         params: {
           grant_type: 'refresh_token',
           client_id: clientId,

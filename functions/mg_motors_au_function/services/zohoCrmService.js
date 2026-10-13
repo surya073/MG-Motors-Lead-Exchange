@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-const { getZohoConfig, getLeadSyncSince } = require('../config/env');
+const { getZohoConfig, getLeadSyncSince, zohoTimeoutOption } = require('../config/env');
 const { getAccessToken } = require('./zohoAuthService');
 const logger = require('../utils/logger');
 
@@ -58,6 +58,7 @@ async function fetchDealerMaster() {
     let response;
     try {
       response = await axios.get(`${apiDomain}/crm/v8/${DEALERS_MODULE}`, {
+      ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
         },
@@ -156,6 +157,7 @@ async function fetchOemLeads() {
     let response;
     try {
       response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+        ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
         },
@@ -221,6 +223,7 @@ async function fetchOemLeadsByIds(ids) {
     let response;
     try {
       response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+        ...zohoTimeoutOption(),
         headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
         params: {
           fields: OEM_LEADS_FIELDS.join(','),
@@ -259,6 +262,7 @@ async function fetchOemLeadsModifiedSince(modifiedSince) {
     let response;
     try {
       response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+        ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
           'If-Modified-Since': header,
@@ -310,6 +314,7 @@ async function updateOemLead(crmRecordId, fields) {
       `${apiDomain}/crm/v8/Leads/${crmRecordId}`,
       { data: [fields] },
       {
+        ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
           'Content-Type': 'application/json',
@@ -357,6 +362,7 @@ async function fetchFieldPicklistValues(moduleApiName, fieldApiName) {
   let response;
   try {
     response = await axios.get(`${apiDomain}/crm/v8/settings/fields`, {
+      ...zohoTimeoutOption(),
       headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
       params: { module: moduleApiName },
     });

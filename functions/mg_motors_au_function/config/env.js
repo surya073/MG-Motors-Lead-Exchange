@@ -198,6 +198,25 @@ function isSlaDealerActionClockEnabled() {
   return String(process.env.SLA_DEALER_ACTION_CLOCK || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * ZOHO_API_TIMEOUT_MS bounds every call to MG's Zoho CRM (and its token
+ * endpoint), in milliseconds (FUSION_REMEDIATION_PLAN.md, Batch 8, Q30;
+ * suggested 15000). Unset, or not a positive whole number, means no timeout,
+ * as before. Read on every call.
+ */
+function getZohoApiTimeoutMs() {
+  const text = String(process.env.ZOHO_API_TIMEOUT_MS || '').trim();
+  if (!/^\d+$/.test(text)) return undefined;
+  const ms = Number(text);
+  return ms > 0 ? ms : undefined;
+}
+
+/** The axios option for getZohoApiTimeoutMs(): `{ timeout }`, or nothing. */
+function zohoTimeoutOption() {
+  const timeout = getZohoApiTimeoutMs();
+  return timeout ? { timeout } : {};
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -210,4 +229,6 @@ module.exports = {
   isInboundEventStoreEnabled,
   getWebhookEventRetentionDays,
   isSlaDealerActionClockEnabled,
+  getZohoApiTimeoutMs,
+  zohoTimeoutOption,
 };
