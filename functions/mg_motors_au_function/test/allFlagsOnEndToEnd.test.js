@@ -45,6 +45,7 @@ const ALL_FLAGS = {
   FULL_SYNC_STRICT_SNAPSHOT: 'true',
   FUSION_CHANGES_ONLY_PATCH: 'true',
   KEEP_OUTBOUND_RETRY_ON_INBOUND: 'true',
+  FUSION_TOKEN_RETRY: 'true',
 };
 const SECRET = generateSigningSecret();
 

@@ -325,6 +325,31 @@ function isKeepOutboundRetryOnInboundEnabled() {
   return String(process.env.KEEP_OUTBOUND_RETRY_ON_INBOUND || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * FUSION_TOKEN_RETRY=true: when Fusion SD's OAuth token endpoint gives no
+ * answer at all (a timeout or a dropped connection), the token call is tried
+ * once more before the send fails. An answer from Fusion (wrong keys, 5xx) is
+ * never retried. No lead data has been sent at that point, so a retry cannot
+ * create a duplicate (MG_Motor_AU_Technical_Audit_Handover.md §7: the first
+ * call after an idle spell timed out, logging Unhappy 1 before Happy 4).
+ * Unset keeps today's single attempt. Read on every call.
+ */
+function isFusionTokenRetryEnabled() {
+  return String(process.env.FUSION_TOKEN_RETRY || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * FUSION_TOKEN_TIMEOUT_MS: timeout of each Fusion SD token call, in
+ * milliseconds. Unset, or not a positive whole number, means 10000, as before.
+ * Read on every call.
+ */
+function getFusionTokenTimeoutMs() {
+  const text = String(process.env.FUSION_TOKEN_TIMEOUT_MS || '').trim();
+  if (!/^\d+$/.test(text)) return 10000;
+  const ms = Number(text);
+  return ms > 0 ? ms : 10000;
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -348,4 +373,6 @@ module.exports = {
   isFullSyncStrictSnapshotEnabled,
   isFusionChangesOnlyPatchEnabled,
   isKeepOutboundRetryOnInboundEnabled,
+  isFusionTokenRetryEnabled,
+  getFusionTokenTimeoutMs,
 };

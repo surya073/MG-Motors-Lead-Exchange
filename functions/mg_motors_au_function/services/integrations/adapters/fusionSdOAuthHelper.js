@@ -4,6 +4,7 @@ const axios = require('axios');
 const integrationAuthService = require('../integrationAuthService');
 const logger = require('../../../utils/logger');
 const { assertSafeUrl } = require('./genericRestAdapter');
+const { isFusionTokenRetryEnabled, getFusionTokenTimeoutMs } = require('../../../config/env');
 
 /**
  * fusionSdOAuthHelper.js
@@ -58,17 +59,32 @@ async function requestNewToken(catalystApp, integration) {
     throw err;
   }
 
-  let response;
-  try {
-    response = await axios.post(
+  const postTokenRequest = () =>
+    axios.post(
       tokenUrl.toString(),
       'grant_type=client_credentials',
       {
         auth: { username: accessKey, password: secretKey },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 10000,
+        timeout: getFusionTokenTimeoutMs(),
       }
     );
+
+  let response;
+  try {
+    try {
+      response = await postTokenRequest();
+    } catch (firstErr) {
+      // No answer at all (FUSION_TOKEN_RETRY): try once more. Nothing has
+      // been sent to /v1/leads yet, so this cannot duplicate a lead. An
+      // answer from Fusion is final.
+      if (firstErr.response || !isFusionTokenRetryEnabled()) throw firstErr;
+      logger.info(
+        'fusionSdOAuthHelper',
+        `Token endpoint did not respond for integration ${integration.ROWID}; retrying once`
+      );
+      response = await postTokenRequest();
+    }
   } catch (err) {
     // Never log the request body (contains the secret key) or the raw
     // error's config — only the status, matching this codebase's existing
