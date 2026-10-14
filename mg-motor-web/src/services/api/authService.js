@@ -13,6 +13,8 @@
  *      API shape ever changes.
  */
 
+import { authDebug } from "../../utils/authDebug";
+
 const SDK_READY_POLL_INTERVAL_MS = 50;
 const SDK_READY_TIMEOUT_MS = 10000;
 
@@ -46,7 +48,7 @@ function waitForCatalystSdk() {
 async function getCurrentSession() {
   const catalyst = await waitForCatalystSdk();
   const result = await catalyst.auth.isUserAuthenticated();
-  console.log('[AUTH-DEBUG] isUserAuthenticated raw result:', JSON.stringify(result));
+  authDebug('isUserAuthenticated raw result:', JSON.stringify(result));
   return result?.content ?? null;
 }
 

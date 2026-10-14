@@ -2,6 +2,7 @@ import axios from "axios";
 import { env } from "../../config/env";
 import { emitAuthEvent, AUTH_EVENTS } from "./authEvents";
 import { authService } from "./authService";
+import { authDebug } from "../../utils/authDebug";
 
 /**
  * axiosInstance.js
@@ -29,8 +30,8 @@ axiosInstance.interceptors.request.use(async (config) => {
   try {
     const token = await authService.generateAuthToken();
     // TEMP DEBUG — remove once auth loop is confirmed fixed
-    console.log(
-      "[AUTH-DEBUG] token generated:",
+    authDebug(
+      "token generated:",
       token ? token.substring(0, 20) + "..." : "NULL/EMPTY"
     );
     if (token) {
@@ -38,7 +39,7 @@ axiosInstance.interceptors.request.use(async (config) => {
     }
   } catch (err) {
     // TEMP DEBUG — remove once auth loop is confirmed fixed
-    console.log("[AUTH-DEBUG] generateAuthToken FAILED:", err);
+    authDebug("generateAuthToken FAILED:", err);
     // No token available — request proceeds without it; the existing
     // 401 response interceptor below will still catch the resulting
     // auth failure.
@@ -51,12 +52,12 @@ axiosInstance.interceptors.response.use(
   (error) => {
     if (error?.response?.status === 401) {
       // TEMP DEBUG — remove once auth loop is confirmed fixed
-      console.log(
-        "[AUTH-DEBUG] 401 response body:",
+      authDebug(
+        "401 response body:",
         JSON.stringify(error?.response?.data)
       );
-      console.log(
-        "[AUTH-DEBUG] request that failed:",
+      authDebug(
+        "request that failed:",
         error?.config?.url,
         "had Authorization header:",
         !!error?.config?.headers?.Authorization

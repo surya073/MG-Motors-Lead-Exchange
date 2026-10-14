@@ -3,6 +3,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { SESSION_STATUS } from "../constants/app.constants";
 import { ROUTES } from "../constants/routes.constants";
 import LoadingPage from "../common/LoadingPage/LoadingPage";
+import { authDebug } from "../utils/authDebug";
 
 /**
  * ProtectedRoute.jsx
@@ -18,7 +19,7 @@ import LoadingPage from "../common/LoadingPage/LoadingPage";
 export default function ProtectedRoute() {
   const { status } = useAuth();
   const location = useLocation();
-  console.log('[AUTH-DEBUG]', new Date().toISOString(), 'ProtectedRoute status:', status);
+  authDebug(new Date().toISOString(), 'ProtectedRoute status:', status);
 
 
   if (status === SESSION_STATUS.UNKNOWN) {

@@ -11,6 +11,7 @@ import {
 import { ROUTES, APP_BASE_PATH } from "../constants/routes.constants";
 import { useAlerts } from "../ui/Alerts/Alerts";
 import { clearSessionStart, markSessionStart } from "../utils/profilePreferences";
+import { authDebug } from "../utils/authDebug";
 
 /**
  * AuthContext.jsx
@@ -74,7 +75,7 @@ export function AuthProvider({ children }) {
     try {
       const profile = await authService.getCurrentSession();
       if (isLoggingOut.current) return; // logout started while this was in flight
-      console.log('[AUTH-DEBUG]', new Date().toISOString(), 'profile:', profile);
+      authDebug(new Date().toISOString(), 'profile:', profile);
 
       if (profile) {
         const appRole = normalizeRole(profile);
@@ -106,7 +107,7 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       if (isLoggingOut.current) return;
-      console.log('[AUTH-DEBUG]', new Date().toISOString(), 'validateSession threw:', err);
+      authDebug(new Date().toISOString(), 'validateSession threw:', err);
       if (wasAuthenticated.current) {
         showAlert("error", "We couldn't verify your session. Please log in again.", {
           title: "Session check failed",
