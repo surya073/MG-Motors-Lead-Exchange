@@ -136,7 +136,7 @@ async function flushIfWindowElapsed(catalystApp) {
   const pending = await fetchPending(catalystApp, MAX_BATCH_ROWS);
   if (!pending.length) return { sent: false, reason: 'EMPTY', count: 0 };
 
-  const oldest = pathPolicy.parseTimestamp(pending[0].CREATEDTIME);
+  const oldest = pathPolicy.parseSystemTimestamp(pending[0].CREATEDTIME);
   const ageMinutes = oldest ? (Date.now() - oldest.getTime()) / 60000 : Infinity;
   if (ageMinutes < BATCH_WINDOW_MINUTES) {
     return { sent: false, reason: 'WINDOW_NOT_ELAPSED', count: pending.length };

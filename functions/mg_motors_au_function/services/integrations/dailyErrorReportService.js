@@ -41,7 +41,7 @@ async function fetchRecentLogs(catalystApp, cutoffMs) {
   }
   const logs = [];
   rows.forEach((log) => {
-    const at = pathPolicy.parseTimestamp(log.CREATEDTIME);
+    const at = pathPolicy.parseSystemTimestamp(log.CREATEDTIME);
     if (at) logs.push({ ...log, _at: at });
   });
   return { logs, truncated, total: truncated ? total : logs.length };

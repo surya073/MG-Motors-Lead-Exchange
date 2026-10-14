@@ -376,6 +376,20 @@ function parseTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+// Catalyst system columns (CREATEDTIME, MODIFIEDTIME) are written in the
+// project timezone, Asia/Kolkata for this project, as "YYYY-MM-DD
+// HH:MM:SS:mmm". parseTimestamp above reads them as UTC (or as the runtime's
+// local time when they carry milliseconds), so use this for those columns.
+// Same rule as dealerReconciliationService.js's parseSystemTimestamp.
+const PROJECT_UTC_OFFSET = '+05:30';
+
+function parseSystemTimestamp(value) {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?::(\d{1,3}))?$/.exec(String(value || '').trim());
+  if (!match) return null;
+  const parsed = new Date(`${match[1]}T${match[2]}.${(match[3] || '0').padStart(3, '0')}${PROJECT_UTC_OFFSET}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function leadTimestamp(lead) {
   return parseTimestamp(lead.assigned_date || lead.CREATEDTIME || lead.created_at);
 }
@@ -477,6 +491,7 @@ function maskSensitiveValue(field, value) {
 }
 
 module.exports = {
+  parseSystemTimestamp,
   SCENARIOS,
   REJECTION_STATUSES,
   PROGRESS_STATUSES,
