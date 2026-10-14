@@ -394,6 +394,7 @@ async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, ve
  * errors internally, so awaiting it can never fail the sync loop.
  */
 async function dispatchNewLeadToDealer(catalystApp, leadRow) {
+  const stateBeforeDispatch = leadRow.sync_status;
   try {
     const dealer = leadRow.dealer_code
       ? await crmIntegrationService.findDealerByCode(catalystApp, leadRow.dealer_code)
@@ -449,6 +450,23 @@ async function dispatchNewLeadToDealer(catalystApp, leadRow) {
     // Never let a dealer-CRM push failure break the sync loop — same
     // fire-and-forget contract notifyDealerOfNewLead already had.
     logger.error('leadSyncService', `dispatchNewLeadToDealer failed for dealer_code=${leadRow.dealer_code}`, err);
+    // Nothing was recorded for this lead yet (e.g. the dealer or integration
+    // lookup failed): leave a log row and an alert so it is not lost
+    // silently. The lead's state is left as it was.
+    if (leadRow.sync_status === stateBeforeDispatch) {
+      try {
+        await crmIntegrationService.recordScenario(catalystApp, {
+          scenarioCode: 'Unhappy 1',
+          dealerCode: leadRow.dealer_code,
+          leadRow,
+          errorCode: 'DISPATCH_FAILED',
+          reason: `The lead could not be routed to its dealer: ${err.message}`,
+          notify: true,
+        });
+      } catch (recordErr) {
+        logger.error('leadSyncService', `Could not record the dispatch failure for lead ${leadRow.crm_record_id}`, recordErr);
+      }
+    }
     return { ok: false, scenarioCode: err.scenarioCode || 'Unhappy 1', error: err.message };
   }
 }
@@ -1054,6 +1072,7 @@ module.exports = {
   syncLeadsByIds,
   syncModifiedLeads,
   _test: {
+    dispatchNewLeadToDealer,
     mapCrmRecordToLeadRow,
     hasChanges,
     needsAssignedDateBackfill,
