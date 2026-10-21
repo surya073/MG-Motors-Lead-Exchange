@@ -2106,6 +2106,17 @@ export default function DealerCRMConfig() {
                           </button>
                         )}
 
+                        {statusMappings.some((mapping, index) => !isStatusRowSaved(mapping, index)) && (
+                          <div className="dealer-crm-config__mapping-header dealer-crm-config__mapping-header--status">
+                            <span>MG status</span>
+                            <span />
+                            <span>Dealer value</span>
+                            <span className="dealer-crm-config__mapping-header-center">Inbound only</span>
+                            <span className="dealer-crm-config__mapping-header-center">Outbound only</span>
+                            <span />
+                          </div>
+                        )}
+
                         {statusMappings.map((mapping, index) => {
                           if (isStatusRowSaved(mapping, index)) {
                             return (
@@ -2178,23 +2189,31 @@ export default function DealerCRMConfig() {
                                 onChange={(e) => handleStatusMappingChange(index, "target_status", e.target.value)}
                                 placeholder="e.g. OPEN, IN_PROGRESS, HOT…"
                               />
-                              <label title="Accept this dealer status coming in, but never send our status out as it">
+                              <label
+                                className="dealer-crm-config__toggle-switch dealer-crm-config__toggle-switch--compact"
+                                title="Accept this dealer status coming in, but never send our status out as it"
+                              >
                                 <input
                                   type="checkbox"
+                                  aria-label="Inbound only"
                                   checked={Boolean(mapping.inbound_only)}
                                   onChange={(e) => handleStatusMappingDirection(index, "inbound_only", e.target.checked)}
                                   disabled={isViewUser}
-                                />{" "}
-                                Inbound only
+                                />
+                                <span className="dealer-crm-config__toggle-slider" />
                               </label>
-                              <label title="Send our status out as this dealer status, but never map it back to ours (lets several of our statuses share one dealer status)">
+                              <label
+                                className="dealer-crm-config__toggle-switch dealer-crm-config__toggle-switch--compact"
+                                title="Send our status out as this dealer status, but never map it back to ours (lets several of our statuses share one dealer status)"
+                              >
                                 <input
                                   type="checkbox"
+                                  aria-label="Outbound only"
                                   checked={Boolean(mapping.outbound_only)}
                                   onChange={(e) => handleStatusMappingDirection(index, "outbound_only", e.target.checked)}
                                   disabled={isViewUser}
-                                />{" "}
-                                Outbound only
+                                />
+                                <span className="dealer-crm-config__toggle-slider" />
                               </label>
                               <button
                                 type="button"

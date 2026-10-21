@@ -718,7 +718,6 @@
     grid-template-columns: 1fr 20px 1fr 50px 24px;
     font-size: var(--fs-xs);
   }
-
   .dealer-crm-config__detail-header {
     flex-direction: column;
     align-items: flex-start;
@@ -1089,13 +1088,26 @@
   margin-top: 2px;
 }
 
-/* CHANGE this existing rule from:
-.dealer-crm-config__mapping-row--status {
-  grid-template-columns: 1fr 24px 1fr;
+/* Status mapping edit rows: MG status → dealer value, two direction toggles, delete.
+   Header and rows share the same track list so every column lines up. */
+.dealer-crm-config__mapping-row--status,
+.dealer-crm-config__mapping-header--status {
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 96px 96px 32px;
 }
-   to: */
+
 .dealer-crm-config__mapping-row--status {
-  grid-template-columns: 1fr 24px 1fr 28px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-elevated);
+}
+
+.dealer-crm-config__mapping-row--status .dealer-crm-config__icon-button {
+  justify-self: center;
+}
+
+.dealer-crm-config__mapping-header-center {
+  text-align: center;
 }
 
 /* =========================================================
@@ -1973,5 +1985,13 @@
 @media (max-width: 640px) {
   .dealer-crm-config__header-mode {
     width: 100%;
+  }
+}
+
+/* Status mapping rows on small screens (must follow the base --status rules above) */
+@media (max-width: 640px) {
+  .dealer-crm-config__mapping-header--status,
+  .dealer-crm-config__mapping-row--status {
+    grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 64px 64px 28px;
   }
 }
