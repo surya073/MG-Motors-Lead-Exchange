@@ -57,6 +57,7 @@ test('parseSystemTimestamp gives the same instant whatever the runtime timezone'
 test('the timed alert digest waits for a failure queued 10 minutes ago', async (t) => {
   onUtcRuntime(t);
   const db = createInMemoryZcql({
+    outbound_sync_claims: [],
     integration_alert_queue: [{
       CREATEDTIME: catalystSystemTime(new Date(Date.now() - 10 * 60000)),
       scenario_code: 'Unhappy 5', dealer_code: 'D1', lead_id: 'l1', reason: 'x', priority_for: 'P2',
@@ -74,6 +75,7 @@ test('the timed alert digest waits for a failure queued 10 minutes ago', async (
 test('the timed alert digest sends a failure queued 40 minutes ago (window 30), not 6 hours later', async (t) => {
   onUtcRuntime(t);
   const db = createInMemoryZcql({
+    outbound_sync_claims: [],
     integration_alert_queue: [{
       CREATEDTIME: catalystSystemTime(new Date(Date.now() - 40 * 60000)),
       scenario_code: 'Unhappy 5', dealer_code: 'D1', lead_id: 'l1', reason: 'x', priority_for: 'P2',

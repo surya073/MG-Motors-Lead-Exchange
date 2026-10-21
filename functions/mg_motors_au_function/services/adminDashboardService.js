@@ -6,6 +6,7 @@ const { toCatalystDateTime } = require('../utils/dateFormat');
 const DEALERS_TABLE = 'dealers';
 const stats = require('./dashboardStatsService');
 const { mapWithConcurrency } = require('../utils/concurrency');
+const { fetchDealerNames } = require('./leadListService');
 
 const INVITE_SYNC_CONCURRENCY = 5;
 
@@ -39,7 +40,7 @@ const ZCQL_PAGE_SIZE = 200; // Catalyst ZCQL's max rows per LIMIT clause
  * of them, since they all route through this function) truncate at 100
  * regardless of how many rows the sync itself had correctly inserted.
  */
-async function getAllRows(catalystApp, tableName) {
+async function getAllRows(catalystApp, tableName, conditions = []) {
   const allRows = [];
   let offset = 0;
 
@@ -49,7 +50,8 @@ async function getAllRows(catalystApp, tableName) {
     // page 1 and makes any table over one page over-count by one. offset + 1 is
     // a true 0-based offset.
     // ORDER BY ROWID gives the pages a stable total order to walk.
-    const query = `SELECT * FROM ${tableName} ORDER BY ROWID ASC LIMIT ${offset + 1}, ${ZCQL_PAGE_SIZE}`;
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')} ` : '';
+    const query = `SELECT * FROM ${tableName} ${where}ORDER BY ROWID ASC LIMIT ${offset + 1}, ${ZCQL_PAGE_SIZE}`;
     const result = await catalystApp.zcql().executeZCQLQuery(query);
     const rows = result.map((row) => row[tableName]);
     allRows.push(...rows);
@@ -104,29 +106,21 @@ async function getAllDealersWithLeadCounts(catalystApp) {
 }
 
 async function getAllLeads(catalystApp, { dealerCode, leadStatus } = {}) {
-  const leads = await getAllRows(catalystApp, LEADS_TABLE);
-  const dealers = await getAllRows(catalystApp, DEALERS_TABLE);
-
-  const dealerNameByCode = {};
-  dealers.forEach((d) => { dealerNameByCode[d.dealer_code] = d.dealer_name; });
+  const quote = (value) => String(value).replace(/'/g, "''");
+  const conditions = [];
+  if (dealerCode) conditions.push(`dealer_code = '${quote(dealerCode)}'`);
+  if (leadStatus) conditions.push(`lead_status = '${quote(leadStatus)}'`);
+  const leads = await getAllRows(catalystApp, LEADS_TABLE, conditions);
+  const dealerNames = await fetchDealerNames(catalystApp, leads.map((lead) => lead.dealer_code));
 
   // dealer_crm_record_id lives directly on the leads row (mirrored there by
   // crmIntegrationService once the outbound push succeeds, and cleared by
   // dealerReconciliationService if the dealer no longer has the record), so
   // it passes through via the spread below with no join needed.
-  let filtered = leads.map((lead) => ({
+  return leads.map((lead) => ({
     ...lead,
-    dealer_name: dealerNameByCode[lead.dealer_code] || 'Unknown',
+    dealer_name: dealerNames.get(lead.dealer_code) || 'Unknown',
   }));
-
-  if (dealerCode) {
-    filtered = filtered.filter((l) => l.dealer_code === dealerCode);
-  }
-  if (leadStatus) {
-    filtered = filtered.filter((l) => l.lead_status === leadStatus);
-  }
-
-  return filtered;
 }
 
 const LEAD_STATUS_KEYS = {
@@ -376,8 +370,8 @@ const ACTIVITY_TIMELINE_LIMIT = 8;
 const RECENT_SYNC_LOG_LIMIT = 5;
 
 async function getDashboardSummary(catalystApp) {
-  // Every figure below is a database-side COUNT / GROUP BY (or a bounded
-  // "newest N" read), so this costs the same at 1,000 leads or 1,000,000.
+  // Aggregates bound returned data. Database work and billed usage still
+  // depend on data volume and Catalyst's query accounting.
   const [dealers, dealerStatusCounts, activeStatusCounts, syncLogs] = await Promise.all([
     getAllRows(catalystApp, DEALERS_TABLE),
     stats.leadCountsByDealerAndStatus(catalystApp),
@@ -817,11 +811,15 @@ async function getLeadExchangeHealth(catalystApp, { fromDate, toDate, dealerCode
     };
   } else {
     const summary = summarizeDealerStatus(scopedDealers);
+    const integrationConditions = ["status = 'ERROR'"];
+    if (dealerCode) integrationConditions.push(`dealer_code = '${safeQuoteForZcqlLocal(dealerCode)}'`);
+    const errorCodes = new Set((await stats.countGrouped(catalystApp, DEALER_INTEGRATIONS_TABLE,
+      ['dealer_code'], integrationConditions)).map((row) => row.dealer_code));
     dealerHealth = {
       total: summary.active + summary.inactive + summary.pending + summary.other,
       activeInRange: summary.active,
       noSuccessfulSyncInRange: summary.inactive,
-      withErrorsInRange: scopedDealers.filter((d) => d.integration_status === 'ERROR').length,
+      withErrorsInRange: scopedDealers.filter((d) => d.sync_status !== 'Removed' && errorCodes.has(d.dealer_code)).length,
       definitionNote: "No date range selected — showing each dealer's stored active/inactive/pending status.",
     };
   }

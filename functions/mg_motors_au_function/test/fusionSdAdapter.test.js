@@ -21,7 +21,7 @@ function fakeIntegration(overrides = {}) {
     ROWID: '1001',
     dealer_code: 'AU999',
     crm_type: 'FUSION_SD',
-    base_url: 'https://qa.fusionamspro.com/api/leadapi',
+    base_url: 'https://8.8.8.8/api/leadapi', // HTTP is mocked; DNS must not depend on QA
     create_lead_endpoint: '/v1/leads',
     http_method: 'POST',
     ...overrides,
@@ -108,6 +108,10 @@ test('getAccessTokenForFusionSd: sends Basic Auth (access key as username) + for
   assert.equal(capturedConfig.auth.username, 'the-access-key');
   assert.equal(capturedConfig.auth.password, 'the-secret-key');
   assert.equal(capturedConfig.headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.equal(capturedConfig.maxRedirects, 0);
+  assert.equal(capturedConfig.proxy, false);
+  assert.equal(capturedConfig.adapter, 'http');
+  assert.equal(typeof capturedConfig.lookup, 'function');
 });
 
 test('getAccessTokenForFusionSd: token cache is isolated per integration ROWID', async (t) => {
@@ -830,5 +834,25 @@ test('a token request that times out or cannot connect is a connection error, no
         return true;
       }
     );
+  }
+});
+
+test('token HTTP 429 and 5xx preserve transient classification and Retry-After without secrets', async (t) => {
+  fusionSdOAuthHelper._resetForTests();
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'synthetic-secret');
+  let failure;
+  t.mock.method(axios, 'post', async () => { throw failure; });
+  for (const status of [429, 500, 503]) {
+    failure = Object.assign(new Error('synthetic error'), {
+      response: { status, headers: { 'retry-after': '60' }, data: { error_description: 'synthetic-secret' } },
+      config: { auth: { password: 'synthetic-secret' } },
+    });
+    await assert.rejects(() => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, updateIntegration()), (err) => {
+      assert.equal(err.code, 'EXTERNAL_CRM_ERROR');
+      assert.deepEqual(err.response, { status });
+      assert.deepEqual(err.vendor, { status, retryAfter: 60 });
+      assert.ok(!JSON.stringify(err).includes('synthetic-secret'));
+      return true;
+    });
   }
 });

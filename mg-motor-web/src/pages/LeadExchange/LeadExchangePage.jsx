@@ -17,6 +17,7 @@ import {
   Frown,
 } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
+import { createSingleFlight, startVisiblePolling } from "../../utils/visiblePolling";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
 import { syncLeadsService } from "../../services/api/syncService";
 import Table from "../../ui/Table/Table";
@@ -1072,7 +1073,7 @@ export default function LeadExchangePage() {
 // self-contained: it neither reads nor changes the lead list's state, and
 // opening/closing its offcanvas is a separate local boolean that never
 // touches search/filter/pagination/detail-view state either.
-const OUT_OF_ORDER_REFRESH_MS = 30000;
+const OUT_OF_ORDER_REFRESH_MS = 120000;
 
 function OutOfOrderEventsPanel() {
   const [events, setEvents] = useState([]);
@@ -1080,34 +1081,44 @@ function OutOfOrderEventsPanel() {
   const [error, setError] = useState(null);
   const [offcanvasOpen, setOffcanvasOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const requestRef = useRef(null);
+  const mountedRef = useRef(false);
 
-  const load = async () => {
-    try {
-      const result = await adminDashboardService.listOutOfOrderEvents();
-      setEvents(result);
-      setError(null);
-    } catch (err) {
-      setError(err?.response?.data?.error || "Couldn't load dealer events.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (!requestRef.current) {
+    // Manual refresh and the poll share one request, including slow responses.
+    requestRef.current = createSingleFlight(async () => {
+      try {
+        const result = await adminDashboardService.listOutOfOrderEvents();
+        if (!mountedRef.current) return;
+        setEvents(result);
+        setError(null);
+      } catch (err) {
+        if (mountedRef.current) setError(err?.response?.data?.error || "Couldn't load dealer events.");
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    });
+  }
+  const load = requestRef.current;
 
-  // Manual refresh: same fetch as the 30s poll, but with visible feedback
+  // Manual refresh: immediate fetch with visible feedback
   // (spinner + disabled) so the click doesn't look like a no-op when the
   // data hasn't changed.
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
     await load();
-    setRefreshing(false);
+    if (mountedRef.current) setRefreshing(false);
   };
 
   useEffect(() => {
-    load();
-    const timer = setInterval(load, OUT_OF_ORDER_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, []);
+    mountedRef.current = true;
+    const stop = startVisiblePolling(load, OUT_OF_ORDER_REFRESH_MS);
+    return () => {
+      mountedRef.current = false;
+      stop();
+    };
+  }, [load]);
 
   if (loading) return null;
   if (!error && events.length === 0) return null;

@@ -38,6 +38,7 @@ function buildIntegration(rowId, dealerCode) {
   return {
     ROWID: rowId,
     dealer_code: dealerCode,
+    integration_type: 'EXTERNAL_CRM',
     crm_type: 'GENERIC_REST',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
@@ -65,12 +66,13 @@ function buildLeadRow(crmRecordId, dealerCode) {
   };
 }
 
-function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping }) {
+function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping, integration, leadRow }) {
   const mappingsById = new Map(mapping ? [[mapping.ROWID, { ...mapping }]] : []);
 
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
+        if (sql.includes('FROM dealer_integrations')) return [{ dealer_integrations: { ...integration } }];
         if (sql.includes('FROM dealers')) return [{ dealers: { dealer_code: dealerCode, sync_status: 'Active' } }];
         if (sql.includes('FROM integration_field_mappings')) {
           return fieldMappings.map((row) => ({ integration_field_mappings: row }));
@@ -86,7 +88,7 @@ function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping }) {
           }
           return [];
         }
-        if (sql.includes('FROM leads')) return [];
+        if (sql.includes('FROM leads')) return [{ leads: { ...leadRow } }];
         if (sql.includes('FROM notifications') || sql.includes('FROM integration_alert_queue')) return [];
         throw new Error(`Unexpected ZCQL query in test: ${sql}`);
       },
@@ -136,7 +138,7 @@ test('CRM_API_QUEUE_FULL is classified as retryable: retry_count still advances,
     // escalation window and flips this ordinary retryable failure to FAILED_CRITICAL.
     failure_streak_started_at: new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '),
   };
-  const catalystApp = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU901', mapping: existingMapping });
+  const catalystApp = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU901', mapping: existingMapping, integration, leadRow });
 
   t.mock.method(crmAdapterFactory, 'getAdapter', () => ({
     createLead: async () => { throw new Error('must never be called — the queue is full before this point'); },

@@ -238,7 +238,11 @@ async function call(t, { userId, method = 'GET', path, body }) {
   server.use(express.json());
   server.use((req, res, next) => {
     res.locals.catalystApp = db.app;
-    if (userId) res.locals.currentUser = { user_id: userId, email_id: `${userId}@example.com` };
+    if (userId) res.locals.currentUser = {
+      user_id: userId,
+      email_id: `${userId}@example.com`,
+      role_details: { role_id: '37148000000430005' },
+    };
     next();
   });
   server.use(dealerLeadRoutes);

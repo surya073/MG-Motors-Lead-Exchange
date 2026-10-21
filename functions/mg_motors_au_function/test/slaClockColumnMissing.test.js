@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fixtures = require('./helpers/fusionFixtures');
 const { setupOutbound, fakeAdapter, withEnv } = require('./helpers/outboundHarness');
 const { FIELD_PRESET, STATUS_PRESET } = require('./helpers/fusionPresets');
-const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const oemCrmService = require('../services/zohoCrmService');
@@ -96,7 +96,7 @@ test('the SLA sweep falls back to last_synced_at, and still breaches an overdue 
   _resetForTests();
   withEnv(t, { SLA_DEALER_ACTION_CLOCK: 'true' });
   const NOW = Date.parse('2026-10-13T06:00:00Z');
-  const db = withoutClockColumn(createInMemoryZcql({
+  const db = withoutClockColumn(createSlaFixture({
     dealer_integrations: [{ dealer_code: 'AU008', crm_type: 'ZOHO_CRM', status: 'CONNECTED' }],
     lead_integrations: [{ zoho_lead_id: 'Z1', dealer_code: 'AU008', integration_id: '1000', sync_status: 'SYNCED', last_synced_at: '2026-10-10 06:00:00' }],
     leads: [{ crm_record_id: 'Z1', lead_status: 'Not Contacted', sync_status: 'SYNCED' }],
@@ -113,7 +113,7 @@ test('the SLA sweep falls back to last_synced_at, and still breaches an overdue 
 test('with the column present the sweep reports the dealer-action clock', async (t) => {
   _resetForTests();
   withEnv(t, { SLA_DEALER_ACTION_CLOCK: 'true' });
-  const db = createInMemoryZcql({
+  const db = createSlaFixture({
     dealer_integrations: [{ dealer_code: 'AU008', crm_type: 'ZOHO_CRM', status: 'CONNECTED' }],
     lead_integrations: [],
     leads: [],

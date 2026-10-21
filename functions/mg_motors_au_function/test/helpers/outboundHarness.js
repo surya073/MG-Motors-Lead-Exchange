@@ -42,7 +42,7 @@ const LEAD = {
   lead_source: 'Website', dealer_code: 'AU999', accept_privacy_policy: true, lead_status: 'Not Contacted',
 };
 
-function setupOutbound(t, { integration = {}, mapping = {}, lead = {} } = {}) {
+function setupOutbound(t, { integration = {}, mapping = {}, lead = {}, enforceUnique = false } = {}) {
   const db = createInMemoryZcql({
     dealers: [{ dealer_code: 'AU999', dealer_name: 'Fusion Dealer' }],
     dealer_integrations: [{
@@ -59,7 +59,7 @@ function setupOutbound(t, { integration = {}, mapping = {}, lead = {} } = {}) {
     leads: [{ ...LEAD, sync_status: 'SYNCED', ...lead }],
     integration_logs: [],
     outbound_sync_claims: [],
-  });
+  }, { enforceUnique });
   const alerts = t.mock.method(integrationAlertService, 'notifyScenario', async () => ({ sent: false }));
   // OEM (MG Zoho) write-backs, e.g. the acknowledgement or "Dealer Unavailable".
   const oemWrites = [];

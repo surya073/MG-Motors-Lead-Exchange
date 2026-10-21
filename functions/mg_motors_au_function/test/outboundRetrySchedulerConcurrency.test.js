@@ -39,7 +39,7 @@ function buildIntegration(rowId, dealerCode) {
   return {
     ROWID: rowId,
     dealer_code: dealerCode,
-    crm_type: 'GENERIC_REST',
+    crm_type: 'GENERIC_REST', integration_type: 'EXTERNAL_CRM',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
     update_lead_endpoint: '/api/leads',

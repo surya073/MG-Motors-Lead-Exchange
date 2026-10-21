@@ -1,6 +1,10 @@
 'use strict';
 
 const XLSX = require('xlsx');
+const logger = require('../utils/logger');
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_TEXT_CHARACTERS = 8000;
 
 const GEMINI_API_KEY = process.env.gemini_api_key; // matches catalyst-config.json's env var name (lowercase)
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
@@ -61,27 +65,52 @@ function parseJsonSafe(text, fallback) {
  * PDF branch requires the `pdf-parse` package — see the note below.
  */
 async function extractFileText(base64Data, fileName) {
+  if (typeof base64Data !== 'string' || typeof fileName !== 'string') {
+    throw Object.assign(new Error('A base64 file and file name are required'), { code: 'INVALID_UPLOAD' });
+  }
+  if (!/\.(pdf|xlsx|xls|csv)$/i.test(fileName)) {
+    throw Object.assign(new Error('Supported file types are PDF, XLSX, XLS and CSV'), { code: 'INVALID_UPLOAD' });
+  }
+  if (base64Data.length > Math.ceil(MAX_FILE_BYTES / 3) * 4) {
+    throw Object.assign(new Error('File must be no larger than 10 MB'), { code: 'UPLOAD_TOO_LARGE' });
+  }
+  const buf = Buffer.from(base64Data, 'base64');
+  if (!buf.length || buf.length > MAX_FILE_BYTES) {
+    throw Object.assign(new Error('File is empty or larger than 10 MB'), { code: 'INVALID_UPLOAD' });
+  }
   const isSheet = /\.(xlsx|xls|csv)$/i.test(fileName || '');
 
   if (isSheet) {
-    const buf = Buffer.from(base64Data, 'base64');
-    const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
+    const wb = XLSX.read(buf, { type: 'buffer', cellDates: true, sheetRows: 60 });
     const sheetName = wb.SheetNames[0];
+    if (!sheetName) throw Object.assign(new Error('The spreadsheet contains no sheets'), { code: 'INVALID_UPLOAD' });
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
     // Cap what we send to Gemini — first 60 rows is plenty for KPI/trend inference
     const capped = rows.slice(0, 60).map((r) => r.join(' | ')).join('\n');
-    return { kind: 'sheet', rowCount: Math.max(rows.length - 1, 0), text: capped };
+    const reference = wb.Sheets[sheetName]['!fullref'] || wb.Sheets[sheetName]['!ref'];
+    const totalRows = reference ? XLSX.utils.decode_range(reference).e.r + 1 : rows.length;
+    return {
+      kind: 'sheet', rowCount: Math.max(totalRows - 1, 0),
+      text: capped.slice(0, MAX_FILE_TEXT_CHARACTERS),
+      sampled: totalRows > rows.length || capped.length > MAX_FILE_TEXT_CHARACTERS,
+    };
   }
 
-  let pdfParse;
+  let PDFParse;
   try {
     // eslint-disable-next-line global-require
-    pdfParse = require('pdf-parse');
+    ({ PDFParse } = require('pdf-parse'));
   } catch (err) {
     throw new Error('PDF parsing requires the "pdf-parse" package — run: npm install pdf-parse');
   }
-  const result = await pdfParse(Buffer.from(base64Data, 'base64'));
-  return { kind: 'pdf', rowCount: null, text: result.text.slice(0, 8000) };
+  const parser = new PDFParse({ data: new Uint8Array(buf), isEvalSupported: false });
+  try {
+    const result = await parser.getText();
+    return { kind: 'pdf', rowCount: null, text: result.text.slice(0, MAX_FILE_TEXT_CHARACTERS), sampled: result.text.length > MAX_FILE_TEXT_CHARACTERS };
+  } finally {
+    // Parsing errors retain their original cause even if worker cleanup fails.
+    await parser.destroy().catch((err) => logger.error('onDemandAiService', 'PDF worker cleanup failed', err));
+  }
 }
 
 async function analyzeUploadedFile(base64Data, fileName) {
@@ -104,6 +133,7 @@ Rules:
 
 FILE: ${fileName}
 ${extracted.kind === 'sheet' ? `ROWS: ${extracted.rowCount}` : ''}
+${extracted.sampled ? 'DATA IS A SAMPLE: some rows or text were omitted. Describe only visible data; do not infer whole-file totals from this sample.' : ''}
 DATA:
 ${extracted.text}`;
 
@@ -162,4 +192,5 @@ module.exports = {
   analyzeUploadedFile,
   askAssistant,
   buildAppDataContext,
+  _test: { extractFileText },
 };

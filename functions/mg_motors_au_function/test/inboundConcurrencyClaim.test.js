@@ -32,7 +32,7 @@ function buildIntegration(overrides = {}) {
   return {
     ROWID: '801',
     dealer_code: 'AU777',
-    crm_type: 'GENERIC_REST',
+    crm_type: 'GENERIC_REST', integration_type: 'EXTERNAL_CRM',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
     update_lead_endpoint: '/api/leads',
@@ -100,7 +100,15 @@ function buildSharedFakeCatalystApp({ outboundFieldMappings, dealerRow, leadInte
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
-        if (sql.includes('FROM dealers')) return dealerRow ? [{ dealers: dealerRow }] : [];
+        if (sql.includes('FROM dealers')) {
+          const code = /dealer_code = '([^']*)'/.exec(sql)?.[1];
+          return [{ dealers: dealerRow || { dealer_code: code, sync_status: 'Synced' } }];
+        }
+        if (sql.includes('FROM dealer_integrations')) {
+          const id = /ROWID = (\d+)/.exec(sql)?.[1];
+          const mapping = [...leadIntegrationsById.values()].find(row => String(row.integration_id) === id);
+          return mapping ? [{ dealer_integrations: buildIntegration({ ROWID: id, dealer_code: mapping.dealer_code }) }] : [];
+        }
         if (sql.includes('FROM integration_field_mappings')) {
           return (outboundFieldMappings || []).map((row) => ({ integration_field_mappings: row }));
         }
@@ -292,7 +300,11 @@ test('inbound + outbound: a webhook update and an outbound sync for the SAME lea
       await new Promise((resolve) => setTimeout(resolve, 20));
       return { externalLeadId: 'EXT-FROM-OUTBOUND', httpStatus: 201 };
     },
-    updateLead: async () => { throw new Error('not expected'); },
+    updateLead: async (_app, _integration, externalLeadId) => {
+      outboundRan = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { externalLeadId, httpStatus: 200 };
+    },
   };
   t.mock.method(crmAdapterFactory, 'getAdapter', () => fakeAdapter);
   t.mock.method(oemCrmService, 'updateOemLead', async () => ({}));

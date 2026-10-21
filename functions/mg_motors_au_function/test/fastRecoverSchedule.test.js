@@ -22,7 +22,8 @@ const integrationAlertBatchService = require('../services/integrations/integrati
 
 // /cron/fast-recover (every 2 minutes in the deployed project) retried every
 // failed lead on every run, ignoring next_retry_at. FAST_RECOVER_HONOUR_SCHEDULE
-// makes it wait for each lead's own retry time; unset keeps today's behaviour.
+// now waits for each lead's own retry time by default; explicit false preserves
+// the legacy operator override.
 async function runFastRecover(t, honourSchedule) {
   const before = process.env.FAST_RECOVER_HONOUR_SCHEDULE;
   if (honourSchedule === undefined) delete process.env.FAST_RECOVER_HONOUR_SCHEDULE;
@@ -54,11 +55,20 @@ async function runFastRecover(t, honourSchedule) {
   });
   assert.equal(response.status, 200);
   assert.equal(sweep.mock.callCount(), 1);
-  return sweep.mock.calls[0].arguments[1];
+  const options = sweep.mock.calls[0].arguments[1];
+  assert.ok(Number.isFinite(options.deadline), 'fast-recover always has an end-to-end start budget');
+  assert.ok(options.deadline <= Date.now() + 25000);
+  assert.ok(Number.isSafeInteger(options.windowSequence), 'candidate rotation has a stage-cycle sequence');
+  const { deadline, windowSequence, ...retryOptions } = options;
+  return retryOptions;
 }
 
-test('fast-recover ignores next_retry_at by default, as it always has', async (t) => {
-  assert.deepEqual(await runFastRecover(t, undefined), { ignoreSchedule: true, includeRoutingHolds: true });
+test('fast-recover respects next_retry_at by default', async (t) => {
+  assert.deepEqual(await runFastRecover(t, undefined), { ignoreSchedule: false, includeRoutingHolds: true });
+});
+
+test('explicit false preserves the legacy fast-recover schedule override', async (t) => {
+  assert.deepEqual(await runFastRecover(t, 'false'), { ignoreSchedule: true, includeRoutingHolds: true });
 });
 
 test('FAST_RECOVER_HONOUR_SCHEDULE=true makes fast-recover wait for each lead\'s next_retry_at', async (t) => {

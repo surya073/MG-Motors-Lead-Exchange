@@ -4,6 +4,8 @@ const logger = require('../../utils/logger');
 const { isSyncClaimFailClosed } = require('../../config/env');
 const { toCatalystDateTime } = require('../../utils/dateFormat');
 const pathPolicy = require('./pathPolicyService');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const heldClaims = new AsyncLocalStorage();
 
 /**
  * outboundSyncClaimService.js
@@ -31,11 +33,14 @@ const pathPolicy = require('./pathPolicyService');
  *     claimed_at         Text (stores "YYYY-MM-DD HH:mm:ss" UTC)
  *     request_reference  Text
  *
- * Until that table and unique constraint exist, acquireClaim() below
- * fails open on ANY insert error whose claim_key it cannot find afterward
- * (see the comment in acquireClaim) — i.e. a missing table surfaces as a
- * loud thrown error on every sync attempt, not a silent no-op, so a
- * misconfigured deployment is obvious rather than quietly unprotected.
+ * Deployment of lead-scoped keys: drain old executions before switching from
+ * the former integration:lead keys; mixed versions do not share the same key.
+ *
+ * Until that table and unique constraint exist, processing is deferred by
+ * default rather than performed without duplicate protection. An explicit
+ * SYNC_CLAIM_FAIL_CLOSED=false retains the legacy fail-open override. Missing
+ * claim storage is logged; a missing UNIQUE constraint requires deployment
+ * inspection because successful inserts alone cannot establish exclusivity.
  *
  * Why INSERT-based claiming, not a status flag on lead_integrations: the
  * known duplicate-creation race can happen BEFORE any lead_integrations
@@ -70,7 +75,9 @@ const CLAIM_TTL_MINUTES = Number.isFinite(configuredTtl) && configuredTtl > 0
   : DEFAULT_CLAIM_TTL_MINUTES;
 
 function buildClaimKey(integrationId, zohoLeadId) {
-  return `${integrationId}:${zohoLeadId}`;
+  // Ownership can move between integrations. Both owners and the OEM mirror
+  // mutation must serialize on the same lead, not on separate dealer keys.
+  return integrationId === 'leadSync' ? `leadSync:${zohoLeadId}` : `lead:${zohoLeadId}`;
 }
 
 function safeQuoteForZcql(value) {
@@ -101,7 +108,7 @@ async function deleteClaimSilently(catalystApp, claimRowId) {
 }
 
 /**
- * Attempts to atomically claim (integrationId, zohoLeadId) for exclusive
+ * Attempts to atomically claim the OEM lead, across integrations, for exclusive
  * outbound-sync processing. Returns the claim row on success, or null if
  * another instance genuinely holds it right now.
  *
@@ -153,7 +160,8 @@ async function acquireClaim(catalystApp, integrationId, zohoLeadId, requestRefer
 
 /**
  * Runs `fn` while holding the exclusive outbound-sync claim for
- * (integrationId, zohoLeadId). If the claim cannot be acquired, `fn` is
+ * the OEM lead (the separate leadSync namespace guards business duplicates).
+ * If the claim cannot be acquired, `fn` is
  * never called and this returns {skipped: true, reason:
  * 'CONCURRENT_SYNC_IN_PROGRESS'} — the same shape syncLeadToExternalCrm
  * already uses for its other non-error skip cases (e.g.
@@ -163,6 +171,9 @@ async function acquireClaim(catalystApp, integrationId, zohoLeadId, requestRefer
  * has no mapping yet), so it is simply retried on the next sweep.
  */
 async function withOutboundSyncClaim(catalystApp, integrationId, zohoLeadId, requestReference, fn) {
+  const claimKey = buildClaimKey(integrationId, zohoLeadId);
+  const inherited = heldClaims.getStore() || [];
+  if (inherited.some((entry) => entry.active && entry.app === catalystApp && entry.key === claimKey)) return fn();
   let claim;
   try {
     claim = await acquireClaim(catalystApp, integrationId, zohoLeadId, requestReference);
@@ -204,9 +215,11 @@ async function withOutboundSyncClaim(catalystApp, integrationId, zohoLeadId, req
     return { skipped: true, reason: 'CONCURRENT_SYNC_IN_PROGRESS' };
   }
 
+  const context = { app: catalystApp, key: claimKey, active: true };
   try {
-    return await fn();
+    return await heldClaims.run([...inherited, context], fn);
   } finally {
+    context.active = false;
     await deleteClaimSilently(catalystApp, claim.ROWID);
   }
 }

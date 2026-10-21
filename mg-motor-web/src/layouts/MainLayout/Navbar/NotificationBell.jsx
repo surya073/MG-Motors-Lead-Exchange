@@ -133,28 +133,55 @@ export default function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState("all"); // "all" | "unread"
   const [confirmClear, setConfirmClear] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState("");
   const containerRef = useRef(null);
+  const requestSeq = useRef(0);
   const [notificationStyle] = useNotificationStyle();
+  const userKey = user?.user_id || user?.email_id;
+  const actorKey = JSON.stringify([String(userKey || ""), String(role || "")]);
+  const actorRef = useRef({ key: actorKey, epoch: 0 });
+  if (actorRef.current.key !== actorKey) {
+    actorRef.current = { key: actorKey, epoch: actorRef.current.epoch + 1 };
+  }
+  const filterRef = useRef({ tab, epoch: 0 });
+  if (filterRef.current.tab !== tab) {
+    filterRef.current = { tab, epoch: filterRef.current.epoch + 1 };
+  }
 
   const fetchNotifications = useCallback(async () => {
+    const seq = ++requestSeq.current;
+    const actor = actorRef.current.epoch;
+    const filter = filterRef.current;
     try {
       setLoading(true);
-      const result = await notificationService.list();
+      // Mutation completions may belong to an earlier render. Always read
+      // the selected filter now, and reject a response if it changes again.
+      const result = await notificationService.list({ unreadOnly: filter.tab === "unread" });
+      if (seq !== requestSeq.current || actor !== actorRef.current.epoch || filter.epoch !== filterRef.current.epoch) return;
       setNotifications(result.notifications || []);
       setUnreadCount(result.unreadCount || 0);
     } catch {
       // Silent — a failed fetch shouldn't interrupt the rest of the app.
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current && actor === actorRef.current.epoch && filter.epoch === filterRef.current.epoch) setLoading(false);
     }
   }, []);
 
-  // One fetch on mount only. No interval — API calls are rate-limited.
-  // Every other refresh happens only when the user opens the panel or
-  // takes an action (mark read / delete / mark all read / clear all).
+  useEffect(() => {
+    setNotifications([]);
+    setUnreadCount(0);
+    setBulkNotice("");
+    setBulkBusy(false);
+    setConfirmClear(false);
+  }, [userKey, role]);
+
+  // Mount/filter changes and user actions refresh the panel; there is no poll.
+  // The unread tab reads unread rows directly, including an older backlog.
   useEffect(() => {
     fetchNotifications();
-  }, [fetchNotifications]);
+    return () => { requestSeq.current += 1; };
+  }, [fetchNotifications, userKey, role, tab]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -180,12 +207,10 @@ export default function NotificationBell() {
   }, [confirmClear]);
 
   const handleToggle = () => {
-    setOpen((prev) => {
-      const next = !prev;
-      if (next) fetchNotifications();
-      else setConfirmClear(false);
-      return next;
-    });
+    const next = !open;
+    setOpen(next);
+    if (next) fetchNotifications();
+    else setConfirmClear(false);
   };
 
   const isUnread = (notification) => notification.is_read !== true;
@@ -193,6 +218,7 @@ export default function NotificationBell() {
   const handleMarkRead = async (notification, e) => {
     e?.stopPropagation();
     if (!isUnread(notification)) return;
+    const actor = actorRef.current.epoch;
     setNotifications((prev) =>
       prev.map((n) => (n.ROWID === notification.ROWID ? { ...n, is_read: true } : n))
     );
@@ -200,50 +226,90 @@ export default function NotificationBell() {
     try {
       await notificationService.markRead(notification.ROWID);
     } catch {
-      fetchNotifications();
+      if (actor === actorRef.current.epoch) fetchNotifications();
     }
   };
 
   const handleDelete = async (notification, e) => {
     e.stopPropagation();
+    const actor = actorRef.current.epoch;
     const wasUnread = isUnread(notification);
     setNotifications((prev) => prev.filter((n) => n.ROWID !== notification.ROWID));
     if (wasUnread) setUnreadCount((prev) => Math.max(0, prev - 1));
     try {
       await notificationService.remove(notification.ROWID);
     } catch {
-      fetchNotifications(); // resync on failure — the row may still exist
+      if (actor === actorRef.current.epoch) fetchNotifications(); // the row may still exist
     }
   };
 
   const handleMarkAllRead = async () => {
-    if (unreadCount === 0) return;
+    if (unreadCount === 0 || bulkBusy) return;
+    const actor = actorRef.current.epoch;
+    const filterEpoch = filterRef.current.epoch;
+    setBulkBusy(true);
+    setBulkNotice("");
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     setUnreadCount(0);
     try {
-      await notificationService.markAllRead();
+      const result = await notificationService.markAllRead();
+      if (actor !== actorRef.current.epoch) return;
+      if (result.hasMore) {
+        setBulkNotice("More unread notifications remain. Select Mark all read again to continue.");
+        // Keep continuation available even if refreshing the list fails.
+        setUnreadCount((current) => Math.max(1,
+          filterEpoch === filterRef.current.epoch ? unreadCount - (result.markedRead || 0) : current
+        ));
+        await fetchNotifications();
+      } else if (filterEpoch !== filterRef.current.epoch) {
+        // The newly selected tab may have loaded before the mutation finished.
+        await fetchNotifications();
+      }
     } catch {
-      fetchNotifications();
+      if (actor === actorRef.current.epoch) await fetchNotifications();
+    } finally {
+      if (actor === actorRef.current.epoch) setBulkBusy(false);
     }
   };
 
   const handleClearAll = async () => {
+    if (bulkBusy) return;
     if (!confirmClear) {
       setConfirmClear(true);
       return;
     }
+    const actor = actorRef.current.epoch;
+    const filterEpoch = filterRef.current.epoch;
     const previous = { notifications, unreadCount };
+    setBulkBusy(true);
+    setBulkNotice("");
     setConfirmClear(false);
     setNotifications([]);
     setUnreadCount(0);
     try {
-      await notificationService.clearAll();
+      const result = await notificationService.clearAll();
+      if (actor !== actorRef.current.epoch) return;
+      if (result.hasMore) {
+        setBulkNotice("More notifications remain. Select Clear all again to continue.");
+        await fetchNotifications();
+      } else if (filterEpoch !== filterRef.current.epoch) {
+        await fetchNotifications();
+      }
     } catch (err) {
-      setNotifications(previous.notifications);
-      setUnreadCount(previous.unreadCount);
+      if (actor !== actorRef.current.epoch) return;
+      // An old All snapshot must never replace the newer Unread view, even
+      // when the recovery fetch also fails (or the user switched away/back).
+      if (filterEpoch === filterRef.current.epoch) {
+        setNotifications(previous.notifications);
+        setUnreadCount(previous.unreadCount);
+      }
       showError(getErrorMessage(err, "Couldn't clear your notifications. Try again."), {
         title: "Clear failed",
       });
+      // Some rows may have been deleted before a batch failed.
+      await fetchNotifications();
+    } finally {
+      if (actor === actorRef.current.epoch) setBulkBusy(false);
     }
   };
 
@@ -294,10 +360,10 @@ export default function NotificationBell() {
               {unreadCount > 0 && <span className="nb-header__count">{unreadCount > MAX_BADGE ? `${MAX_BADGE}+` : unreadCount} new</span>}
             </div>
 
-            {notifications.length > 0 && (
+            {(notifications.length > 0 || bulkNotice) && (
               <div className="nb-header__actions">
                 {unreadCount > 0 && (
-                  <button type="button" className="nb-link" onClick={handleMarkAllRead}>
+                  <button type="button" className="nb-link" onClick={handleMarkAllRead} disabled={bulkBusy}>
                     <CheckCheck size={13} />
                     Mark all read
                   </button>
@@ -306,6 +372,7 @@ export default function NotificationBell() {
                   type="button"
                   className={`nb-link nb-link--danger${confirmClear ? " nb-link--confirm" : ""}`}
                   onClick={handleClearAll}
+                  disabled={bulkBusy}
                 >
                   <Trash2 size={13} />
                   {confirmClear ? "Click to confirm" : "Clear all"}
@@ -314,7 +381,9 @@ export default function NotificationBell() {
             )}
           </div>
 
-          {notifications.length > 0 && (
+          {bulkNotice && <p className="nb-empty__hint" role="status">{bulkNotice}</p>}
+
+          {(notifications.length > 0 || tab === "unread" || unreadCount > 0 || bulkBusy) && (
             <div className="nb-tabs" role="tablist" aria-label="Filter notifications">
               {[
                 { key: "all", label: "All", count: notifications.length },
@@ -344,10 +413,10 @@ export default function NotificationBell() {
                   {tab === "unread" && notifications.length > 0 ? <CheckCheck size={20} /> : <BellOff size={20} />}
                 </span>
                 <p className="nb-empty__title">
-                  {tab === "unread" && notifications.length > 0 ? "No unread notifications" : "You're all caught up"}
+                  {bulkNotice ? "More notifications remain" : tab === "unread" && notifications.length > 0 ? "No unread notifications" : "You're all caught up"}
                 </p>
                 <p className="nb-empty__hint">
-                  {tab === "unread" && notifications.length > 0
+                  {bulkNotice ? "Use the action above to continue." : tab === "unread" && notifications.length > 0
                     ? "Everything has been read."
                     : "Dealer updates and sync results will appear here."}
                 </p>

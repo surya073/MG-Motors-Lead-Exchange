@@ -14,10 +14,12 @@ const crypto = require('crypto');
 
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
+const { signingSecretFingerprint } = require('../services/integrations/fusionReturnChannelProof');
 
 const KEY = crypto.randomBytes(24);
 const SIGNING_SECRET = `whsec_${KEY.toString('base64')}`;
 const TOKEN_SECRET = 'static-token-secret';
+const accepted = (secret = SIGNING_SECRET) => ({ ok: true, method: 'STANDARD_WEBHOOKS', signingSecretFingerprint: signingSecretFingerprint(secret) });
 const FUSION = { ROWID: '1000', dealer_code: '725001', crm_type: 'FUSION_SD', webhook_enabled: true };
 const BODY = Buffer.from(JSON.stringify({ lead_id: 'lead_01ABC', status: 'Lost' }));
 
@@ -53,7 +55,7 @@ const verify = (headers, body = BODY, integration = FUSION) =>
 
 test('a correctly signed, fresh Fusion webhook is accepted', async (t) => {
   setup(t);
-  assert.deepEqual(await verify(signedHeaders()), { ok: true });
+  assert.deepEqual(await verify(signedHeaders()), accepted());
 });
 
 test('a tampered body is refused', async (t) => {
@@ -81,7 +83,7 @@ test('a timestamp more than five minutes old, or ahead, is refused even when sig
   const now = Math.floor(Date.now() / 1000);
   assert.deepEqual(await verify(signedHeaders({ timestamp: now - 301 })), { ok: false, reason: 'STALE_TIMESTAMP' });
   assert.deepEqual(await verify(signedHeaders({ timestamp: now + 301 })), { ok: false, reason: 'STALE_TIMESTAMP' });
-  assert.deepEqual(await verify(signedHeaders({ timestamp: now - 290 })), { ok: true });
+  assert.deepEqual(await verify(signedHeaders({ timestamp: now - 290 })), accepted());
 });
 
 test('a missing or non-numeric webhook-id / webhook-timestamp is refused', async (t) => {
@@ -97,7 +99,7 @@ test('during secret rotation any listed v1 signature is accepted; other schemes 
   const headers = signedHeaders();
   const good = headers['webhook-signature'];
   const otherKey = `v1,${sign(crypto.randomBytes(24), 'msg_1', headers['webhook-timestamp'], BODY)}`;
-  assert.deepEqual(await verify({ ...headers, 'webhook-signature': `${otherKey} ${good}` }), { ok: true });
+  assert.deepEqual(await verify({ ...headers, 'webhook-signature': `${otherKey} ${good}` }), accepted());
   const asV2 = good.replace(/^v1,/, 'v2,');
   assert.equal((await verify({ ...headers, 'webhook-signature': `${otherKey} ${asV2}` })).reason, 'INVALID_SIGNATURE');
 });
@@ -105,12 +107,12 @@ test('during secret rotation any listed v1 signature is accepted; other schemes 
 test('a signing secret saved without the whsec_ prefix is used as given', async (t) => {
   const plain = 'a-plain-signing-secret';
   setup(t, { credentials: { WEBHOOK_SIGNING_SECRET: plain } });
-  assert.deepEqual(await verify(signedHeaders({ key: Buffer.from(plain, 'utf8') })), { ok: true });
+  assert.deepEqual(await verify(signedHeaders({ key: Buffer.from(plain, 'utf8') })), accepted(plain));
 });
 
 test('a base64 signing secret saved without the prefix also works decoded (encoding unconfirmed, Q20)', async (t) => {
   setup(t, { credentials: { WEBHOOK_SIGNING_SECRET: KEY.toString('base64') } });
-  assert.deepEqual(await verify(signedHeaders()), { ok: true });
+  assert.deepEqual(await verify(signedHeaders()), accepted(KEY.toString('base64')));
 });
 
 test('a Fusion dealer with no signing secret is refused with a clear reason', async (t) => {
@@ -126,9 +128,9 @@ test('an unreadable signing secret is a 401 reason, not a crash', async (t) => {
 test('Q19: an X-Webhook-Token sent with a valid signature must also match', async (t) => {
   setup(t, { credentials: { WEBHOOK_SIGNING_SECRET: SIGNING_SECRET, WEBHOOK_SECRET: TOKEN_SECRET } });
   const headers = signedHeaders();
-  assert.deepEqual(await verify({ ...headers, 'x-webhook-token': TOKEN_SECRET }), { ok: true });
+  assert.deepEqual(await verify({ ...headers, 'x-webhook-token': TOKEN_SECRET }), accepted());
   assert.deepEqual(await verify({ ...headers, 'x-webhook-token': 'wrong' }), { ok: false, reason: 'INVALID_TOKEN' });
-  assert.deepEqual(await verify(headers), { ok: true }, 'the token is optional when not sent');
+  assert.deepEqual(await verify(headers), accepted(), 'the token is optional when not sent');
 });
 
 test('a webhook disabled on the integration is refused before any signature check', async (t) => {
@@ -142,10 +144,13 @@ test('flag off: a Fusion webhook with only Standard Webhooks headers is refused 
   assert.deepEqual(await verify({ 'x-webhook-token': TOKEN_SECRET }), { ok: true }, 'the token path is unchanged');
 });
 
-test('flag on: a Fusion request without a webhook-signature still uses today\'s token check', async (t) => {
+test('flag on: a static token cannot bypass the required Fusion signature', async (t) => {
   setup(t, { credentials: { WEBHOOK_SECRET: TOKEN_SECRET } });
-  assert.deepEqual(await verify({ 'x-webhook-token': TOKEN_SECRET }), { ok: true });
-  assert.deepEqual(await verify({ 'x-webhook-token': 'wrong' }), { ok: false, reason: 'INVALID_TOKEN' });
+  assert.deepEqual(await verify({ 'x-webhook-token': TOKEN_SECRET }), { ok: false, reason: 'MISSING_AUTH' });
+  assert.deepEqual(await verify({ 'x-webhook-token': 'wrong' }), { ok: false, reason: 'MISSING_AUTH' });
+  const withoutSignature = signedHeaders();
+  delete withoutSignature['webhook-signature'];
+  assert.deepEqual(await verify({ ...withoutSignature, 'x-webhook-token': TOKEN_SECRET }), { ok: false, reason: 'MISSING_AUTH' });
 });
 
 test('flag on: ZOHO_CRM and GENERIC_REST dealers never use the Standard Webhooks check', async (t) => {

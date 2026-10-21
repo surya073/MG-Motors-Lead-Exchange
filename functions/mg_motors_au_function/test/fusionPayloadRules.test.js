@@ -171,3 +171,42 @@ test('a body within 32 KB is sent exactly as before', async (t) => {
   await fusionSdAdapter.createLead({}, INTEGRATION, payload, { idempotencyKey: 'ZL1' });
   assert.deepEqual(sent[0].data, fusionSdAdapter._test.nestDottedKeys(payload));
 });
+
+test('oversized structured messages are trimmed without changing contact, identifiers or caller data', async (t) => {
+  const sent = mockFusion(t);
+  const payload = {
+    refID: 'MG-123', 'contact.firstName': 'Jane', 'contact.email': 'jane@example.invalid', enquiryStatus: 'Open',
+    messages: [{ text: 'hello '.repeat(10000), external_id: 'message-123' }],
+  };
+  await fusionSdAdapter.createLead({}, INTEGRATION, payload);
+  assert.ok(Buffer.byteLength(JSON.stringify(sent[0].data)) <= 32000);
+  assert.equal(sent[0].data.contact.email, payload['contact.email']);
+  assert.equal(sent[0].data.contact.firstName, 'Jane');
+  assert.equal(sent[0].data.refID, 'MG-123');
+  assert.equal(sent[0].data.enquiryStatus, 'Open');
+  assert.equal(sent[0].data.messages[0].external_id, 'message-123');
+  assert.match(sent[0].data.messages[0].text, / \[truncated\]$/);
+  assert.equal(payload.messages[0].text.length, 60000, 'nested input is not mutated');
+});
+
+test('untrimmable oversized values fail before token acquisition or dealer request', async (t) => {
+  const sent = mockFusion(t);
+  const tokenRequest = axios.post.mock;
+  await assert.rejects(() => fusionSdAdapter.createLead({}, INTEGRATION, {
+    'contact.firstName': 'x'.repeat(40000), 'contact.email': 'jane@example.invalid',
+  }), (err) => err.code === 'FIELD_MAPPING_INVALID' && /exceeds 32000 bytes/.test(err.message));
+  assert.equal(tokenRequest.callCount(), 0);
+  assert.equal(sent.length, 0);
+});
+
+test('UTF-8 and escaped note text fits the final JSON limit without splitting emoji', async (t) => {
+  const sent = mockFusion(t);
+  await fusionSdAdapter.updateLead({}, INTEGRATION, fixtures.FUSION_TEST_LEAD_ID, {
+    notes: '😀"\\\n'.repeat(10000), 'contact.email': 'jane@example.invalid',
+  });
+  const body = sent[0].data;
+  assert.ok(Buffer.byteLength(JSON.stringify(body)) <= 32000);
+  assert.match(body.notes, / \[truncated\]$/);
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(body.notes));
+  assert.equal(body.contact.email, 'jane@example.invalid');
+});

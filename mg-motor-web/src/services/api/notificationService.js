@@ -1,8 +1,8 @@
 import axiosInstance from "./axiosInstance";
 
 export const notificationService = {
-  async list() {
-    const { data } = await axiosInstance.get("/mg_motors_au_function/notifications");
+  async list(params = {}) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/notifications", { params });
     return data;
   },
 

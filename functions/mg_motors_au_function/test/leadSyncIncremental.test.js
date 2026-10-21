@@ -165,7 +165,7 @@ test('webhook: only the notified record is fetched and processed — no full OEM
   const result = await leadSyncService.syncLeadsByIds(app, ['7001'], { operation: 'insert' });
 
   assert.equal(result.recordsInserted, 1);
-  assert.equal(gets.length, 1, 'exactly one Zoho call');
+  assert.equal(gets.length, 2, 'one notified-ID fetch plus one authoritative refresh under the mutation claim');
   assert.equal(gets[0].params.ids, '7001');
   assert.equal(gets[0].params.page, undefined);
   assert.deepEqual(app._inserted.map((r) => r.crm_record_id), ['7001']);
@@ -184,7 +184,7 @@ test('duplicate webhook delivery: the second identical notification changes noth
   assert.equal(second.recordsUnchanged, 1);
   assert.equal(app._inserted.length, 1);
   assert.deepEqual(dispatched, ['7001'], 'the dealer must receive the lead once, not once per notification');
-  assert.equal(gets.length, 2);
+  assert.equal(gets.length, 3, 'the duplicate needs no additional mutation refresh');
 });
 
 test('out-of-order webhooks: a late notification re-reads current state and never reverts a newer one', async (t) => {
@@ -219,6 +219,22 @@ test('concurrent webhooks for the same lead are serialised: one insert, one disp
   assert.equal(app._inserted.length, 1);
   assert.deepEqual(dispatched, ['7001']);
   assert.equal(app._claims.size, 0, 'no claim left behind');
+});
+
+test('a busy new-lead claim makes the incremental run incomplete so its checkpoint cannot advance', async (t) => {
+  const { app, dispatched } = setup(t, { onGet: byIds([crmRecord()]) });
+  app._claims.set('leadSync:568026', {
+    ROWID: 'busy-claim', claim_key: 'leadSync:568026',
+    claimed_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+  });
+  const result = await leadSyncService.syncLeadsByIds(app, ['7001'], { trigger: 'Incremental' });
+  assert.equal(result.recordsFailed, 1);
+  assert.equal(result.recordsInserted, 0);
+  assert.equal(result.status, 'Failed');
+  assert.equal(app._syncLogs[0].records_failed, 1);
+  assert.equal(app._syncLogs[0].status, 'Failed');
+  assert.deepEqual(dispatched, []);
+  assert.equal(app._inserted.length, 0);
 });
 
 test('concurrent webhooks for two business-duplicate leads: second is linked (Happy 3), never dispatched', async (t) => {

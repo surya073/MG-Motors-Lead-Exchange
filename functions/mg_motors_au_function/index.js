@@ -2,6 +2,11 @@
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
+const crypto = require('node:crypto');
+const axios = require('axios');
+const { requireAdminRole } = require('./middleware/requireAdminRole');
+const { requireAdminOrViewRole } = require('./middleware/requireAdminOrViewRole');
+const { assertSafeUrl, safeRequestOptions } = require('./services/integrations/adapters/safeHttp');
 const dealerSyncRoutes = require('./routes/dealerSyncRoutes');
 const dealerInviteRoutes = require('./routes/dealerInviteRoutes');
 const dealerLeadRoutes = require('./routes/dealerLeadRoutes');
@@ -54,20 +59,35 @@ app.use(async (req, res, next) => {
 });
 
 function generateApiKey() {
-  return [...Array(4)]
-    .map(() => Math.random().toString(36).slice(2, 10))
-    .join('-');
+  return crypto.randomBytes(32).toString('hex');
 }
 
+function publicDealer(row) {
+  if (!row) return row;
+  const { APIKey, ...details } = row;
+  return details;
+}
+
+function pageSize(value) {
+  const size = Number(value);
+  if (!Number.isInteger(size) || size < 1 || size > 200) return null;
+  return size;
+}
+
+const DEALER_EDIT_FIELDS = ['Name', 'ContactPerson', 'Email', 'Phone', 'Region', 'APIEndpoint', 'Status'];
+
 // GET /dealers?search=&nextToken=&maxRows=
-app.get('/dealers', async (req, res) => {
+app.get('/dealers', requireAdminOrViewRole, async (req, res) => {
   try {
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     const { search = '', nextToken, maxRows = '20' } = req.query;
 
+    const size = pageSize(maxRows);
+    if (size === null) return res.status(400).json({ error: 'maxRows must be a whole number from 1 to 200' });
+
     const page = await table.getPagedRows({
       nextToken: nextToken || undefined,
-      maxRows: Number(maxRows),
+      maxRows: size,
     });
 
     const normalizedSearch = search.trim().toLowerCase();
@@ -80,7 +100,7 @@ app.get('/dealers', async (req, res) => {
       : page.data;
 
     res.status(200).json({
-      dealers: rows,
+      dealers: rows.map(publicDealer),
       nextToken: page.next_token,
       moreRecords: page.more_records,
     });
@@ -90,18 +110,18 @@ app.get('/dealers', async (req, res) => {
 });
 
 // GET /dealers/:rowId
-app.get('/dealers/:rowId', async (req, res) => {
+app.get('/dealers/:rowId', requireAdminOrViewRole, async (req, res) => {
   try {
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     const row = await table.getRow(req.params.rowId);
-    res.status(200).json({ dealer: row });
+    res.status(200).json({ dealer: publicDealer(row) });
   } catch (error) {
     res.status(404).json({ error: 'Dealer not found' });
   }
 });
 
 // POST /dealers
-app.post('/dealers', async (req, res) => {
+app.post('/dealers', requireAdminRole, async (req, res) => {
   try {
     const { Name, ContactPerson, Email, Phone, Region, APIEndpoint, Status } = req.body;
 
@@ -111,6 +131,7 @@ app.post('/dealers', async (req, res) => {
     if (Status && !ALLOWED_STATUSES.includes(Status)) {
       return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
     }
+    if (APIEndpoint) await assertSafeUrl(APIEndpoint);
 
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     const row = await table.insertRow({
@@ -131,27 +152,32 @@ app.post('/dealers', async (req, res) => {
 });
 
 // PUT /dealers/:rowId
-app.put('/dealers/:rowId', async (req, res) => {
+app.put('/dealers/:rowId', requireAdminRole, async (req, res) => {
   try {
     const { Status } = req.body;
     if (Status && !ALLOWED_STATUSES.includes(Status)) {
       return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
     }
 
+    if (req.body?.APIEndpoint) await assertSafeUrl(req.body.APIEndpoint);
+    const changes = Object.fromEntries(DEALER_EDIT_FIELDS
+      .filter((field) => Object.hasOwn(req.body || {}, field))
+      .map((field) => [field, req.body[field]]));
+
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     const row = await table.updateRow({
       ROWID: req.params.rowId,
-      ...req.body,
+      ...changes,
     });
 
-    res.status(200).json({ dealer: row });
+    res.status(200).json({ dealer: publicDealer(row) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 // POST /dealers/:rowId/regenerate-key
-app.post('/dealers/:rowId/regenerate-key', async (req, res) => {
+app.post('/dealers/:rowId/regenerate-key', requireAdminRole, async (req, res) => {
   try {
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     const row = await table.updateRow({
@@ -165,7 +191,7 @@ app.post('/dealers/:rowId/regenerate-key', async (req, res) => {
 });
 
 // DELETE /dealers/:rowId
-app.delete('/dealers/:rowId', async (req, res) => {
+app.delete('/dealers/:rowId', requireAdminRole, async (req, res) => {
   try {
     const table = res.locals.catalystApp.datastore().table(DEALERS_TABLE_ID);
     await table.deleteRow(req.params.rowId);
@@ -194,15 +220,18 @@ async function loadDealerMap(catalystApp) {
 }
 
 // GET /leads?status=&search=&nextToken=&maxRows=  (admin only)
-app.get('/leads', async (req, res) => {
+app.get('/leads', requireAdminOrViewRole, async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;
     const table = catalystApp.datastore().table(LEADS_TABLE_ID);
     const { status = '', search = '', nextToken, maxRows = '20' } = req.query;
 
+    const size = pageSize(maxRows);
+    if (size === null) return res.status(400).json({ error: 'maxRows must be a whole number from 1 to 200' });
+
     const page = await table.getPagedRows({
       nextToken: nextToken || undefined,
-      maxRows: Number(maxRows),
+      maxRows: size,
     });
 
     const dealerMap = await loadDealerMap(catalystApp);
@@ -235,7 +264,7 @@ app.get('/leads', async (req, res) => {
 });
 
 // GET /leads/:rowId
-app.get('/leads/:rowId', async (req, res) => {
+app.get('/leads/:rowId', requireAdminOrViewRole, async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;
     const leadsTable = catalystApp.datastore().table(LEADS_TABLE_ID);
@@ -258,7 +287,7 @@ app.get('/leads/:rowId', async (req, res) => {
 
     res.status(200).json({
       lead: { ...lead, DealerName: dealer?.Name || 'Unassigned' },
-      dealer,
+      dealer: publicDealer(dealer),
       timeline,
     });
   } catch (error) {
@@ -267,7 +296,7 @@ app.get('/leads/:rowId', async (req, res) => {
 });
 
 // POST /leads  (admin only — manual/test lead entry)
-app.post('/leads', async (req, res) => {
+app.post('/leads', requireAdminRole, async (req, res) => {
   try {
     const { CustomerName, CustomerPhone, CustomerEmail, DealerID, Source } = req.body;
 
@@ -294,7 +323,7 @@ app.post('/leads', async (req, res) => {
 });
 
 // POST /leads/:rowId/deliver  (admin only)
-app.post('/leads/:rowId/deliver', async (req, res) => {
+app.post('/leads/:rowId/deliver', requireAdminRole, async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;
     const leadsTable = catalystApp.datastore().table(LEADS_TABLE_ID);
@@ -319,24 +348,33 @@ app.post('/leads/:rowId/deliver', async (req, res) => {
     let message = '';
 
     try {
-      const response = await fetch(dealer.APIEndpoint, {
-        method: 'POST',
+      const destination = await assertSafeUrl(dealer.APIEndpoint);
+      const response = await axios.post(destination.toString(), {
+        leadId: lead.ROWID,
+        customerName: lead.CustomerName,
+        customerPhone: lead.CustomerPhone,
+        customerEmail: lead.CustomerEmail,
+        source: lead.Source,
+      }, {
+        ...safeRequestOptions(destination),
+        timeout: 15000,
+        validateStatus: () => true,
+        // Only the status is needed. Stop the response stream after headers
+        // instead of buffering an unbounded body in the 256 MB function.
+        responseType: 'stream',
+        maxBodyLength: 1024 * 1024,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${dealer.APIKey}`,
         },
-        body: JSON.stringify({
-          leadId: lead.ROWID,
-          customerName: lead.CustomerName,
-          customerPhone: lead.CustomerPhone,
-          customerEmail: lead.CustomerEmail,
-          source: lead.Source,
-        }),
       });
 
+      response.data?.destroy?.();
+
       httpStatus = String(response.status);
-      result = response.ok ? 'success' : 'failed';
-      message = response.ok ? 'Delivered successfully' : `Dealer endpoint responded with ${response.status}`;
+      const successful = response.status >= 200 && response.status < 300;
+      result = successful ? 'success' : 'failed';
+      message = successful ? 'Delivered successfully' : `Dealer endpoint responded with ${response.status}`;
     } catch (fetchError) {
       result = 'failed';
       message = `Could not reach dealer endpoint: ${fetchError.message}`;
@@ -365,7 +403,7 @@ app.post('/leads/:rowId/deliver', async (req, res) => {
 });
 
 // DELETE /leads/:rowId  (admin only)
-app.delete('/leads/:rowId', async (req, res) => {
+app.delete('/leads/:rowId', requireAdminRole, async (req, res) => {
   try {
     const table = res.locals.catalystApp.datastore().table(LEADS_TABLE_ID);
     await table.deleteRow(req.params.rowId);

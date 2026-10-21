@@ -135,6 +135,7 @@ test('flag off: a flat Fusion body is not translated (lead_id is not read), exac
 test('flag on: a GENERIC_REST dealer\'s body is processed exactly as before', async (t) => {
   withFlag(t, 'true');
   const harness = withPresets(t);
+  harness.db.tables.dealer_integrations[0].crm_type = 'GENERIC_REST';
   const integration = { ...harness.integration, crm_type: 'GENERIC_REST' };
   const result = await crmIntegrationService.processInboundWebhook(
     harness.db.app, integration, { id: fixtures.FUSION_TEST_LEAD_ID, enquiryStatus: 'Lost', leadSource: 'Walk In' }, oemCrmService

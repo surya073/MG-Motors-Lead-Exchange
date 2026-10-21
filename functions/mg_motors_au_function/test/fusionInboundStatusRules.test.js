@@ -139,6 +139,7 @@ test('flag off: a Fusion status update on the old path behaves exactly as today 
 
 test('flag on: a GENERIC_REST dealer keeps today\'s status handling (no Open guard)', async (t) => {
   const harness = buckby(t, 'Contacted');
+  harness.db.tables.dealer_integrations[0].crm_type = 'GENERIC_REST';
   const integration = { ...harness.integration, crm_type: 'GENERIC_REST' };
   const result = await crmIntegrationService.processInboundWebhook(
     harness.db.app, integration, { id: fixtures.FUSION_TEST_LEAD_ID, enquiryStatus: 'Open' }, oemCrmService

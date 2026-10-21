@@ -21,7 +21,7 @@ const { processResolvedInboundLead } = _test;
 const FIELD_MAPPINGS = [{ source_field: 'vehicle_model', target_field: 'Enquiry_Model' }];
 
 function buildIntegration(overrides = {}) {
-  return { ROWID: '701', dealer_code: 'AU555', ...overrides };
+  return { ROWID: '701', dealer_code: 'AU555', integration_type: 'EXTERNAL_CRM', ...overrides };
 }
 
 function buildExistingLeadRow(overrides = {}) {
@@ -29,7 +29,7 @@ function buildExistingLeadRow(overrides = {}) {
     ROWID: '9301',
     crm_record_id: 'ZOHO-LEAD-WB-1',
     dealer_code: 'AU555',
-    vehicle_model: 'MG3',
+    vehicle_model: 'MG3', accept_privacy_policy: true,
     ...overrides,
   };
 }
@@ -55,6 +55,8 @@ function buildFakeCatalystApp({ mapping, existingLeadRow, onLeadsUpdate, onMappi
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
+        if (sql.includes('FROM dealer_integrations')) return [{ dealer_integrations: buildIntegration() }];
+        if (sql.includes('FROM dealers')) return [{ dealers: { dealer_code: 'AU555' } }];
         if (sql.includes('FROM lead_integrations')) return [{ lead_integrations: mapping }];
         if (sql.includes('FROM leads')) return [{ leads: existingLeadRow }];
         if (sql.includes('FROM notifications') || sql.includes('FROM integration_alert_queue')) return [];

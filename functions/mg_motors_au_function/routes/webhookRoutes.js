@@ -8,6 +8,7 @@ const { syncLeadsByIds, syncModifiedLeads } = require('../services/leadSyncServi
 const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
+const fusionReturnChannelProof = require('../services/integrations/fusionReturnChannelProof');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -21,6 +22,23 @@ function isEnabled(value) {
     value === false || value === 0 ||
     String(value).toLowerCase() === 'false' || String(value) === '0'
   );
+}
+
+// A proof write is ancillary to an already completed webhook. Keep a
+// failed proof store from changing its successful HTTP acknowledgement.
+async function recordReturnChannelProof(catalystApp, integration, authResult, duplicate) {
+  if (!isFusionV2(integration) || authResult.method !== 'STANDARD_WEBHOOKS') return;
+  try {
+    if (duplicate) {
+      await fusionReturnChannelProof.recordVerifiedDuplicate(
+        catalystApp, integration, authResult, duplicate.eventId, duplicate.rawBody
+      );
+    } else {
+      await fusionReturnChannelProof.recordVerifiedSuccess(catalystApp, integration, authResult);
+    }
+  } catch {
+    logger.error('webhookRoutes', `Could not preserve signed return-channel proof for integration ${integration.ROWID}`);
+  }
 }
 
 router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
@@ -65,10 +83,12 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
 
   try {
     const dealer = await crmIntegrationService.findDealerByCode(catalystApp, dealerCode);
-    if (!dealer) return res.status(404).json({ error: 'DEALER_NOT_FOUND' });
+    if (!dealer || dealer.sync_status === 'Removed') return res.status(404).json({ error: 'DEALER_NOT_FOUND' });
 
     const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
-    if (!integration || integration.integration_type !== 'EXTERNAL_CRM' || !isEnabled(integration.inbound_enabled)) {
+    if (!integration || integration.integration_type !== 'EXTERNAL_CRM'
+      || ['DISABLED', 'NOT_CONFIGURED', 'CONFIGURING'].includes(integration.status)
+      || !isEnabled(integration.inbound_enabled)) {
       return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
     }
 
@@ -136,18 +156,21 @@ router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/js
       return res.status(202).json({ ok: true, status: 'IN_PROGRESS' });
     }
     if (isDuplicate) {
+      await recordReturnChannelProof(catalystApp, integration, authResult, { eventId, rawBody });
       return res.status(200).json({ ok: true, status: 'DUPLICATE' });
     }
 
     try {
       const result = await crmIntegrationService.processInboundWebhook(catalystApp, integration, payload, zohoCrmService);
+      const pending = result?.held && !result?.terminal;
       await crmIntegrationService.markWebhookEventStatus(
         catalystApp,
         eventRowId,
-        result?.held ? 'PENDING' : 'SUCCESS',
-        result?.held ? result.reason : undefined
+        pending ? 'PENDING' : 'SUCCESS',
+        result?.terminal ? `TERMINAL:${result.reason}` : (pending ? result.reason : undefined)
       );
-      res.status(result?.held ? 202 : 200).json({ ok: true, result });
+      if (!pending && !result?.terminal) await recordReturnChannelProof(catalystApp, integration, authResult);
+      res.status(pending ? 202 : 200).json({ ok: true, result });
     } catch (err) {
       const replayable = err.code === 'LEAD_MAPPING_NOT_FOUND';
       await crmIntegrationService.markWebhookEventStatus(

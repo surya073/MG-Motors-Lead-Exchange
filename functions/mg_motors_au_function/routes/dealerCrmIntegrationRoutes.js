@@ -8,6 +8,8 @@ const integrationAuthService = require('../services/integrations/integrationAuth
 const { findTargetFieldProblem, missingDeliveryMappingFields } = require('../services/integrations/leadMappingService');
 const { assertSafeUrl } = require('../services/integrations/adapters/genericRestAdapter');
 const fusionSdOAuthHelper = require('../services/integrations/adapters/fusionSdOAuthHelper');
+const zohoCrmOAuthHelper = require('../services/integrations/adapters/zohoCrmOAuthHelper');
+const { assertZohoEndpoint } = require('../services/integrations/adapters/zohoEndpointPolicy');
 const { isValidLeadId } = require('../services/integrations/adapters/fusionSdAdapter');
 const { requireAdminRole } = require('../middleware/requireAdminRole');
 const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
@@ -68,6 +70,10 @@ router.post('/:dealerCode/register-webhook', requireAdminRole, async (req, res) 
       return res.status(404).json({ error: 'INTEGRATION_NOT_FOUND' });
     }
 
+    const dealer = await crmIntegrationService.findDealerByCode(catalystApp, dealerCode);
+    if (!dealer || dealer.sync_status === 'Removed') {
+      return res.status(409).json({ error: 'DEALER_NOT_ACTIVE' });
+    }
     const result = await registerDealerWatchChannel(catalystApp, integration);
     res.status(200).json({ ok: true, result });
   } catch (err) {
@@ -156,6 +162,13 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM' && !body.oauth_accounts_domain) {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
+    if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM') {
+      for (const [field, kind] of [['base_url', 'api'], ['oauth_accounts_domain', 'accounts']]) {
+        try { assertZohoEndpoint(body[field], kind); } catch (err) {
+          return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field, message: err.message });
+        }
+      }
+    }
     if (body.integration_type === 'EXTERNAL_CRM' && body.base_url) {
       const reason = await unsafeBaseUrlReason(body.base_url);
       if (reason) {
@@ -174,6 +187,30 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     }
     const table = catalystApp.datastore().table('dealer_integrations');
     let integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    // A refresh token can select a different Zoho organization in the same
+    // datacenter. Existing external IDs must never silently follow it. Secret
+    // rotation remains allowed; an identity change needs a reviewed migration.
+    if (integration && (integration.crm_type === 'ZOHO_CRM' || isZohoCrm)) {
+      let identityChanged = body.crm_type !== integration.crm_type ||
+        body.base_url !== integration.base_url || body.oauth_accounts_domain !== integration.oauth_accounts_domain;
+      for (const [bodyKey, type] of [['oauth_client_id', 'OAUTH2_CLIENT_ID'], ['oauth_refresh_token', 'OAUTH2_REFRESH_TOKEN']]) {
+        if (body[bodyKey] && body[bodyKey] !== await integrationAuthService.getDecryptedCredential(catalystApp, integration.ROWID, type)) {
+          identityChanged = true;
+        }
+      }
+      if (identityChanged) {
+        const linked = await catalystApp.zcql().executeZCQLQuery(
+          `SELECT ROWID FROM lead_integrations WHERE integration_id = ${integration.ROWID} LIMIT 1`
+        );
+        if (linked.length) {
+          return res.status(409).json({
+            error: 'CRM_ACCOUNT_MIGRATION_REQUIRED',
+            message: 'This integration has linked leads. Verify the Zoho organization and migrate its lead mappings before changing the CRM account or refresh token.',
+          });
+        }
+      }
+    }
+    if (integration) zohoCrmOAuthHelper.invalidateToken(integration.ROWID);
     const fields = {
       dealer_code: dealerCode,
       integration_type: body.integration_type,
@@ -243,6 +280,7 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     // A Fusion token cached for this integration may belong to the old keys
     // or URL. (No-op for other CRM types.)
     fusionSdOAuthHelper.invalidateToken(integration.ROWID);
+    zohoCrmOAuthHelper.invalidateToken(integration.ROWID);
     res.json({ integration: safeConfig({ ...integration, ...fields }) });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `PUT integration failed for ${dealerCode}`, err);

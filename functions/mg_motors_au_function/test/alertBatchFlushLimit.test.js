@@ -13,6 +13,7 @@ const integrationAlertService = require('../services/integrations/integrationAle
 test('the timed alert digest reads within the 300-row ZCQL limit and leaves the rest queued', async (t) => {
   const old = '2000-01-01 00:00:00:000';
   const db = createInMemoryZcql({
+    outbound_sync_claims: [],
     integration_alert_queue: Array.from({ length: 350 }, (_, i) => ({
       CREATEDTIME: old, scenario_code: 'Unhappy 1', dealer_code: 'D1', lead_id: `l${i}`, reason: 'x', priority_for: 'P2',
     })),

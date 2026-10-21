@@ -8,6 +8,11 @@ import axiosInstance from "./axiosInstance";
  */
 
 export const dealerPortalService = {
+  async searchSuggestions(search) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/dealer/search-suggestions", { params: { search } });
+    return { leads: data.leads || [], dealers: [] };
+  },
+
   async myLeads() {
     const { data } = await axiosInstance.get("/mg_motors_au_function/dealer/leads");
     return data;

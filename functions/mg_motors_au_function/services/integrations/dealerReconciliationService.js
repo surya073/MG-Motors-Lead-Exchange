@@ -7,6 +7,7 @@ const crmAdapterFactory = require('./crmAdapterFactory');
 const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { guardSweep } = require('./sweepOverlapGuard');
 const { withMappingCache } = require('./mappingRunCache');
+const { withOutboundSyncClaim } = require('./outboundSyncClaimService');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -64,6 +65,7 @@ function parseSystemTimestamp(value) {
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
+const budgetSpent = (deadline) => typeof deadline === 'number' && Date.now() >= deadline;
 
 function dealerScopeClause(column) {
   if (!RECONCILE_DEALER_CODES.length) return '';
@@ -96,6 +98,7 @@ const HELD_MAPPING_STATES = new Set(['HELD', 'CONSENT_HOLD']);
  *   /cron/reconcile-dealer-leads run keeps full reprocessing.
  */
 async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly = false, deadline } = {}) {
+  if (budgetSpent(deadline)) return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
   const mappingRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE}${
       RECONCILE_DEALER_CODES.length ? ` WHERE${dealerScopeClause('dealer_code')}` : ''
@@ -122,6 +125,7 @@ async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly 
   // Integrations are few; load them once so parallel checks never race on
   // the cache.
   for (const wrapped of mappingRows) {
+    if (budgetSpent(deadline)) return { ...results, deferred: mappingRows.length, reason: 'WORK_BUDGET_EXHAUSTED' };
     const id = wrapped[LEAD_INTEGRATIONS_TABLE].integration_id;
     if (!id || integrations.has(String(id))) continue;
     const rows = await catalystApp.zcql().executeZCQLQuery(
@@ -243,16 +247,16 @@ async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly 
   // seconds rather than ~30s, well inside the function's execution limit.
   for (let index = 0; index < mappingRows.length; index += RECONCILE_CONCURRENCY) {
     // CRON_WORK_BUDGET_MS (Batch 8, S3): the rest waits for the next pass.
-    if (deadline && Date.now() >= deadline) {
+    if (budgetSpent(deadline)) {
       results.deferred = mappingRows.length - index;
       break;
     }
     await Promise.all(mappingRows.slice(index, index + RECONCILE_CONCURRENCY).map(processOne));
   }
 
-  if (!(deadline && Date.now() >= deadline)) {
+  if (!budgetSpent(deadline)) {
     try {
-      await reconcileNeverCreated(catalystApp, integrations, results);
+      await reconcileNeverCreated(catalystApp, integrations, results, { deadline });
     } catch (err) {
       results.failed += 1;
       logger.error('dealerReconciliationService', 'Never-created reconciliation pass failed', err);
@@ -273,7 +277,8 @@ async function runDealerReconciliationInternal(catalystApp, { heldExistenceOnly 
  * the normal outbound path with the lead's idempotency key, so a record the
  * dealer did create (acknowledgement lost) is matched rather than duplicated.
  */
-async function reconcileNeverCreated(catalystApp, integrations, results) {
+async function reconcileNeverCreated(catalystApp, integrations, results, { deadline } = {}) {
+  if (budgetSpent(deadline)) { results.neverCreatedDeferredUnknown = true; return; }
   const graceCutoff = Date.now() - RECONCILE_GRACE_MINUTES * 60 * 1000;
   const deliveryRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT zoho_lead_id, integration_id, CREATEDTIME FROM integration_logs WHERE direction = 'ZOHO_TO_EXTERNAL_CRM' AND operation = 'CREATE_LEAD' AND status = 'SUCCESS' AND happy_unhappy_path_name IN ('Happy 1', 'Happy 4')${
@@ -284,6 +289,7 @@ async function reconcileNeverCreated(catalystApp, integrations, results) {
   const seen = new Set();
   let processed = 0;
   for (const wrapped of deliveryRows) {
+    if (budgetSpent(deadline)) { results.neverCreatedDeferredUnknown = true; break; }
     if (processed >= MAX_NEVER_CREATED_PER_SWEEP) break;
     const log = wrapped.integration_logs;
     if (!log.zoho_lead_id || !log.integration_id) continue;
@@ -328,6 +334,7 @@ async function reconcileNeverCreated(catalystApp, integrations, results) {
     );
     if (priorFlags.length) continue;
 
+    if (budgetSpent(deadline)) { results.neverCreatedDeferredUnknown = true; break; }
     processed += 1;
     results.neverCreated += 1;
     await crmIntegrationService.recordScenario(catalystApp, {
@@ -459,6 +466,21 @@ async function assertDealerRecordExists(catalystApp, integration, externalLeadId
  * register is explicit that this failure is invisible to both sides.
  */
 async function reportMissingDealerRecord(catalystApp, integration, mapping, results) {
+  return withOutboundSyncClaim(catalystApp, integration.ROWID, mapping.zoho_lead_id, 'reconcile-missing',
+    async () => {
+      const rows = await catalystApp.zcql().executeZCQLQuery(
+        `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE ROWID = ${mapping.ROWID} LIMIT 1`
+      );
+      const current = rows[0]?.[LEAD_INTEGRATIONS_TABLE];
+      if (!current || current.external_crm_lead_id !== mapping.external_crm_lead_id) {
+        results.skipped += 1;
+        return;
+      }
+      return reportMissingDealerRecordUnderClaim(catalystApp, integration, current, results);
+    });
+}
+
+async function reportMissingDealerRecordUnderClaim(catalystApp, integration, mapping, results) {
   let leadRow = null;
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
@@ -467,6 +489,14 @@ async function reportMissingDealerRecord(catalystApp, integration, mapping, resu
     leadRow = rows[0]?.[LEADS_TABLE] || null;
   } catch (err) {
     logger.error('dealerReconciliationService', `Lead lookup failed for ${mapping.zoho_lead_id}`, err);
+    throw err;
+  }
+
+  // An old dealer's missing record is not an incident for the current owner,
+  // and removing an OEM lead must never trigger a dealer recreate.
+  if (!leadRow || leadRow.sync_status === 'Removed' || leadRow.dealer_code !== integration.dealer_code) {
+    results.skipped += 1;
+    return;
   }
 
   try {

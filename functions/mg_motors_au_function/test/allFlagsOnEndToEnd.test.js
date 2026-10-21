@@ -203,7 +203,8 @@ test('all flags on: the SLA judges a Fusion dealer with a proven channel, and AU
     zoho_lead_id: 'Z-AU008', dealer_code: 'AU008', integration_id: au008Id, sync_status: 'SYNCED',
     last_synced_at: '2026-10-01 00:00:00', last_dealer_action_at: '2026-10-01 00:00:00',
   });
-  h.db.tables.leads.push({ crm_record_id: 'Z-AU008', lead_status: 'Not Contacted', sync_status: 'SYNCED' });
+  h.db.tables.dealers.push({ dealer_code: 'AU008', sync_status: 'Synced' });
+  h.db.tables.leads.push({ crm_record_id: 'Z-AU008', dealer_code: 'AU008', accept_privacy_policy: true, lead_status: 'Not Contacted', sync_status: 'SYNCED' });
   // Buckby's lead: dealer clock old, still Not Contacted (nobody acted).
   Object.assign(h.mapping(), { last_dealer_action_at: '2026-10-01 00:00:00' });
   t.mock.method(crmIntegrationService, 'recordScenario', async () => {});

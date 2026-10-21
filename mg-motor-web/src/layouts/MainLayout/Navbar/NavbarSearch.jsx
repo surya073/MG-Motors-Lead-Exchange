@@ -19,8 +19,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import { APP_ROLES } from "../../../constants/auth.constants";
-import { adminDashboardService } from "../../../services/api/adminDashboardService";
-import { dealerPortalService } from "../../../services/api/dealerPortalService";
+import { loadSearchSuggestions } from "../../../utils/searchSuggestions";
 import { SCENARIO_META } from "../../../pages/Overview/Overview";
 import { isAdminSide, runSearch } from "../../../utils/globalSearch";
 import "./NavbarSearch.css";
@@ -43,37 +42,6 @@ const ICONS = {
 const EXPANDED_MAX_WIDTH = 680;
 const MOBILE_BREAKPOINT = 700;
 
-// Leads and dealers are fetched once, when the search opens, then reused for
-// a few minutes — typing never triggers a request, and the lists the Lead
-// Exchange / Dealers pages load are untouched.
-const CACHE_TTL_MS = 5 * 60 * 1000;
-let dataCache = { key: null, at: 0, leads: [], dealers: [] };
-
-async function loadSearchData(role, userKey) {
-  const cacheKey = `${role}:${userKey}`;
-  if (dataCache.key === cacheKey && Date.now() - dataCache.at < CACHE_TTL_MS) return dataCache;
-
-  let leads = [];
-  let dealers = [];
-  if (isAdminSide(role)) {
-    const [leadsResult, dealersResult] = await Promise.allSettled([
-      adminDashboardService.listLeads(),
-      adminDashboardService.listDealers(),
-    ]);
-    leads = leadsResult.status === "fulfilled" ? leadsResult.value || [] : [];
-    dealers = dealersResult.status === "fulfilled" ? dealersResult.value || [] : [];
-  } else if (role === APP_ROLES.DEALER) {
-    try {
-      const result = await dealerPortalService.myLeads();
-      leads = result?.leads || [];
-    } catch {
-      leads = [];
-    }
-  }
-  dataCache = { key: cacheKey, at: Date.now(), leads, dealers };
-  return dataCache;
-}
-
 /* ------------------------------------------------------------------ */
 /* The expanded search: blurred backdrop + a bar that grows out of the */
 /* navbar box, with grouped results beneath it.                        */
@@ -83,13 +51,14 @@ function SearchOverlay({ startRect, onClose }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const role = user?.appRole;
-  const userKey = user?.email_id || user?.user_id || "";
+  const userKey = user?.user_id || user?.email_id || "";
 
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [entered, setEntered] = useState(false);
   const [data, setData] = useState({ leads: [], dealers: [] });
   const [dataLoading, setDataLoading] = useState(false);
+  const [dataError, setDataError] = useState("");
 
   const inputRef = useRef(null);
   const listId = useId();
@@ -104,22 +73,31 @@ function SearchOverlay({ startRect, onClose }) {
     inputRef.current?.focus();
   }, []);
 
-  // Fetch leads/dealers once for result matching.
+  // Opening search costs no lead reads. Fetch bounded matching suggestions
+  // after a pause in typing; a stale response cannot replace a newer query.
   useEffect(() => {
     let cancelled = false;
+    setData({ leads: [], dealers: [] });
+    setDataLoading(false);
+    setDataError("");
     if (!role || role === APP_ROLES.UNKNOWN) return undefined;
-    setDataLoading(true);
-    loadSearchData(role, userKey)
-      .then((loaded) => {
-        if (!cancelled) setData({ leads: loaded.leads, dealers: loaded.dealers });
-      })
-      .finally(() => {
-        if (!cancelled) setDataLoading(false);
-      });
+    if (query.trim().length < 2) return undefined;
+    const timer = setTimeout(() => {
+      setDataLoading(true);
+      loadSearchSuggestions(role, userKey, query)
+        .then((loaded) => { if (!cancelled) setData(loaded); })
+        .catch((err) => {
+          if (!cancelled) setDataError(err?.response?.status === 400
+            ? "For suggestions, use up to nine words without wildcards (256 characters)."
+            : "Suggestions unavailable. Use the page search links below.");
+        })
+        .finally(() => { if (!cancelled) setDataLoading(false); });
+    }, 300);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [role, userKey]);
+  }, [role, userKey, query]);
 
   // Escape closes even if focus has wandered off the input.
   useEffect(() => {
@@ -287,6 +265,7 @@ function SearchOverlay({ startRect, onClose }) {
               <span><kbd>Enter</kbd> open</span>
               <span><kbd>Esc</kbd> close</span>
               {dataLoading && <span className="nsearch__loading">Loading leads…</span>}
+              {dataError && <span role="status">{dataError}</span>}
             </div>
           </div>
         )}
@@ -327,6 +306,7 @@ function SearchOverlay({ startRect, onClose }) {
               <span><kbd>Enter</kbd> open</span>
               <span><kbd>Esc</kbd> close</span>
               {dataLoading && <span className="nsearch__loading">Loading leads…</span>}
+              {dataError && <span role="status">{dataError}</span>}
             </div>
           </div>
         )}

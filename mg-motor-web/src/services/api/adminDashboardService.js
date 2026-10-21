@@ -8,6 +8,11 @@ import axiosInstance from "./axiosInstance";
  */
 
 export const adminDashboardService = {
+  async searchSuggestions(search) {
+    const { data } = await axiosInstance.get("/mg_motors_au_function/admin/search-suggestions", { params: { search } });
+    return { leads: data.leads || [], dealers: data.dealers || [] };
+  },
+
   async dashboardSummary() {
     const { data } = await axiosInstance.get("/mg_motors_au_function/admin/dashboard-summary");
     return data;

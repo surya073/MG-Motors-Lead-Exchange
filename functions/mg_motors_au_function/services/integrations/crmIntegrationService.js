@@ -17,7 +17,7 @@ const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
 const {
   getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
-  isSyncClaimFailClosed, isKeepOutboundRetryOnInboundEnabled,
+  isKeepOutboundRetryOnInboundEnabled,
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
@@ -683,7 +683,78 @@ function isEnabled(value) {
   );
 }
 
+// Reject obsolete work without changing the current owner's lead state or badge.
+async function retireObsoleteMapping(catalystApp, integration, leadId, reason) {
+  const mapping = await findLeadMappingForIntegration(catalystApp, integration, leadId);
+  if (mapping && (mapping.sync_status !== 'HELD' || mapping.last_error !== reason)) {
+    await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
+      ROWID: mapping.ROWID, sync_status: 'HELD', last_error: reason,
+      last_attempted_at: toCatalystDateTime(), next_retry_at: null,
+    });
+  }
+  return { skipped: true, held: true, reason,
+    terminal: reason === 'LEAD_REMOVED' || reason === 'DEALER_ROUTING_INVALID' };
+}
+
+async function readCurrentIntegration(catalystApp, integration) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID = ${integration.ROWID} LIMIT 1`
+  );
+  return rows[0]?.[DEALER_INTEGRATIONS_TABLE] || null;
+}
+
+function integrationUnavailable(integration, direction) {
+  return !integration || integration.integration_type !== 'EXTERNAL_CRM'
+    || ['NOT_CONFIGURED', 'CONFIGURING', 'DISABLED'].includes(integration.status)
+    || !isEnabled(integration[`${direction}_enabled`]);
+}
+
 async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
+  const zohoLeadId = leadRow.crm_record_id;
+  const requestReference = crypto.randomUUID();
+  const outcome = await outboundSyncClaimService.withOutboundSyncClaim(
+    catalystApp, integration.ROWID, zohoLeadId, requestReference,
+    async () => {
+      // These reads are mandatory even when the legacy claim fail-open override
+      // is used. Never send a caller's stale consent/assignment after a read failure.
+      let currentLead, currentIntegration, currentDealer;
+      try {
+        [currentLead, currentIntegration, currentDealer] = await Promise.all([
+          rereadLead(catalystApp, leadRow), readCurrentIntegration(catalystApp, integration),
+          findDealerByCode(catalystApp, integration.dealer_code),
+        ]);
+      } catch (err) {
+        // The first delivery may not have a mapping yet. Retain local-read
+        // failures as retryable work without sending or rewriting lead state.
+        err.code = 'CURRENT_STATE_UNAVAILABLE';
+        await recordOutboundFailureAndCheckEscalation(catalystApp, integration, zohoLeadId, err);
+        throw err;
+      }
+      if (!currentLead || currentLead.sync_status === 'Removed') {
+        return retireObsoleteMapping(catalystApp, integration, zohoLeadId, 'LEAD_REMOVED');
+      }
+      if (!currentIntegration || currentIntegration.dealer_code !== currentLead.dealer_code
+        || integration.dealer_code !== currentLead.dealer_code) {
+        return retireObsoleteMapping(catalystApp, integration, zohoLeadId, 'DEALER_ROUTING_INVALID');
+      }
+      return validateAndDispatchOutbound(catalystApp, currentIntegration, currentLead, requestReference, currentDealer);
+    }
+  );
+  if (outcome?.skipped && outcome.reason === 'CLAIM_UNAVAILABLE') {
+    try {
+      await recordOutboundFailureAndCheckEscalation(
+        catalystApp, integration, zohoLeadId,
+        Object.assign(new Error('Sync claim could not be stored; delivery deferred'), { code: 'CLAIM_UNAVAILABLE' })
+      );
+    } catch (err) {
+      logger.error('crmIntegrationService', `Could not queue lead ${zohoLeadId} for retry after a claim failure`, err);
+    }
+  }
+  return outcome;
+}
+
+async function validateAndDispatchOutbound(catalystApp, integration, leadRow, requestReference, dealer) {
+  const zohoLeadId = leadRow.crm_record_id;
   if (!isEnabled(integration.outbound_enabled)) {
     return holdOutboundLead(catalystApp, integration, leadRow, {
       scenarioCode: 'Unhappy 5',
@@ -693,11 +764,9 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     });
   }
 
-  const requestReference = crypto.randomUUID();
-  const zohoLeadId = leadRow.crm_record_id;
   const deliveryValidation = pathPolicy.validateLeadForDelivery(leadRow);
 
-  if (deliveryValidation.routingIssue || integration.dealer_code !== leadRow.dealer_code) {
+  if (deliveryValidation.routingIssue) {
     return holdOutboundLead(catalystApp, integration, leadRow, {
       scenarioCode: 'Unhappy 5',
       errorCode: 'DEALER_ROUTING_INVALID',
@@ -739,12 +808,11 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     });
   }
 
-  const dealer = await findDealerByCode(catalystApp, leadRow.dealer_code);
   // MG Dealer Master owns trading/renewal status. Lead Exchange only
   // verifies that the routed dealer still exists and has not been removed;
   // it must not silently reject statuses such as "Renewal Review".
   const dealerIsActive = dealer && dealer.sync_status !== 'Removed';
-  if (!dealerIsActive || ['NOT_CONFIGURED', 'CONFIGURING', 'DISABLED'].includes(integration.status)) {
+  if (!dealerIsActive || integrationUnavailable(integration, 'outbound')) {
     return holdOutboundLead(catalystApp, integration, leadRow, {
       scenarioCode: 'Unhappy 5',
       errorCode: 'DEALER_CONFIGURATION_INVALID',
@@ -755,45 +823,7 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
     });
   }
 
-  // Claimed for the duration of this whole attempt (the dealer-CRM call
-  // plus every bookkeeping write below) so no concurrent sync for this
-  // SAME (integration, lead) — another Catalyst instance's retry sweep,
-  // reconciliation pass, or a webhook-triggered sync racing the same
-  // lead — can run in parallel and create/update the dealer record
-  // twice. sweepOverlapGuard.js only protects re-entrancy on one warm
-  // instance; this is the cross-instance half, backed by a DB-enforced
-  // unique constraint (see outboundSyncClaimService.js for the exact
-  // mechanism and its one required Catalyst Console migration step).
-  const outcome = await outboundSyncClaimService.withOutboundSyncClaim(
-    catalystApp,
-    integration.ROWID,
-    zohoLeadId,
-    requestReference,
-    async () => attemptExternalCrmSync(
-      catalystApp,
-      integration,
-      // SYNC_CLAIM_FAIL_CLOSED (Batch 8, S4): build the payload from the lead
-      // as it is now, read under the claim, not as the caller last saw it.
-      isSyncClaimFailClosed() ? await rereadLead(catalystApp, leadRow) : leadRow,
-      zohoLeadId,
-      requestReference
-    )
-  );
-
-  // The claim could not be stored (SYNC_CLAIM_FAIL_CLOSED): nothing was sent.
-  // Queue it for the retry sweep as our own (LOCAL) failure, without an
-  // alert; it is not the dealer's fault.
-  if (outcome?.skipped && outcome.reason === 'CLAIM_UNAVAILABLE') {
-    try {
-      await recordOutboundFailureAndCheckEscalation(
-        catalystApp, integration, zohoLeadId,
-        Object.assign(new Error('Sync claim could not be stored; delivery deferred'), { code: 'CLAIM_UNAVAILABLE' })
-      );
-    } catch (err) {
-      logger.error('crmIntegrationService', `Could not queue lead ${zohoLeadId} for retry after a claim failure`, err);
-    }
-  }
-  return outcome;
+  return attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLeadId, requestReference);
 }
 
 /**
@@ -818,15 +848,10 @@ async function stampDealerActionClock(catalystApp, mappingRowId) {
 }
 
 async function rereadLead(catalystApp, leadRow) {
-  try {
-    const rows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(leadRow.crm_record_id)}' LIMIT 1`
-    );
-    return rows.length > 0 ? { ...leadRow, ...rows[0][LEADS_TABLE] } : leadRow;
-  } catch (err) {
-    logger.error('crmIntegrationService', `Could not re-read lead ${leadRow.crm_record_id} under its claim; using the row given`, err);
-    return leadRow;
-  }
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(leadRow.crm_record_id)}' LIMIT 1`
+  );
+  return rows[0]?.[LEADS_TABLE] || null;
 }
 
 // True when this integration's latest outbound update was already refused
@@ -1646,6 +1671,10 @@ function classifyLogScenario(
 
 async function writeLog(catalystApp, entry, classificationHint) {
   const scenario = classifyLogScenario(entry, classificationHint);
+  // Fresh inbound failures are also the durable replay queue. A 2xx hold
+  // must never depend on a best-effort log, including mapping/claim holds.
+  const requirePersistence = classificationHint?.requirePersistence
+    || (entry.direction === 'EXTERNAL_CRM_TO_ZOHO' && entry.status === 'FAILED');
 
   const logRow = Object.fromEntries(Object.entries({
     ...entry,
@@ -1670,9 +1699,11 @@ async function writeLog(catalystApp, entry, classificationHint) {
         await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).insertRow(withoutPriority);
       } catch (retryErr) {
         logger.error('crmIntegrationService', 'Failed to write integration log', retryErr);
+        if (requirePersistence) throw Object.assign(new Error('Inbound retry work could not be persisted'), { code: 'INBOUND_WORK_NOT_PERSISTED' });
       }
     } else {
       logger.error('crmIntegrationService', 'Failed to write integration log', err);
+      if (requirePersistence) throw Object.assign(new Error('Inbound retry work could not be persisted'), { code: 'INBOUND_WORK_NOT_PERSISTED' });
     }
   }
 
@@ -1857,8 +1888,8 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
  * one call are handled. The whole call is only reported as FAILED
  * (bubbled up to mark the webhook_events row) if every id in the batch
  * failed; markWebhookEventStatus/the HTTP response otherwise reflects
- * success even if some ids in the batch failed, since those failures
- * are already visible per-row in the Activity Log.
+ * a pending result when failed IDs are durably retained; unretained
+ * failures are surfaced so the sender can redeliver.
  */
 async function processInboundWebhookForZohoCrm(catalystApp, integration, externalPayload, zohoCrmService) {
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
@@ -1888,21 +1919,25 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
   for (const externalLeadId of ids) {
     const requestReference = crypto.randomUUID();
     try {
-      const fetched = await withCrmApiLimit(integration.crm_type, () => adapter.getLead(catalystApp, integration, externalLeadId), integration.ROWID);
-      const zohoRecord = fetched.raw?.data?.[0];
-
-      if (!zohoRecord) {
+      let zohoRecord;
+      try {
+        const fetched = await withCrmApiLimit(integration.crm_type,
+          () => adapter.getLead(catalystApp, integration, externalLeadId), integration.ROWID);
+        zohoRecord = fetched.raw?.data?.[0];
+        if (!zohoRecord) throw Object.assign(new Error('Dealer returned no record'), { code: 'DEALER_RECORD_NOT_FOUND' });
+      } catch (fetchError) {
+        // Fetch failures happen before resolved-record processing creates a log.
+        // Preserve the external ID durably before returning an acknowledged hold.
         await writeLog(catalystApp, {
           integration_id: integration.ROWID,
           dealer_code: integration.dealer_code,
-          direction: 'EXTERNAL_CRM_TO_ZOHO',
-          operation: 'UPDATE_LEAD',
-          external_lead_id: externalLeadId,
-          status: 'FAILED',
-          error_message: 'FIELD_MAPPING_INVALID',
+          direction: 'EXTERNAL_CRM_TO_ZOHO', operation: 'UPDATE_LEAD',
+          external_lead_id: externalLeadId, status: 'FAILED',
+          error_message: `DEALER_FETCH_FAILED:${fetchError.code || fetchError.response?.status || 'UNAVAILABLE'}`.slice(0, 500),
           request_reference: requestReference,
-        });
-        throw Object.assign(new Error(`Could not fetch external lead ${externalLeadId} from dealer's Zoho org`), { code: 'FIELD_MAPPING_INVALID' });
+        }, { scenarioCode: 'Unhappy 4', requirePersistence: true, notify: false });
+        results.push({ externalLeadId, ok: false, held: true, error: 'DEALER_FETCH_FAILED' });
+        continue;
       }
 
       const affectedFields = extractAffectedFieldNames(externalPayload, externalLeadId); 
@@ -1913,7 +1948,10 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
       );
       results.push({ externalLeadId, ...result });
     } catch (err) {
-      lastError = err;
+      // A later durable mapping hold must not mask an earlier item whose
+      // retry work could not be stored and turn the whole response into 202.
+      if (!lastError || lastError.code === 'LEAD_MAPPING_NOT_FOUND'
+        || err.code === 'INBOUND_WORK_NOT_PERSISTED') lastError = err;
       results.push({
         externalLeadId,
         ok: false,
@@ -1923,10 +1961,12 @@ async function processInboundWebhookForZohoCrm(catalystApp, integration, externa
     }
   }
 
-  const anySucceeded = results.some((r) => r.ok);
-  if (!anySucceeded && lastError) throw lastError;
-
-  return { ok: true, held: results.some((r) => r.held), results };
+  // An exception outside the durable fetch hold is not acknowledged as
+  // successful merely because another item worked. Redelivery remains safe
+  // through the per-record state/echo checks.
+  if (lastError) throw lastError;
+  const held = results.some((r) => r.held && !r.terminal);
+  return { ok: true, held, ...(held ? { reason: 'BATCH_ITEMS_PENDING' } : {}), results };
 }
 
 async function replayInboundLead(
@@ -2027,9 +2067,10 @@ async function replayInboundLeadFromStoredEvent(
       catalystApp, integration, externalLeadId, resolved.record,
       fieldMappings, statusMappings, crypto.randomUUID(), zohoCrmService, null, { replay }
     );
-    if (!result?.held) {
+    if (!result?.held || result?.terminal) {
       try {
-        await markWebhookEventStatus(catalystApp, event.ROWID, 'SUCCESS');
+        await markWebhookEventStatus(catalystApp, event.ROWID, 'SUCCESS',
+          result?.terminal ? `TERMINAL:${result.reason}` : undefined);
       } catch (err) {
         logger.error('crmIntegrationService', `Could not mark stored webhook event ${event.ROWID} SUCCESS`, err);
       }
@@ -2088,9 +2129,9 @@ async function processResolvedInboundLead(
   // write + its two local bookkeeping writes) sits inside this closure.
   // Reuses the EXACT SAME claim mechanism/table/key format
   // syncLeadToExternalCrm already uses for outbound sync, keyed
-  // identically (`${integration.ROWID}:${mapping.zoho_lead_id}`), so an
+  // identically (`lead:${mapping.zoho_lead_id}`), so an
   // inbound webhook for this lead and an outbound MG->dealer sync for
-  // the SAME lead genuinely coordinate on one lock — not two separate
+  // the SAME lead, including a new dealer after reassignment, coordinate on one lock — not two separate
   // locks that could still race each other. See outboundSyncClaimService.js;
   // nothing about that file changes for this.
   const claimResult = await outboundSyncClaimService.withOutboundSyncClaim(
@@ -2240,6 +2281,27 @@ async function attemptInboundLeadUpdate(
     err.code = 'LEAD_MAPPING_NOT_FOUND';
     throw err;
   }
+
+  const currentIntegration = await readCurrentIntegration(catalystApp, integration);
+  const currentDealer = await findDealerByCode(catalystApp, integration.dealer_code);
+  let lifecycleReason = null;
+  if (existingLeadRow.sync_status === 'Removed') lifecycleReason = 'LEAD_REMOVED';
+  else if (existingLeadRow.dealer_code !== integration.dealer_code
+    || currentIntegration?.dealer_code !== existingLeadRow.dealer_code) lifecycleReason = 'DEALER_ROUTING_INVALID';
+  else if (integrationUnavailable(currentIntegration, 'inbound') || !currentDealer || currentDealer.sync_status === 'Removed') {
+    lifecycleReason = 'DEALER_CONFIGURATION_INVALID';
+  }
+  if (lifecycleReason) return retireObsoleteMapping(catalystApp, integration, mapping.zoho_lead_id, lifecycleReason);
+  // The event was authenticated/resolved against this configuration. Do not
+  // apply its record using a different CRM configuration saved in the meantime.
+  if (currentIntegration.crm_type !== integration.crm_type || currentIntegration.base_url !== integration.base_url) {
+    throw Object.assign(new Error('Integration configuration changed during inbound processing'), { code: 'INTEGRATION_CONFIGURATION_CHANGED' });
+  }
+  if (resolveConsentValue(existingLeadRow.accept_privacy_policy) !== true) {
+    return handleConsentMismatch(catalystApp, currentIntegration, existingLeadRow, mapping.zoho_lead_id,
+      requestReference, 'INBOUND', resolveConsentValue(existingLeadRow.accept_privacy_policy));
+  }
+  integration = currentIntegration;
 
   const consentFieldMapping = fieldMappings.find((m) => m.source_field === 'accept_privacy_policy');
   if (consentFieldMapping) {
@@ -2793,16 +2855,19 @@ function parseUtcDateTime(value) {
  * abandoned (RECEIVED, lease expired: the instance died) is processed again
  * under a new lease, so it is never acknowledged without being done.
  */
-async function claimRepeatedWebhookEvent(catalystApp, dedupeKey) {
+async function claimRepeatedWebhookEvent(catalystApp, dedupeKey, durable = true) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM ${WEBHOOK_EVENTS_TABLE} WHERE dedupe_key = '${safeQuoteForZcql(dedupeKey)}' LIMIT 1`
   );
   const existing = rows.length > 0 ? rows[0][WEBHOOK_EVENTS_TABLE] : null;
-  if (!existing || existing.processing_status === 'SUCCESS') {
+  if (!existing) throw new Error('Duplicate webhook could not be read; redelivery required');
+  if (existing.processing_status === 'SUCCESS') {
     logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
     return { isDuplicate: true };
   }
-  const leaseEnds = parseUtcDateTime(existing.lease_until);
+  const receivedAt = parseUtcDateTime(existing.received_at);
+  const leaseEnds = durable ? parseUtcDateTime(existing.lease_until)
+    : (receivedAt === null ? null : receivedAt + WEBHOOK_EVENT_LEASE_SECONDS * 1000);
   if (existing.processing_status === 'RECEIVED' && leaseEnds !== null && leaseEnds > Date.now()) {
     logger.info('crmIntegrationService', `Webhook event still in progress (dedupe_key=${dedupeKey})`);
     return { isDuplicate: true, inProgress: true };
@@ -2810,8 +2875,10 @@ async function claimRepeatedWebhookEvent(catalystApp, dedupeKey) {
   await catalystApp.datastore().table(WEBHOOK_EVENTS_TABLE).updateRow({
     ROWID: existing.ROWID,
     processing_status: 'RECEIVED',
-    attempt_count: (Number(existing.attempt_count) || 1) + 1,
-    lease_until: leaseUntil(),
+    ...(durable ? {
+      attempt_count: (Number(existing.attempt_count) || 1) + 1,
+      lease_until: leaseUntil(),
+    } : { received_at: toCatalystDateTime() }),
   });
   logger.info(
     'crmIntegrationService',
@@ -2864,8 +2931,7 @@ async function checkAndRecordWebhookEvent(catalystApp, integration, rawBody, eve
     return { isDuplicate: false, eventRowId: inserted.ROWID };
   } catch (err) {
     if (isDuplicateConstraintError(err)) {
-      logger.info('crmIntegrationService', `Duplicate webhook event detected (dedupe_key=${dedupeKey})`);
-      return { isDuplicate: true };
+      return claimRepeatedWebhookEvent(catalystApp, dedupeKey, false);
     }
 
     throw err;

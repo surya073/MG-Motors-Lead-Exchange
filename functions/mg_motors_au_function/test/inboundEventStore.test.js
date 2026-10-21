@@ -187,13 +187,20 @@ test('C4: an old row without the Batch 6 columns is processed again too', async 
   assert.equal(db.tables.webhook_events[0].attempt_count, 2);
 });
 
-test('flag off, or another CRM type: a repeat of a FAILED event is a duplicate, as today', async (t) => {
+test('flag off, or another CRM type: a FAILED event is retried using baseline columns', async (t) => {
   const off = seeded(t, { processing_status: 'FAILED' }, { store: null });
-  assert.deepEqual(await record(off, FUSION, 'msg_1'), { isDuplicate: true });
+  assert.deepEqual(await record(off, FUSION, 'msg_1'), { isDuplicate: false, eventRowId: '1000', reprocessed: true });
+  assert.equal(off.tables.webhook_events[0].processing_status, 'RECEIVED');
+  assert.ok(off.tables.webhook_events[0].received_at);
+  assert.equal(off.tables.webhook_events[0].lease_until, undefined);
 
   const zoho = setup(t);
   zoho.tables.webhook_events.push({ integration_id: ZOHO.ROWID, event_id: 'e1', dedupe_key: `${ZOHO.ROWID}:e1`, processing_status: 'FAILED' });
-  assert.deepEqual(await record(zoho, ZOHO, 'e1'), { isDuplicate: true });
+  assert.deepEqual(await record(zoho, ZOHO, 'e1'), { isDuplicate: false, eventRowId: '1000', reprocessed: true });
+  assert.equal(zoho.tables.webhook_events[0].processing_status, 'RECEIVED');
+  assert.ok(zoho.tables.webhook_events[0].received_at);
+  assert.equal(zoho.tables.webhook_events[0].attempt_count, undefined);
+  assert.equal(zoho.tables.webhook_events[0].lease_until, undefined);
 });
 
 // Review of Batch 6: the Text column holds 10,000 characters, and a Fusion

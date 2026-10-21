@@ -39,13 +39,23 @@ function breakClaims(db) {
 
 const updated = async (externalLeadId) => ({ externalLeadId, httpStatus: 200, raw: {} });
 
-test('claim service: fail open by default, as before', async (t) => {
-  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: undefined });
+test('claim service: explicit false preserves the legacy fail-open override', async (t) => {
+  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: 'false' });
   const harness = setupOutbound(t);
   breakClaims(harness.db);
   let ran = false;
   await outboundSyncClaimService.withOutboundSyncClaim(harness.db.app, '1000', 'ZL1', 'ref', async () => { ran = true; });
   assert.equal(ran, true);
+});
+
+test('claim service: unavailable claims fail closed by default', async (t) => {
+  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: undefined });
+  const harness = setupOutbound(t);
+  breakClaims(harness.db);
+  let ran = false;
+  const result = await outboundSyncClaimService.withOutboundSyncClaim(harness.db.app, '1000', 'ZL1', 'ref', async () => { ran = true; });
+  assert.equal(ran, false);
+  assert.deepEqual(result, { skipped: true, reason: 'CLAIM_UNAVAILABLE' });
 });
 
 test('claim service, flag on: the work is not run and the caller is told why', async (t) => {
@@ -75,7 +85,7 @@ test('outbound, flag on: nothing is sent; the lead is queued for retry as a LOCA
 });
 
 test('outbound, flag off: delivered without a claim, exactly as before', async (t) => {
-  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: undefined });
+  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: 'false' });
   const harness = setupOutbound(t, { lead: { postcode: '7000' } });
   breakClaims(harness.db);
   const calls = fakeAdapter(t, { updateLead: updated });
@@ -109,13 +119,13 @@ test('flag on: the lead is re-read under the claim, so the payload carries the l
   assert.equal(calls.update[0]['contact.areaCode'], '7000');
 });
 
-test('flag off: the lead passed in is used, as before', async (t) => {
-  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: undefined });
+test('flag off: authoritative lead validation still uses the current row', async (t) => {
+  withEnv(t, { SYNC_CLAIM_FAIL_CLOSED: 'false' });
   const harness = setupOutbound(t, { lead: { postcode: '7000' } });
   const calls = fakeAdapter(t, { updateLead: updated });
   const stale = { ...harness.leadRow(), postcode: '3000' };
   await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, stale);
-  assert.equal(calls.update[0]['contact.areaCode'], '3000');
+  assert.equal(calls.update[0]['contact.areaCode'], '7000');
 });
 
 test('our own refusals are LOCAL (never "Dealer Unavailable"); a Fusion 429 cool-down stays TRANSIENT', () => {

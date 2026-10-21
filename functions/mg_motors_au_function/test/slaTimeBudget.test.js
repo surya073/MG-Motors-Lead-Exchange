@@ -10,7 +10,7 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const oemCrmService = require('../services/zohoCrmService');
@@ -34,7 +34,7 @@ function buildDb(count, { sameLeadTwice = false } = {}) {
   for (let i = 0; i < count; i += 1) {
     const id = `lead-${String(i).padStart(4, '0')}`;
     mappings.push({
-      zoho_lead_id: id, dealer_code: i % 2 ? 'D1' : 'D2', integration_id: '1000', sync_status: 'SYNCED',
+      zoho_lead_id: id, dealer_code: 'D1', integration_id: '1000', sync_status: 'SYNCED',
       // distinct, increasing acknowledgement times: lead-0000 is the oldest
       last_synced_at: utc(BASE_NOW - 5 * DAY + i * 60 * 1000),
     });
@@ -43,7 +43,7 @@ function buildDb(count, { sameLeadTwice = false } = {}) {
   if (sameLeadTwice) {
     mappings.push({ ...mappings[0], integration_id: '1000', dealer_code: 'D3', last_synced_at: utc(BASE_NOW - 4 * DAY) });
   }
-  return createInMemoryZcql({ lead_integrations: mappings, leads, dealer_integrations: [{ dealer_code: 'D1', status: 'ACTIVE' }] });
+  return createSlaFixture({ lead_integrations: mappings, leads, dealer_integrations: [{ dealer_code: 'D1', status: 'ACTIVE' }] });
 }
 
 function harness(t) {
@@ -124,8 +124,9 @@ test('a deadline passed in by the caller is honoured: an expired one starts noth
 
   const result = await sweep(db, h, { deadline: -1 });
 
-  assert.equal(result.deferred, 10);
-  assert.equal(result.breached, 0);
+  assert.equal(result.reason, 'WORK_BUDGET_EXHAUSTED');
+  assert.equal(result.deferredUnknown, true);
+  assert.equal(db.queries.length, 0, 'no backlog scan just to count deferred work');
   assert.equal(h.written.length, 0, 'no OEM write, no row write');
   assert.equal(breached(db).length, 0);
 

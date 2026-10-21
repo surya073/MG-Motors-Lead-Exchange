@@ -8,6 +8,12 @@ process.env.ZOHO_ACCOUNTS_DOMAIN = process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://
 process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook-token';
 
 const test = require('node:test');
+const dns = require('dns').promises;
+const { baseIntegration, mockCredentialSnapshot } = require('./helpers/dealerZohoFixture');
+test.beforeEach((t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+  mockCredentialSnapshot(t);
+});
 const assert = require('node:assert/strict');
 const axios = require('axios');
 const zohoAuthService = require('../services/zohoAuthService');
@@ -48,6 +54,7 @@ function buildFakeCatalystApp({ existingRows = [] } = {}) {
     }),
     datastore: () => ({
       table: () => ({
+        getRow: async () => baseIntegration,
         insertRow: async (fields) => {
           insertedRows.push(fields);
           return { ROWID: `new-${insertedRows.length}`, ...fields };
@@ -71,7 +78,7 @@ function mockWatchApiSuccess(t, { registerDelayMs = 0 } = {}) {
 }
 
 function buildIntegration(rowId, dealerCode) {
-  return { ROWID: rowId, dealer_code: dealerCode, base_url: `https://${dealerCode.toLowerCase()}.zohoapis.in` };
+  return { ROWID: rowId, dealer_code: dealerCode, ...baseIntegration, integration_type: 'EXTERNAL_CRM', status: 'ACTIVE', inbound_enabled: true };
 }
 
 test('OEM: first renewal acquires the guard and succeeds', async (t) => {

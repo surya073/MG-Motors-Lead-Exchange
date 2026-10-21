@@ -14,6 +14,12 @@ process.env.ZOHO_ACCOUNTS_DOMAIN = process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://
 process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook-token';
 
 const test = require('node:test');
+const dns = require('dns').promises;
+const { baseIntegration, mockCredentialSnapshot } = require('./helpers/dealerZohoFixture');
+test.beforeEach((t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+  mockCredentialSnapshot(t);
+});
 const assert = require('node:assert/strict');
 const axios = require('axios');
 const zohoAuthService = require('../services/zohoAuthService');
@@ -51,6 +57,7 @@ function buildFakeCatalystApp({ existingRows = [] }) {
     }),
     datastore: () => ({
       table: (tableName) => {
+        if (tableName === 'dealer_integrations') return { getRow: async () => baseIntegration };
         if (tableName === 'webhook_channels') {
           return {
             insertRow: async (fields) => {
@@ -157,7 +164,7 @@ test('registerDealerWatchChannel: deregistration behavior is unchanged — still
       { channel_id: 'old-dealer-channel', module_name: 'Leads', dealer_code: 'AU888' },
     ],
   });
-  const integration = { ROWID: '501', dealer_code: 'AU888', base_url: 'https://dealer.zohoapis.in' };
+  const integration = { ROWID: '501', dealer_code: 'AU888', ...baseIntegration, integration_type: 'EXTERNAL_CRM', status: 'ACTIVE', inbound_enabled: true };
 
   const result = await zohoWebhookService.registerDealerWatchChannel(catalystApp, integration);
 

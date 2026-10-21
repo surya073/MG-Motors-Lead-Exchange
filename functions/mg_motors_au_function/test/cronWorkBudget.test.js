@@ -65,9 +65,12 @@ function outboundDb(count) {
 test('outbound retry: a spent budget starts no delivery and reports what was deferred', async (t) => {
   _resetForTests();
   const sync = t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async () => ({ ok: true }));
-  const results = await outboundRetryScheduler.runOutboundRetrySweep(outboundDb(3).app, { ignoreSchedule: true, deadline: PAST() });
+  const db = outboundDb(3);
+  const results = await outboundRetryScheduler.runOutboundRetrySweep(db.app, { ignoreSchedule: true, deadline: PAST() });
   assert.equal(sync.mock.callCount(), 0);
-  assert.equal(results.deferred, 3);
+  assert.equal(results.reason, 'WORK_BUDGET_EXHAUSTED');
+  assert.equal(results.deferredUnknown, true);
+  assert.equal(db.queries.length, 0);
 });
 
 test('outbound retry: with time left, or no deadline, every due lead is delivered as before', async (t) => {
@@ -99,7 +102,9 @@ test('inbound replay: a spent budget replays nothing; the held row stays as it w
   const db = inboundDb();
   const results = await inboundReplayScheduler.runInboundReplaySweep(db.app, { deadline: PAST() });
   assert.equal(replay.mock.callCount(), 0);
-  assert.equal(results.deferred, 1);
+  assert.equal(results.reason, 'WORK_BUDGET_EXHAUSTED');
+  assert.equal(results.deferredUnknown, true);
+  assert.equal(db.queries.length, 0);
   assert.equal(db.tables.integration_logs[0].status, 'FAILED');
 });
 
@@ -125,7 +130,9 @@ test('reconciliation: a spent budget reads nothing from dealers', async (t) => {
   });
   const results = await dealerReconciliationService.runDealerReconciliation(db.app, { deadline: PAST() });
   assert.equal(reads, 0);
-  assert.equal(results.deferred, 2);
+  assert.equal(results.reason, 'WORK_BUDGET_EXHAUSTED');
+  assert.equal(results.deferredUnknown, true);
+  assert.equal(db.queries.length, 0);
 });
 
 // ---- cron wiring ------------------------------------------------------------
@@ -136,8 +143,8 @@ async function callCron(t, path) {
   t.mock.method(outboundRetryScheduler, 'runOutboundRetrySweep', async (app, options) => { seen.outbound = options; return { recovered: 0 }; });
   t.mock.method(inboundReplayScheduler, 'runInboundReplaySweep', async (app, options) => { seen.inbound = options; return {}; });
   t.mock.method(dealerReconciliationService, 'runDealerReconciliation', async (app, options) => { seen.reconcile = options; return {}; });
-  t.mock.method(slaMonitorService, 'runSlaSweep', async () => ({}));
-  t.mock.method(integrationAlertBatchService, 'flushIfWindowElapsed', async () => ({}));
+  t.mock.method(slaMonitorService, 'runSlaSweep', async (_app, _now, options) => { seen.sla = options; return {}; });
+  t.mock.method(integrationAlertBatchService, 'flushIfWindowElapsed', async (_app, options) => { seen.alert = options; return {}; });
   t.mock.method(catalyst, 'initialize', () => ({}));
   const server = express();
   server.use(express.json());
@@ -161,6 +168,8 @@ test('budget set: fast-recover gives every stage the same deadline, from the sta
   const { seen, startedAt } = await callCron(t, '/cron/fast-recover');
   assert.ok(seen.outbound.deadline >= startedAt + 24000 && seen.outbound.deadline <= Date.now() + 25000);
   assert.equal(seen.inbound.deadline, seen.outbound.deadline);
+  assert.equal(seen.sla.deadline, seen.outbound.deadline);
+  assert.equal(seen.alert.deadline, seen.outbound.deadline);
 });
 
 test('budget set: the dedicated retry, replay and reconcile crons get a deadline too', async (t) => {
@@ -175,9 +184,11 @@ test('budget set: the dedicated retry, replay and reconcile crons get a deadline
   assert.ok(reconcile.seen.reconcile.deadline > reconcile.startedAt);
 });
 
-test('budget unset: no stage is given a deadline, as before', async (t) => {
+test('budget unset: fast-recover still shares a bounded deadline across every stage', async (t) => {
   withBudget(t, null);
   const { seen } = await callCron(t, '/cron/fast-recover');
-  assert.equal(seen.outbound.deadline, undefined);
-  assert.equal(seen.inbound?.deadline, undefined);
+  assert.ok(Number.isFinite(seen.outbound.deadline));
+  assert.equal(seen.inbound.deadline, seen.outbound.deadline);
+  assert.equal(seen.sla.deadline, seen.outbound.deadline);
+  assert.equal(seen.alert.deadline, seen.outbound.deadline);
 });

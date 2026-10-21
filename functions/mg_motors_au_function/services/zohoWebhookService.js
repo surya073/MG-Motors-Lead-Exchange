@@ -8,6 +8,8 @@ const logger = require('../utils/logger');
 const integrationAuthService = require('./integrations/integrationAuthService');
 const { deriveZohoWatchToken } = require('./integrations/webhookVerificationService');
 const { guardSweep } = require('./integrations/sweepOverlapGuard');
+const { assertZohoEndpoint } = require('./integrations/adapters/zohoEndpointPolicy');
+const { assertSafeUrl, safeRequestOptions } = require('./integrations/adapters/safeHttp');
 
 const ZOHO_REQUEST_TIMEOUT_MS = 10000;
 
@@ -32,6 +34,7 @@ function buildNotifyUrl() {
 
 async function registerWatchChannelsInternal(catalystApp) {
   const { apiDomain, webhookToken } = getZohoConfig();
+  const watchUrl = await validatedWatchUrl(apiDomain);
   const accessToken = await getAccessToken();
 
   // FIX: deregister the previous OEM channel before creating a new one —
@@ -42,7 +45,7 @@ async function registerWatchChannelsInternal(catalystApp) {
   // Zoho would eventually send multiple notifications per Dealer_Master/
   // Leads change. `null` scopes this to the shared OEM channel, never a
   // dealer's.
-  await deregisterExistingChannel(catalystApp, null, accessToken, apiDomain);
+  await deregisterExistingChannel(catalystApp, null, accessToken, watchUrl);
 
   const channelId = Date.now();
   const expiryDate = new Date(Date.now() + 23 * 60 * 60 * 1000);
@@ -68,7 +71,8 @@ async function registerWatchChannelsInternal(catalystApp) {
   let response;
   try {
     logger.info('zohoWebhookService', `Calling watch API at ${apiDomain}/crm/v8/actions/watch (OEM)`);
-    response = await axios.post(`${apiDomain}/crm/v8/actions/watch`, payload, {
+    response = await axios.post(watchUrl.toString(), payload, {
+      ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
         'Content-Type': 'application/json',
@@ -77,14 +81,14 @@ async function registerWatchChannelsInternal(catalystApp) {
     });
     logger.info('zohoWebhookService', 'Watch API call returned (OEM)');
   } catch (err) {
-    const zohoError = err.response?.data;
+    const zohoError = `HTTP ${err.response?.status || 'network error'}`;
     logger.error('zohoWebhookService', 'Failed to register watch channel', zohoError || err.message || err);
     throw new Error(`Watch channel registration failed: ${JSON.stringify(zohoError) || err.message}`);
   }
 
   const result = response.data?.watch?.[0];
   if (result?.status !== 'success' && result?.code !== 'SUCCESS') {
-    throw new Error(`Zoho rejected watch registration: ${JSON.stringify(result)}`);
+    throw new Error(`Zoho rejected watch registration: ${String(result?.code || 'INVALID_RESPONSE').replace(/[^A-Z0-9_]/g, '').slice(0, 80)}`);
   }
 
   const table = catalystApp.datastore().table('webhook_channels');
@@ -141,9 +145,9 @@ function buildDealerNotifyUrl(dealerCode) {
  * dealer channel, keeping the OEM and dealer scopes correctly separated
  * regardless of how an unset dealer_code column happens to be stored.
  */
-async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, apiDomain) {
+async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, watchUrl) {
   const whereClause = dealerCode
-    ? `dealer_code = '${dealerCode}'`
+    ? `dealer_code = '${String(dealerCode).replace(/'/g, "''")}'`
     : `module_name = 'Dealers,Leads'`;
   const existing = await catalystApp.zcql().executeZCQLQuery(
     `SELECT * FROM webhook_channels WHERE ${whereClause} ORDER BY CREATEDTIME DESC LIMIT 1`
@@ -153,7 +157,8 @@ async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, a
   const oldChannelId = existing[0].webhook_channels.channel_id;
   const scopeLabel = dealerCode || 'OEM';
   try {
-    await axios.delete(`${apiDomain}/crm/v8/actions/watch`, {
+    await axios.delete(watchUrl.toString(), {
+      ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
       },
@@ -165,7 +170,7 @@ async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, a
     logger.error(
       'zohoWebhookService',
       `Failed to deregister old channel ${oldChannelId} for ${scopeLabel} (may have already expired)`,
-      err.response?.data || err.message
+      `HTTP ${err.response?.status || 'network error'}`
     );
   }
 }
@@ -178,32 +183,24 @@ async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, a
  * credentials, one dealer's notify URL, and its own webhook_channels row.
  */
 async function registerDealerWatchChannelInternal(catalystApp, integration) {
-  logger.info('zohoWebhookService', `Starting dealer watch registration for ${integration.dealer_code}`);
-
+  if (!isDealerWatchEligible(integration)) {
+    throw Object.assign(new Error('Watch registration requires an active Zoho integration with inbound updates enabled'), {
+      code: 'INVALID_CRM_CONFIGURATION',
+    });
+  }
+  // Validate the whole destination before looking up either OAuth credentials
+  // or the callback authentication token. Keep the pinned URL for POST/DELETE.
+  const watchUrl = await validatedWatchUrl(integration.base_url);
+  assertZohoEndpoint(integration.oauth_accounts_domain || 'https://accounts.zoho.in', 'accounts');
+  const apiDomain = watchUrl.origin;
   const accessToken = await getAccessTokenForDealerZoho(catalystApp, integration);
-  logger.info('zohoWebhookService', `Got access token for ${integration.dealer_code}`);
-
   const webhookSecret = await integrationAuthService.getDecryptedCredential(
-    catalystApp,
-    integration.ROWID,
-    'WEBHOOK_SECRET'
+    catalystApp, integration.ROWID, 'WEBHOOK_SECRET'
   );
   if (!webhookSecret) {
-    const err = new Error('Generate a webhook secret before registering the dealer watch channel');
-    err.code = 'WEBHOOK_AUTH_NOT_CONFIGURED';
-    throw err;
-  }
-
-  // Use the same explicitly configured API origin as outbound lead calls.
-  // Deriving it from the OAuth accounts hostname is unsafe across Zoho data
-  // centres and can silently register the watch in the wrong regional API.
-  let apiDomain;
-  try {
-    apiDomain = new URL(integration.base_url).origin;
-  } catch {
-    const err = new Error('Dealer Zoho API base URL is invalid');
-    err.code = 'INVALID_CRM_CONFIGURATION';
-    throw err;
+    throw Object.assign(new Error('Generate a webhook secret before registering the dealer watch channel'), {
+      code: 'WEBHOOK_AUTH_NOT_CONFIGURED',
+    });
   }
 
   // FIX: deregister the previous channel for this dealer before creating
@@ -211,7 +208,7 @@ async function registerDealerWatchChannelInternal(catalystApp, integration) {
   // than replacing an existing one, so without this every renewal
   // (manual or cron) piles up another duplicate channel, and Zoho starts
   // sending multiple notifications per lead update.
-  await deregisterExistingChannel(catalystApp, integration.dealer_code, accessToken, apiDomain);
+  await deregisterExistingChannel(catalystApp, integration.dealer_code, accessToken, watchUrl);
 
   const channelId = Date.now();
   const expiryDate = new Date(Date.now() + 23 * 60 * 60 * 1000);
@@ -237,7 +234,8 @@ async function registerDealerWatchChannelInternal(catalystApp, integration) {
   let response;
   try {
     logger.info('zohoWebhookService', `Calling watch API at ${apiDomain}/crm/v8/actions/watch for ${integration.dealer_code}`);
-    response = await axios.post(`${apiDomain}/crm/v8/actions/watch`, payload, {
+    response = await axios.post(watchUrl.toString(), payload, {
+      ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
         'Content-Type': 'application/json',
@@ -246,7 +244,7 @@ async function registerDealerWatchChannelInternal(catalystApp, integration) {
     });
     logger.info('zohoWebhookService', `Watch API call returned for ${integration.dealer_code}`);
   } catch (err) {
-    const zohoError = err.response?.data;
+    const zohoError = `HTTP ${err.response?.status || 'network error'}`;
     logger.error(
       'zohoWebhookService',
       `Failed to register dealer watch channel for ${integration.dealer_code}`,
@@ -257,7 +255,7 @@ async function registerDealerWatchChannelInternal(catalystApp, integration) {
 
   const result = response.data?.watch?.[0];
   if (result?.status !== 'success' && result?.code !== 'SUCCESS') {
-    throw new Error(`Zoho rejected dealer watch registration for ${integration.dealer_code}: ${JSON.stringify(result)}`);
+    throw new Error(`Zoho rejected dealer watch registration for ${integration.dealer_code}: ${String(result?.code || 'INVALID_RESPONSE').replace(/[^A-Z0-9_]/g, '').slice(0, 80)}`);
   }
 
   const table = catalystApp.datastore().table('webhook_channels');
@@ -296,4 +294,15 @@ async function registerDealerWatchChannel(catalystApp, integration) {
   return guardSweep(`dealerWebhookRenewal:${integration.dealer_code}`, registerDealerWatchChannelInternal)(catalystApp, integration);
 }
 
-module.exports = { registerWatchChannels, registerDealerWatchChannel };
+function isDealerWatchEligible(integration) {
+  return integration?.integration_type === 'EXTERNAL_CRM' && integration.crm_type === 'ZOHO_CRM' &&
+    ['ACTIVE', 'CONNECTED'].includes(String(integration.status || '').toUpperCase()) &&
+    [true, 1, 'true', '1'].includes(integration.inbound_enabled);
+}
+
+async function validatedWatchUrl(baseUrl) {
+  const api = assertZohoEndpoint(baseUrl, 'api');
+  return assertSafeUrl(`${api.origin}/crm/v8/actions/watch`);
+}
+
+module.exports = { registerWatchChannels, registerDealerWatchChannel, isDealerWatchEligible };

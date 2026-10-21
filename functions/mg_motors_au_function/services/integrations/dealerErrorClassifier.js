@@ -20,8 +20,9 @@
  *              stored, or the OEM write-back after a delivery failed.
  *
  * Only TRANSIENT and LOCAL failures are worth retrying automatically. A
- * request that got no response at all is TRANSIENT even when its code says
- * otherwise (e.g. a Fusion token request that never got an answer).
+ * request that got no response is TRANSIENT unless it is an explicit local
+ * credential/configuration failure. OAuth helpers preserve genuine transport
+ * failures as EXTERNAL_CRM_ERROR.
  */
 
 const DEALER_ERROR_CLASS = Object.freeze({
@@ -39,6 +40,7 @@ const LOCAL_CODES = new Set([
   'ZOHO_ACK_UPDATE_FAILED',
   'FUSION_RATE_BUDGET_EXHAUSTED',
   'CLAIM_UNAVAILABLE',
+  'CURRENT_STATE_UNAVAILABLE',
 ]);
 
 const PERMANENT_CODES = new Set([
@@ -49,6 +51,7 @@ const PERMANENT_CODES = new Set([
   'STATUS_MAPPING_INVALID_TARGET',
   'STATUS_MAPPING_AMBIGUOUS',
   'UNSUPPORTED_OPERATION',
+  'CREDENTIAL_DECRYPT_FAILED',
 ]);
 
 function classifyDealerError(err) {
@@ -57,7 +60,7 @@ function classifyDealerError(err) {
   if (PERMANENT_CODES.has(code)) return DEALER_ERROR_CLASS.PERMANENT;
 
   const status = Number(err?.response?.status);
-  if (!status) return DEALER_ERROR_CLASS.TRANSIENT;
+  if (!status) return code === 'AUTHENTICATION_FAILED' ? DEALER_ERROR_CLASS.AUTH : DEALER_ERROR_CLASS.TRANSIENT;
   if (status === 408 || status === 429 || status >= 500) return DEALER_ERROR_CLASS.TRANSIENT;
   if (status === 401) return DEALER_ERROR_CLASS.AUTH;
   return DEALER_ERROR_CLASS.PERMANENT;

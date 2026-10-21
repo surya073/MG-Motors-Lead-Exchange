@@ -108,7 +108,8 @@ function getSharedWebhookConfig() {
 
 /**
  * Outbound retry and escalation switches (FUSION_REMEDIATION_PLAN.md,
- * Batch 3). Read on every call. Unset variables keep today's behaviour:
+ * Batch 3). Read on every call. Retry classification remains opt-in;
+ * fast recovery honors due times by default:
  *   OUTBOUND_RETRY_POLICY         'classified' retries only TRANSIENT/LOCAL
  *                                 failures, with capped exponential backoff
  *                                 and the dealer's Retry-After; AUTH and
@@ -119,8 +120,9 @@ function getSharedWebhookConfig() {
  *                                 without limit.
  *   OUTBOUND_RETRY_MAX_ATTEMPTS   classified only; default 10.
  *   OUTBOUND_RETRY_MAX_AGE_HOURS  classified only; default 48.
- *   FAST_RECOVER_HONOUR_SCHEDULE  'true': /cron/fast-recover waits for each
- *                                 lead's next_retry_at.
+ *   FAST_RECOVER_HONOUR_SCHEDULE  default true: /cron/fast-recover waits for
+ *                                 next_retry_at; explicit false is the
+ *                                 legacy operational override.
  *   ESCALATION_TRANSIENT_ONLY     'true': only TRANSIENT failures of leads the
  *                                 dealer has not received escalate to Dealer
  *                                 Unavailable.
@@ -135,7 +137,7 @@ function getOutboundRetryConfig() {
     classified: String(process.env.OUTBOUND_RETRY_POLICY || '').trim().toLowerCase() === 'classified',
     maxAttempts: Math.floor(positiveNumber('OUTBOUND_RETRY_MAX_ATTEMPTS', 10)),
     maxAgeHours: positiveNumber('OUTBOUND_RETRY_MAX_AGE_HOURS', 48),
-    fastRecoverHonourSchedule: isOn('FAST_RECOVER_HONOUR_SCHEDULE'),
+    fastRecoverHonourSchedule: String(process.env.FAST_RECOVER_HONOUR_SCHEDULE ?? 'true').trim().toLowerCase() !== 'false',
     escalationTransientOnly: isOn('ESCALATION_TRANSIENT_ONLY'),
   };
 }
@@ -266,10 +268,11 @@ function getCronWorkBudgetMs() {
  * sync is deferred (outbound to the retry sweep, inbound to the replay sweep)
  * instead of running without duplicate protection, and the lead is re-read
  * under its claim before its payload is built (FUSION_REMEDIATION_PLAN.md,
- * Batch 8, audit S4). Unset keeps today's fail-open behaviour.
+ * Batch 8, audit S4). Enabled by default; an explicit false retains the
+ * legacy operational override. Deployments must have the unique claims table.
  */
 function isSyncClaimFailClosed() {
-  return String(process.env.SYNC_CLAIM_FAIL_CLOSED || '').trim().toLowerCase() === 'true';
+  return String(process.env.SYNC_CLAIM_FAIL_CLOSED ?? 'true').trim().toLowerCase() !== 'false';
 }
 
 /**
@@ -283,12 +286,14 @@ function isDurableSyncCheckpointEnabled() {
 }
 
 /**
- * MAPPING_CACHE_PER_RUN=true: a sweep or sync run reads each dealer's field
+ * A sweep or sync run reads each dealer's field
  * and status mappings once instead of once per lead (FUSION_REMEDIATION_PLAN
- * .md, Batch 9a, audit S6). Read when a run starts.
+ * .md, Batch 9a, audit S6). Enabled by default to avoid repeated datastore
+ * reads; MAPPING_CACHE_PER_RUN=false restores uncached reads. The cache
+ * expires with the run, so later runs and standalone webhooks read fresh.
  */
 function isMappingCachePerRunEnabled() {
-  return String(process.env.MAPPING_CACHE_PER_RUN || '').trim().toLowerCase() === 'true';
+  return String(process.env.MAPPING_CACHE_PER_RUN ?? 'true').trim().toLowerCase() !== 'false';
 }
 
 /**

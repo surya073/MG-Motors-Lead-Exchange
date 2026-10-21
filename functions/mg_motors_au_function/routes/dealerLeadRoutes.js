@@ -15,8 +15,10 @@ const { notifyAdmins } = require('../services/notificationService');
 const { buildLeadChangeNotification } = require('../services/leadChangeNotificationService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const pathPolicy = require('../services/integrations/pathPolicyService');
+const { APP_ROLES, CATALYST_ROLE_ID_MAP } = require('../constants/roles.constants');
 
 const logger = require('../utils/logger');
+const { dealerSuggestions } = require('../services/searchSuggestionsService');
 
 const router = express.Router();
 
@@ -33,12 +35,21 @@ const ALLOWED_LEAD_STATUSES = pathPolicy.MG_LEAD_STATUS_VALUES.filter((status) =
  * calls this first — this is the single enforcement point for
  * "Dealer can only access his own leads."
  */
-async function requireDealerCode(req, res) {
+async function requireDealerCode(req, res, { mutation = false } = {}) {
   const catalystApp = res.locals.catalystApp;
   const currentUser = res.locals.currentUser;
 
   if (!currentUser) {
     res.status(401).json({ success: false, error: 'Not authenticated' });
+    return null;
+  }
+
+  // A retained dealer mapping is a scope, not a mutation permission. Use
+  // the current Catalyst role ID; an unknown/removed ID must not regain
+  // permission through a stale display name or a former dealer mapping.
+  const roleId = String(currentUser.role_details?.role_id ?? '');
+  if (mutation && CATALYST_ROLE_ID_MAP[roleId] !== APP_ROLES.DEALER) {
+    res.status(403).json({ success: false, error: 'Dealer role required to update leads.' });
     return null;
   }
 
@@ -51,6 +62,18 @@ async function requireDealerCode(req, res) {
 
   return dealerCode;
 }
+
+router.get('/dealer/search-suggestions', async (req, res) => {
+  try {
+    const dealerCode = await requireDealerCode(req, res);
+    if (!dealerCode) return;
+    const result = await dealerSuggestions(res.locals.catalystApp, dealerCode, req.query.search);
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('dealerLeadRoutes', 'GET /dealer/search-suggestions failed', err);
+    res.status(err.statusCode || 502).json({ success: false, error: err.message });
+  }
+});
 
 /**
  * GET /dealer/leads
@@ -142,7 +165,7 @@ router.get('/dealer/leads/summary', async (req, res) => {
  */
 router.patch('/dealer/leads/:rowId', async (req, res) => {
   try {
-    const dealerCode = await requireDealerCode(req, res);
+    const dealerCode = await requireDealerCode(req, res, { mutation: true });
     if (!dealerCode) return;
 
     const catalystApp = res.locals.catalystApp;

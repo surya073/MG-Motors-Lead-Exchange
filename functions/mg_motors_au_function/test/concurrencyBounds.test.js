@@ -58,10 +58,13 @@ test('notifications: mark-all-read and clear-all write at most 5 rows at a time'
   const rows = Array.from({ length: 200 }, (_, i) => ({ ROWID: String(1000 + i), recipient_user_id: 'u1', recipient_role: 'ADMIN', is_read: false }));
   const writes = tracker();
   const app = {
-    zcql: () => ({ executeZCQLQuery: async () => rows.map((n) => ({ notifications: n })) }),
+    zcql: () => ({ executeZCQLQuery: async () => rows.filter((n) => !n.is_read).map((n) => ({ notifications: n })) }),
     datastore: () => ({
       table: () => ({
-        updateRow: (fields) => writes.run(async () => fields),
+        updateRow: (fields) => writes.run(async () => {
+          Object.assign(rows.find((row) => row.ROWID === fields.ROWID), fields);
+          return fields;
+        }),
         deleteRow: (id) => writes.run(async () => id),
       }),
     }),
@@ -80,19 +83,22 @@ test('notifications: mark-all-read and clear-all write at most 5 rows at a time'
   assert.ok(writes.peak <= 5, `clear-all peak ${writes.peak}`);
 });
 
-test('alert queue flush: dequeues 450 rows at most 5 at a time, and one failed delete does not strand the rest', async (t) => {
+test('alert queue flush: dequeues a 300-row batch at most 5 at a time, and one failed delete does not strand the rest', async (t) => {
   const old = '2000-01-01 00:00:00:000';
   const queued = Array.from({ length: 450 }, (_, i) => ({ ROWID: String(1000 + i), CREATEDTIME: old, scenario_code: 'Unhappy 1', dealer_code: 'D1', lead_id: `l${i}`, reason: 'x', priority_for: 'P2' }));
   const deletes = tracker();
   const deleted = [];
+  const db = createInMemoryZcql({ integration_alert_queue: queued, outbound_sync_claims: [] }, { enforceUnique: true });
   const app = {
-    zcql: () => ({ executeZCQLQuery: async () => queued.map((r) => ({ integration_alert_queue: r })) }),
+    ...db.app,
     datastore: () => ({
-      table: () => ({
-        deleteRow: (id) => deletes.run(async () => {
+      table: (name) => ({
+        ...db.app.datastore().table(name),
+        deleteRow: name === 'integration_alert_queue' ? (id) => deletes.run(async () => {
           if (id === '1007') throw new Error('transient');
           deleted.push(id);
-        }),
+          return db.app.datastore().table(name).deleteRow(id);
+        }) : db.app.datastore().table(name).deleteRow,
       }),
     }),
   };
@@ -100,8 +106,8 @@ test('alert queue flush: dequeues 450 rows at most 5 at a time, and one failed d
 
   await integrationAlertBatchService.flushIfWindowElapsed(app);
 
-  assert.equal(deletes.calls, 450, 'every queued row is attempted');
-  assert.equal(deleted.length, 449, 'the one that failed does not stop the others');
+  assert.equal(deletes.calls, 300, 'the bounded batch is attempted; remaining rows wait');
+  assert.equal(deleted.length, 299, 'the one that failed does not stop the others');
   assert.ok(deletes.peak <= 5, `dequeue peak ${deletes.peak}`);
 });
 

@@ -8,13 +8,12 @@ const pathPolicy = require('./pathPolicyService');
 const { guardSweep } = require('./sweepOverlapGuard');
 const { tailWindow, countFrom } = require('./sweepWindow');
 const outboundSyncClaimService = require('./outboundSyncClaimService');
-const integrationAuthService = require('./integrationAuthService');
+const fusionReturnChannelProof = require('./fusionReturnChannelProof');
 const { isFusionInboundV2Enabled, isSlaDealerActionClockEnabled } = require('../../config/env');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
 const LEADS_TABLE = 'leads';
-const WEBHOOK_EVENTS_TABLE = 'webhook_events';
 const MAX_CANDIDATES = 200;
 // One sweep examines at most MAX_CANDIDATES overdue mappings: the oldest
 // HEAD_SIZE always, plus a TAIL_SIZE slice that rotates through the rest (see
@@ -70,10 +69,10 @@ function isIntegrationHealthy(integration) {
 // The column the SLA runs from: the dealer-action clock (Batch 7, Q25), or
 // last_synced_at as before. With the flag on but the column not created yet,
 // the backfill query fails and this sweep uses last_synced_at instead.
-async function resolveClockColumn(catalystApp) {
+async function resolveClockColumn(catalystApp, options) {
   if (!isSlaDealerActionClockEnabled()) return { clockCol: 'last_synced_at', backfilled: 0 };
   try {
-    return { clockCol: 'last_dealer_action_at', backfilled: await backfillDealerActionClock(catalystApp) };
+    return { clockCol: 'last_dealer_action_at', backfilled: await backfillDealerActionClock(catalystApp, options) };
   } catch (err) {
     logger.error(
       'slaMonitorService',
@@ -91,12 +90,13 @@ const BACKFILL_ROWS = 100;
  * last_dealer_action_at; each sweep gives up to BACKFILL_ROWS of them their
  * last_synced_at, the best evidence there is, and never overwrites one.
  */
-async function backfillDealerActionClock(catalystApp) {
+async function backfillDealerActionClock(catalystApp, { deadline, clock = Date.now } = {}) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT ROWID, last_synced_at FROM ${LEAD_INTEGRATIONS_TABLE} WHERE sync_status = 'SYNCED' AND last_dealer_action_at IS NULL AND last_synced_at IS NOT NULL LIMIT 0, ${BACKFILL_ROWS}`
   );
   let filled = 0;
   for (const wrapped of rows) {
+    if (deadline !== undefined && clock() >= deadline) break;
     const row = wrapped[LEAD_INTEGRATIONS_TABLE];
     try {
       await catalystApp.datastore().table(LEAD_INTEGRATIONS_TABLE).updateRow({
@@ -127,49 +127,7 @@ function isEnabled(value) {
 async function fusionReturnChannelGap(catalystApp, integration) {
   if (!isEnabled(integration.inbound_enabled)) return 'INBOUND_OFF';
   if (!isFusionInboundV2Enabled()) return 'FUSION_INBOUND_V2_OFF';
-  if (!(await integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET'))) {
-    return 'NO_SIGNING_SECRET';
-  }
-  const proven = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT ROWID FROM ${WEBHOOK_EVENTS_TABLE} WHERE integration_id = ${integration.ROWID} AND processing_status = 'SUCCESS' AND event_id IS NOT NULL LIMIT 1`
-  );
-  return proven.length > 0 ? null : 'NO_VERIFIED_WEBHOOK';
-}
-
-/**
- * Fusion SD integrations left out of this sweep, with the reason. Their
- * mappings are excluded from the overdue query itself, so they are neither
- * breached nor rewritten, and cannot crowd other dealers out of the window.
- */
-async function findIntegrationsWithoutReturnChannel(catalystApp) {
-  // Never stops the sweep: a dealer whose check cannot be completed is left
-  // out of this sweep (never breached on a guess), and if even the list of
-  // Fusion dealers cannot be read, none of them is judged this time.
-  let rows;
-  try {
-    rows = await catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} WHERE crm_type = 'FUSION_SD'`
-    );
-  } catch (err) {
-    logger.error('slaMonitorService', 'Could not list Fusion integrations for the return-channel check', err);
-    return { exempt: [], excludeAllFusion: true };
-  }
-  // Dealers outside DEALER_ACTION_SLA_DEALERS are not judged anyway.
-  const scope = slaDealerCodes();
-  const exempt = [];
-  for (const wrapped of rows) {
-    const integration = wrapped[DEALER_INTEGRATIONS_TABLE];
-    if (scope.length && !scope.includes(integration.dealer_code)) continue;
-    let reason;
-    try {
-      reason = await fusionReturnChannelGap(catalystApp, integration);
-    } catch (err) {
-      logger.error('slaMonitorService', `Return-channel check failed for ${integration.dealer_code}; not judged this sweep`, err);
-      reason = 'CHECK_FAILED';
-    }
-    if (reason) exempt.push({ integrationId: integration.ROWID, dealerCode: integration.dealer_code, reason });
-  }
-  return { exempt, excludeAllFusion: false };
+  return fusionReturnChannelProof.getReturnChannelGap(catalystApp, integration);
 }
 
 /**
@@ -185,7 +143,7 @@ async function findIntegrationsWithoutReturnChannel(catalystApp) {
  * rewritten to achieve this: `last_synced_at` is the dealer-acknowledgement
  * time quoted as evidence in the Unhappy 10 record and must not be disturbed.
  */
-async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = [], clock = 'last_synced_at') {
+async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = [], clock = 'last_synced_at', windowSequence) {
   const cutoff = toCatalystDateTime(new Date(now.getTime() - SLA_MS));
   const SLA_DEALER_CODES = slaDealerCodes();
   const where =
@@ -213,7 +171,7 @@ async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = 
     await catalystApp.zcql().executeZCQLQuery(`SELECT COUNT(ROWID) FROM ${LEAD_INTEGRATIONS_TABLE} ${where}`),
     LEAD_INTEGRATIONS_TABLE
   );
-  const tail = tailWindow({ total, headSize: HEAD_SIZE, tailSize: TAIL_SIZE, now: now.getTime() });
+  const tail = tailWindow({ total, headSize: HEAD_SIZE, tailSize: TAIL_SIZE, now: now.getTime(), windowSequence });
   if (!tail) return { rows: head, overdue: Math.max(total, head.length) };
 
   const tailRows = await slice(tail.offset, TAIL_SIZE);
@@ -237,25 +195,48 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
   const clock = options.clock || Date.now;
   const startedAt = clock();
   const deadline = options.deadline ?? (startedAt + (options.timeBudgetMs ?? SLA_TIME_BUDGET_MS));
+  const spent = () => clock() >= deadline;
+  const exhausted = () => ({ skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true });
+  if (spent()) return exhausted();
 
-  const { exempt, excludeAllFusion } = await findIntegrationsWithoutReturnChannel(catalystApp);
-  // Checked again per lead once its integration is read, which also covers
-  // the case where the Fusion integrations could not be listed.
-  const exemptIds = new Set(exempt.map((e) => String(e.integrationId)));
-  const lacksReturnChannel = (integration) => integration?.crm_type === 'FUSION_SD'
-    && (excludeAllFusion || exemptIds.has(String(integration.ROWID)));
-  if (exempt.length > 0) {
-    // The channel-health note: which dealers are not judged, and why.
-    logger.info(
-      'slaMonitorService',
-      `Dealer-action SLA not applied (no proven return channel): ${exempt.map((e) => `${e.dealerCode} ${e.reason}`).join(', ')}`
+  // Check only integrations of overdue candidate leads. A global credential /
+  // proof scan grows with the entire dealer directory and can consume every
+  // invocation before any lead is considered. Cache only within this sweep;
+  // failed/unreadable proof still fails closed for that integration.
+  const exempt = [];
+  const channelChecks = new Map();
+  const dealerIsCurrent = async (code) => {
+    if (!code) return false;
+    // Read under each lead claim: removal during an earlier batch must stop
+    // subsequent writes in this same sweep. A positive run cache is unsafe.
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT sync_status FROM dealers WHERE dealer_code = '${safeQuoteForZcql(code)}' LIMIT 1`
     );
-  }
-  const { clockCol, backfilled } = await resolveClockColumn(catalystApp);
-  const { rows, overdue } = await selectOverdueMappings(catalystApp, now, exempt.map((e) => e.integrationId), clockCol);
+    return Boolean(rows[0]?.dealers) && String(rows[0].dealers.sync_status || '').toLowerCase() !== 'removed';
+  };
+  const lacksReturnChannel = async (integration) => {
+    if (integration?.crm_type !== 'FUSION_SD') return false;
+    const key = `${integration.ROWID}:${integration.MODIFIEDTIME || ''}:${integration.inbound_enabled}`;
+    if (!channelChecks.has(key)) {
+      channelChecks.set(key, (async () => {
+        let reason;
+        try { reason = await fusionReturnChannelGap(catalystApp, integration); }
+        catch (error) {
+          logger.error('slaMonitorService', `Return-channel check failed for ${integration.dealer_code}`, error);
+          reason = 'CHECK_FAILED';
+        }
+        if (reason) exempt.push({ dealerCode: integration.dealer_code, reason });
+        return Boolean(reason);
+      })());
+    }
+    return channelChecks.get(key);
+  };
+  const { clockCol, backfilled } = await resolveClockColumn(catalystApp, { deadline, clock });
+  if (spent()) return { ...exhausted(), ...(backfilled ? { backfilledDealerActionClock: backfilled } : {}) };
+  const { rows, overdue } = await selectOverdueMappings(catalystApp, now, [], clockCol, options.windowSequence);
   const results = {
     ...(isSlaDealerActionClockEnabled() ? { backfilledDealerActionClock: backfilled, dealerActionClock: clockCol } : {}),
-    exemptNoReturnChannel: exempt.map(({ dealerCode, reason }) => ({ dealerCode, reason })),
+    exemptNoReturnChannel: exempt,
     candidates: rows.length,
     overdue,
     checked: 0,
@@ -339,8 +320,19 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
             results.skippedAlreadyHandled += 1;
             return;
           }
+          // A superseded/deleted local mirror cannot be judged through an old
+          // dealer mapping. Do not rotate or revive its historical evidence.
+          if (String(leadRow?.sync_status || '').toLowerCase() === 'removed'
+            || !leadRow?.dealer_code || String(leadRow.dealer_code) !== String(integration?.dealer_code)
+            || pathPolicy.resolveBoolean(leadRow?.accept_privacy_policy) !== true
+            || pathPolicy.resolveBoolean(integration?.outbound_enabled) === false
+            || (integration?.crm_type !== 'FUSION_SD' && pathPolicy.resolveBoolean(integration?.inbound_enabled) === false)
+            || !(await dealerIsCurrent(integration?.dealer_code))) {
+            results.skippedUnhealthy += 1;
+            return;
+          }
           // No proven return channel (Batch 7, C3): not judged, nothing rewritten.
-          if (lacksReturnChannel(integration)) {
+          if (await lacksReturnChannel(integration)) {
             results.skippedNoReturnChannel += 1;
             return;
           }

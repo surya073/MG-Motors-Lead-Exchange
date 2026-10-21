@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const integrationAuthService = require('./integrationAuthService');
+const { signingSecretFingerprint } = require('./fusionReturnChannelProof');
 const { getSharedWebhookConfig, isFusionInboundV2Enabled } = require('../../config/env');
 
 /**
@@ -158,7 +159,7 @@ function timingSafeEqualBase64(a, b) {
 async function verifyStandardWebhook(catalystApp, integration, rawBody, headers) {
   const webhookId = String(headers['webhook-id'] || '');
   const timestampText = String(headers['webhook-timestamp'] || '').trim();
-  if (!webhookId) return { ok: false, reason: 'MISSING_AUTH' };
+  if (!webhookId || !timestampText || !headers['webhook-signature']) return { ok: false, reason: 'MISSING_AUTH' };
 
   const timestamp = /^\d+$/.test(timestampText) ? Number(timestampText) : NaN;
   const now = Math.floor(Date.now() / 1000);
@@ -207,7 +208,11 @@ async function verifyStandardWebhook(catalystApp, integration, rawBody, headers)
     const tokenValid = secrets.some((secret) => timingSafeEqual(String(tokenHeader), secret));
     if (!tokenValid) return { ok: false, reason: 'INVALID_TOKEN' };
   }
-  return { ok: true };
+  return {
+    ok: true,
+    method: 'STANDARD_WEBHOOKS',
+    signingSecretFingerprint: signingSecretFingerprint(signingSecret),
+  };
 }
 
 /**
@@ -235,9 +240,9 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
   }
 
   // Fusion SD signs its webhooks the Standard Webhooks way (Batch 5). Only
-  // with FUSION_INBOUND_V2 on, and only when the request carries the
-  // signature; everything else takes the checks below, as before.
-  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled() && headers['webhook-signature']) {
+  // with FUSION_INBOUND_V2 on, every Fusion request must be signed. A static
+  // token cannot replace the signed body and timestamp required by Q19.
+  if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled()) {
     return verifyStandardWebhook(catalystApp, integration, rawBody, headers);
   }
 

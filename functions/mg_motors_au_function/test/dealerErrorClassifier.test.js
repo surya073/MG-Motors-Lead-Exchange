@@ -13,9 +13,15 @@ test('no HTTP response (network error, timeout, unresolvable host) is TRANSIENT'
   for (const code of ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'ENOTFOUND', 'ERR_NETWORK', 'DEALER_HOST_UNREACHABLE']) {
     assert.equal(classifyDealerError(withCode(code)), 'TRANSIENT', code);
   }
-  // A Fusion token request that never got an answer is wrapped with no response.
-  assert.equal(classifyDealerError(withCode('AUTHENTICATION_FAILED')), 'TRANSIENT');
+  // OAuth helpers preserve a real transport failure as a connection error.
+  assert.equal(classifyDealerError(withCode('EXTERNAL_CRM_ERROR')), 'TRANSIENT');
   assert.equal(classifyDealerError(undefined), 'TRANSIENT');
+});
+
+test('missing/rejected credentials without an HTTP response are not retried as a network outage', () => {
+  assert.equal(classifyDealerError(withCode('AUTHENTICATION_FAILED')), 'AUTH');
+  assert.equal(classifyDealerError(withCode('CREDENTIAL_DECRYPT_FAILED')), 'PERMANENT');
+  assert.equal(classifyDealerError(withStatus(429, { code: 'AUTHENTICATION_FAILED' })), 'TRANSIENT');
 });
 
 test('408, 429 and 5xx are TRANSIENT; 401 is AUTH; other 4xx are PERMANENT', () => {

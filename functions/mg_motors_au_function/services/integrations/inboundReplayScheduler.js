@@ -74,11 +74,22 @@ function isReplayDue(oldestRow, waitedMinutes, now = Date.now()) {
   return (now - lastTriedAt.getTime()) / 60000 >= interval;
 }
 
-async function markReplayAttempted(catalystApp, oldestRow) {
+const MAPPING_ATTEMPT_MARKER = ' | replay-map:';
+function readMappingAttempt(row) {
+  try {
+    const encoded = String(row.error_message || '').split(MAPPING_ATTEMPT_MARKER)[1];
+    return encoded ? JSON.parse(Buffer.from(encoded, 'base64url').toString()) : null;
+  } catch (_) { return null; }
+}
+async function markReplayAttempted(catalystApp, oldestRow, mappingAttempt) {
   try {
     await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).updateRow({
       ROWID: oldestRow.ROWID,
       status: 'FAILED',
+      ...(mappingAttempt ? { error_message: (() => {
+        const marker = MAPPING_ATTEMPT_MARKER + Buffer.from(JSON.stringify(mappingAttempt)).toString('base64url');
+        return String(oldestRow.error_message || '').split(MAPPING_ATTEMPT_MARKER)[0].slice(0, Math.max(0, 500 - marker.length)) + marker;
+      })() } : {}),
     });
   } catch (err) {
     logger.error('inboundReplayScheduler', `Could not mark replay attempt on log ROWID=${oldestRow.ROWID}`, err);
@@ -123,6 +134,7 @@ async function expireOutOfOrderHold(catalystApp, integration, externalLeadId, lo
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
+const budgetSpent = (deadline) => typeof deadline === 'number' && Date.now() >= deadline;
 
 function isMappingFailure(logRow) {
   return String(logRow.error_message || '').startsWith('STATUS_MAPPING_NOT_FOUND');
@@ -153,7 +165,7 @@ function latest(values) {
  *   - a replay that is still failing is silent (no new log, no new alert);
  *     the original Unhappy 4 stays the single open record.
  */
-async function selectReplayCandidates(catalystApp, now = Date.now()) {
+async function selectReplayCandidates(catalystApp, now = Date.now(), windowSequence) {
   // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
   const slice = (offset, size) =>
     catalystApp.zcql().executeZCQLQuery(
@@ -169,7 +181,7 @@ async function selectReplayCandidates(catalystApp, now = Date.now()) {
     ),
     INTEGRATION_LOGS_TABLE
   );
-  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now });
+  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now, windowSequence });
   if (!tail) return head;
 
   const tailRows = await slice(tail.offset, TAIL_ROWS);
@@ -177,8 +189,9 @@ async function selectReplayCandidates(catalystApp, now = Date.now()) {
   return [...head, ...tailRows.filter((r) => !seen.has(r[INTEGRATION_LOGS_TABLE].ROWID))];
 }
 
-async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
-  const queuedRows = await selectReplayCandidates(catalystApp);
+async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequence } = {}) {
+  if (budgetSpent(deadline)) return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
+  const queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence);
   const results = {
     queued: queuedRows.length,
     leads: 0,
@@ -189,6 +202,8 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
     awaitingMapping: 0,
     backedOff: 0,
     expired: 0,
+    terminal: 0,
+    terminalClosedRows: 0,
     failed: 0,
     dealerBudgetExhausted: 0,
     closedUnreplayable: 0,
@@ -197,6 +212,7 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
   // One group per dealer record, oldest first.
   const groups = new Map();
   for (const wrapped of queuedRows) {
+    if (budgetSpent(deadline)) return { ...results, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
     const logRow = wrapped[INTEGRATION_LOGS_TABLE];
     if (!logRow.integration_id || !logRow.external_lead_id) {
       // Nothing identifies a dealer record to replay, so it would wait for
@@ -249,7 +265,7 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
   for (const logRows of groups.values()) {
     if (results.attempted >= MAX_REPLAYS_PER_SWEEP) break;
     // CRON_WORK_BUDGET_MS (Batch 8, S3): the rest waits for the next sweep.
-    if (deadline && Date.now() >= deadline) {
+    if (budgetSpent(deadline)) {
       results.deferred = groups.size - groupsVisited;
       break;
     }
@@ -269,7 +285,16 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
     const retentionExceeded = logRows.every(isOutOfOrderHold)
       && Boolean(heldSinceAt)
       && waitedMinutes >= UNHAPPY_7_RETENTION_MINUTES;
+    const mappingFailuresOnly = logRows.every(isMappingFailure);
+    // Ordinary replay backoff is already known from the durable log. Avoid
+    // reloading its mapping/dealer while waiting; map changes and expiry
+    // still get their immediate release/retention checks.
+    if (!mappingFailuresOnly && !retentionExceeded && !isReplayDue(logRows[0], waitedMinutes)) {
+      results.backedOff += 1;
+      continue;
+    }
 
+    let mappingAttempt;
     try {
       const mappingRows = await catalystApp.zcql().executeZCQLQuery(
         `SELECT ROWID, last_error, MODIFIEDTIME FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integrationId} AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
@@ -303,23 +328,24 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
         continue;
       }
 
-      const mappingFailuresOnly = logRows.every(isMappingFailure);
       if (mappingFailuresOnly) {
         const heldSince = latest(logRows.map((row) => row.CREATEDTIME));
-        const mapChanged = (await getStatusMapChangedAt(integrationId)) > heldSince;
-        const resolvedSince = !String(leadMapping.last_error || '').startsWith('UNMAPPED_STATUS')
-          && String(leadMapping.MODIFIEDTIME || '') > heldSince;
-        if (!mapChanged && !resolvedSince) {
+        const mapVersion = await getStatusMapChangedAt(integrationId);
+        const resolvedVersion = !String(leadMapping.last_error || '').startsWith('UNMAPPED_STATUS')
+          ? String(leadMapping.MODIFIEDTIME || '') : '';
+        mappingAttempt = { map: mapVersion, resolved: resolvedVersion, retry: false };
+        const previous = readMappingAttempt(logRows[0]);
+        const changed = previous
+          ? previous.map !== mapVersion || previous.resolved !== resolvedVersion
+          : mapVersion > heldSince || resolvedVersion > heldSince;
+        if (!changed && !previous?.retry) {
           results.awaitingMapping += 1;
           continue;
         }
-      }
-
-      // Mapping failures are already gated on a map change above; expiry
-      // must not wait out a backoff.
-      if (!mappingFailuresOnly && !retentionExceeded && !isReplayDue(logRows[0], waitedMinutes)) {
-        results.backedOff += 1;
-        continue;
+        if (!changed && !isReplayDue(logRows[0], waitedMinutes)) {
+          results.backedOff += 1;
+          continue;
+        }
       }
 
       results.attempted += 1;
@@ -340,8 +366,26 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
           { replay: true }
         );
 
+      if (replay?.terminal) {
+        // A removed lead or obsolete dealer assignment cannot become valid
+        // for this historical event. Preserve the audit rows, but retire their
+        // replay references so later sweeps do not re-read the dealer forever.
+        for (const logRow of logRows) {
+          await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).updateRow({
+            ROWID: logRow.ROWID,
+            status: 'EXPIRED',
+          });
+          results.terminalClosedRows += 1;
+        }
+        results.expired += 1;
+        results.terminal += 1;
+        continue;
+      }
+
       if (replay?.held) {
-        await markReplayAttempted(catalystApp, logRows[0]);
+        await markReplayAttempted(catalystApp, logRows[0], mappingAttempt && {
+          ...mappingAttempt, retry: Boolean(replay.reason && replay.reason !== 'STATUS_MAPPING_NOT_FOUND'),
+        });
         results.stillWaiting += 1;
         continue;
       }
@@ -374,7 +418,7 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline } = {}) {
       }
       // Still failing (e.g. MG CRM unreachable). The replay was silent, so
       // the original FAILED rows stay open and are retried after a backoff.
-      await markReplayAttempted(catalystApp, logRows[0]);
+      await markReplayAttempted(catalystApp, logRows[0], mappingAttempt && { ...mappingAttempt, retry: true });
       results.failed += 1;
       logger.error(
         'inboundReplayScheduler',

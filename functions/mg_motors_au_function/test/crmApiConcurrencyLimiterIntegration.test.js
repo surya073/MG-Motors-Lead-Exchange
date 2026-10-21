@@ -30,6 +30,7 @@ function buildIntegration(rowId, dealerCode) {
   return {
     ROWID: rowId,
     dealer_code: dealerCode,
+    integration_type: 'EXTERNAL_CRM',
     crm_type: 'GENERIC_REST',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
@@ -57,7 +58,7 @@ function buildLeadRow(crmRecordId, dealerCode) {
   };
 }
 
-function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping }) {
+function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping, integration, leadRow }) {
   const claimRowsById = new Map();
   const claimRowIdByKey = new Map();
   let nextClaimId = 1;
@@ -66,6 +67,7 @@ function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping }) {
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
+        if (sql.includes('FROM dealer_integrations')) return [{ dealer_integrations: { ...integration } }];
         if (sql.includes('FROM dealers')) return [{ dealers: { dealer_code: dealerCode, sync_status: 'Active' } }];
         if (sql.includes('FROM integration_field_mappings')) {
           return fieldMappings.map((row) => ({ integration_field_mappings: row }));
@@ -81,7 +83,7 @@ function buildFakeCatalystApp({ fieldMappings, dealerCode, mapping }) {
           }
           return [];
         }
-        if (sql.includes('FROM leads')) return [];
+        if (sql.includes('FROM leads')) return [{ leads: { ...leadRow } }];
         if (sql.includes('FROM notifications') || sql.includes('FROM integration_alert_queue')) return [];
         if (sql.includes('claim_key')) {
           const match = /claim_key = '([^']*)'/.exec(sql);
@@ -151,8 +153,8 @@ test('claim behaviour preserved: two different leads queue behind the CRM API li
   const integrationB = buildIntegration('702', 'AU702');
   const leadA = buildLeadRow('ZOHO-LIMIT-A', 'AU701');
   const leadB = buildLeadRow('ZOHO-LIMIT-B', 'AU702');
-  const catalystAppA = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU701' });
-  const catalystAppB = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU702' });
+  const catalystAppA = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU701', integration: integrationA, leadRow: leadA });
+  const catalystAppB = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU702', integration: integrationB, leadRow: leadB });
 
   let concurrentAdapterCalls = 0;
   let maxConcurrentAdapterCalls = 0;
@@ -199,7 +201,7 @@ test('retry bookkeeping preserved: a failed attempt still advances retry_count/b
     retry_count: '2',
     failure_streak_started_at: '2026-10-05 00:00:00',
   };
-  const catalystApp = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU703', mapping: existingMapping });
+  const catalystApp = buildFakeCatalystApp({ fieldMappings, dealerCode: 'AU703', mapping: existingMapping, integration, leadRow });
 
   const fakeAdapter = {
     createLead: async () => {

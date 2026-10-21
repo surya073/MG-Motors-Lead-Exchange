@@ -47,7 +47,8 @@ router.post('/on-demand/analyze-file', requireAdminOrViewRole, async (req, res) 
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     logger.error('onDemandDashboardRoutes', 'POST /on-demand/analyze-file failed', err);
-    res.status(502).json({ success: false, error: err.message });
+    const status = err.code === 'UPLOAD_TOO_LARGE' ? 413 : err.code === 'INVALID_UPLOAD' ? 400 : 502;
+    res.status(status).json({ success: false, error: err.message });
   }
 });
 

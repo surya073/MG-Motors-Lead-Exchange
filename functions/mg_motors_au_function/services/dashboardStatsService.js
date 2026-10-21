@@ -4,9 +4,9 @@
  * dashboardStatsService.js
  * -----------------------------------------------------------------------
  * Database-side aggregates for the admin dashboards. Everything here is a
- * COUNT / GROUP BY (or a bounded "latest N" read) so a dashboard request costs
- * the same whether the leads table holds a thousand rows or a million — it
- * never reads lead rows just to count them.
+ * COUNT / GROUP BY (or a bounded "latest N" read) so dashboards avoid
+ * downloading lead rows merely to count them. Database scan time and billed
+ * usage still need measurement; aggregates do not establish constant cost.
  *
  * ZCQL facts relied on (verified against the live Catalyst Data Store):
  *   - COUNT(ROWID), multi-column GROUP BY, IS NULL, parenthesised AND/OR and
@@ -178,7 +178,12 @@ function leadCountsByDealerAndStatus(catalystApp) {
  * Replaces reading the whole table, which grows with every webhook.
  */
 async function recentSyncLogs(catalystApp, limit) {
-  const wanted = Math.max(1, Math.floor(Number(limit)) || 1);
+  const requested = Number(limit);
+  // Prevent an externally supplied Infinity/huge limit from reading all
+  // historical logs. Existing dashboard consumers request at most 50.
+  const wanted = Number.isFinite(requested)
+    ? Math.min(500, Math.max(1, Math.floor(requested) || 1))
+    : 50;
   const rows = [];
   for (let offset = 0; rows.length < wanted; offset += ZCQL_MAX_ROWS) {
     const size = Math.min(ZCQL_MAX_ROWS, wanted - rows.length);

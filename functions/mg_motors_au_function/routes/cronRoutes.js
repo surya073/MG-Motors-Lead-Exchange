@@ -2,7 +2,8 @@
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
-const { registerWatchChannels, registerDealerWatchChannel } = require('../services/zohoWebhookService');
+const { registerWatchChannels, registerDealerWatchChannel, isDealerWatchEligible } = require('../services/zohoWebhookService');
+const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const outboundRetryScheduler = require('../services/integrations/outboundRetryScheduler'); // NEW
 const inboundReplayScheduler = require('../services/integrations/inboundReplayScheduler');
 const slaMonitorService = require('../services/integrations/slaMonitorService');
@@ -89,9 +90,8 @@ const DEALER_WEBHOOK_RENEWAL_CONCURRENCY = (() => {
 })();
 
 // Time the fast-recover request aims to finish within (Catalyst documents 30 s
-// for Advanced I/O functions) and the least the SLA stage is always allowed.
+// for Advanced I/O functions). Every stage shares this start-based deadline.
 const FAST_RECOVER_BUDGET_MS = 25000;
-const SLA_MIN_SLICE_MS = 5000;
 
 const router = express.Router();
 
@@ -155,6 +155,9 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
     const results = [];
     const renewOne = async (integration) => {
       try {
+        if (!isDealerWatchEligible(integration)) return;
+        const dealer = await crmIntegrationService.findDealerByCode(catalystApp, integration.dealer_code);
+        if (!dealer || dealer.sync_status === 'Removed') return;
         results.push(await registerDealerWatchChannel(catalystApp, integration));
       } catch (err) {
         logger.error('cronRoutes', `Dealer watch renewal failed for ${integration.dealer_code}`, err);
@@ -233,70 +236,73 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
 
   try {
     const fastRecoverStartedAt = Date.now();
-    const deadline = workDeadline(fastRecoverStartedAt);
+    const deadline = Math.min(workDeadline(fastRecoverStartedAt) ?? Infinity,
+      fastRecoverStartedAt + FAST_RECOVER_BUDGET_MS);
     const catalystApp = catalyst.initialize(req);
-    const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
-      ignoreSchedule: !getOutboundRetryConfig().fastRecoverHonourSchedule,
-      includeRoutingHolds: true,
-      ...deadlineOption(deadline),
-    });
-    if (results.recovered > 0) {
-      logger.info('cronRoutes', `Fast recovery delivered ${results.recovered} lead(s)`);
-    }
-    // Same pass, other direction: held dealer -> MG updates (Unhappy 4/7/9)
-    // are released as soon as they can be applied. Its own failure must not
-    // hide the outbound results above.
-    try {
-      results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, deadlineOption(deadline));
-    } catch (replayErr) {
-      logger.error('cronRoutes', 'Inbound replay within fast recovery failed', replayErr);
-      results.inboundReplay = { error: replayErr.message };
-    }
-    // Unhappy 10 SLA check in the same pass (window and dealer scope come
-    // from DEALER_ACTION_SLA_MINUTES / DEALER_ACTION_SLA_DEALERS).
-    try {
-      // fast-recover shares one HTTP request (Advanced I/O functions are limited
-      // to 30 s) with the stages above, so the SLA stage is given what is left
-      // of the request's budget — but never less than a small floor, so it is
-      // not starved when the earlier stages are busy.
-      const slaDeadline = Math.max(fastRecoverStartedAt + FAST_RECOVER_BUDGET_MS, Date.now() + SLA_MIN_SLICE_MS);
-      results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp, new Date(), { deadline: slaDeadline });
-    } catch (slaErr) {
-      logger.error('cronRoutes', 'SLA check within fast recovery failed', slaErr);
-      results.slaCheck = { error: slaErr.message };
-    }
-    // Unhappy 11 reconciliation, throttled (see RECONCILE_EVERY_MINUTES).
+    const results = {};
+    // Due maintenance goes first because its narrow daily window may not be
+    // present on the next invocation. It shares the same request deadline.
     if (isReconciliationDue()) {
       try {
         results.reconciliation = await dealerReconciliationService.runDealerReconciliation(catalystApp, {
-          heldExistenceOnly: true,
-          ...deadlineOption(deadline),
+          heldExistenceOnly: true, deadline,
         });
-      } catch (reconcileErr) {
-        logger.error('cronRoutes', 'Reconciliation within fast recovery failed', reconcileErr);
-        results.reconciliation = { error: reconcileErr.message };
-        await alertReconciliationFailure(catalystApp, reconcileErr);
+      } catch (err) {
+        logger.error('cronRoutes', 'Reconciliation within fast recovery failed', err);
+        results.reconciliation = { error: err.message };
+        await alertReconciliationFailure(catalystApp, err);
       }
     }
-    // Old SUCCESS webhook events, once a day (Batch 6, S9). A no-op until
-    // WEBHOOK_EVENT_RETENTION_DAYS is set.
-    if (webhookEventRetention.isRetentionDue()) {
+    if (Date.now() < deadline && webhookEventRetention.isRetentionDue()) {
       try {
         results.webhookEventRetention = await webhookEventRetention.purgeOldWebhookEvents(catalystApp);
-      } catch (retentionErr) {
-        logger.error('cronRoutes', 'Webhook event retention within fast recovery failed', retentionErr);
-        results.webhookEventRetention = { error: retentionErr.message };
+      } catch (err) {
+        logger.error('cronRoutes', 'Webhook event retention within fast recovery failed', err);
+        results.webhookEventRetention = { error: err.message };
       }
     }
-    // Consolidated failure digest: sends whatever is queued once the batch
-    // window has elapsed, even if ALERT_BATCH_SIZE was never reached (an
-    // immediate flush on hitting the threshold already happens inline when
-    // a failure is queued — see integrationAlertBatchService.js).
-    try {
-      results.alertBatch = await integrationAlertBatchService.flushIfWindowElapsed(catalystApp);
-    } catch (batchErr) {
-      logger.error('cronRoutes', 'Alert batch flush within fast recovery failed', batchErr);
-      results.alertBatch = { error: batchErr.message };
+
+    const windowSequence = Math.floor(fastRecoverStartedAt / (2 * 60 * 1000 * 4));
+    const stages = [
+      async () => {
+        const outbound = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
+          ignoreSchedule: !getOutboundRetryConfig().fastRecoverHonourSchedule,
+          includeRoutingHolds: true, deadline, windowSequence,
+        });
+        Object.assign(results, outbound);
+        if (outbound.recovered > 0) logger.info('cronRoutes', `Fast recovery delivered ${outbound.recovered} lead(s)`);
+      },
+      async () => {
+        try {
+          results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, { deadline, windowSequence });
+        } catch (err) {
+          logger.error('cronRoutes', 'Inbound replay within fast recovery failed', err);
+          results.inboundReplay = { error: err.message };
+        }
+      },
+      async () => {
+        try {
+          results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp, new Date(), { deadline, windowSequence });
+        } catch (err) {
+          logger.error('cronRoutes', 'SLA check within fast recovery failed', err);
+          results.slaCheck = { error: err.message };
+        }
+      },
+      async () => {
+        try {
+          results.alertBatch = await integrationAlertBatchService.flushIfWindowElapsed(catalystApp, { deadline });
+        } catch (err) {
+          logger.error('cronRoutes', 'Alert batch flush within fast recovery failed', err);
+          results.alertBatch = { error: err.message };
+        }
+      },
+    ];
+    // On the documented two-minute schedule each stage gets first use of the
+    // budget once per four slots, consistently across function instances.
+    // One sustained backlog cannot always monopolize the first position.
+    const first = Math.floor(fastRecoverStartedAt / (2 * 60 * 1000)) % stages.length;
+    for (let step = 0; step < stages.length; step += 1) {
+      await stages[(first + step) % stages.length]();
     }
     res.status(200).json({ success: true, mode: 'fast-recovery', results });
   } catch (err) {

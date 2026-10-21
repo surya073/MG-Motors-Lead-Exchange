@@ -177,7 +177,11 @@ test('Test 1 — same dealer: two concurrent syncLeads() cannot both process a n
   // hold) the leadSync:AU100 claim before B attempts to acquire it, without
   // relying on true OS-thread races.
   let fetchCall = 0;
-  t.mock.method(axios, 'get', async () => {
+  t.mock.method(axios, 'get', async (_url, config) => {
+    if (config?.params?.ids) {
+      const ids = config.params.ids.split(',');
+      return { data: { data: [recordA, recordB].filter((record) => ids.includes(record.id)) } };
+    }
     fetchCall += 1;
     if (fetchCall === 1) return { data: { data: [recordA], info: { more_records: false } } };
     await delay(5);
@@ -229,7 +233,11 @@ test('Test 2 — different dealers: concurrent syncs for different dealers are n
   const recordB = buildValidCrmRecord({ id: '9002', First_Name: 'Bob', Franchise_Code: 'AU200' });
 
   let fetchCall = 0;
-  t.mock.method(axios, 'get', async () => {
+  t.mock.method(axios, 'get', async (_url, config) => {
+    if (config?.params?.ids) {
+      const ids = config.params.ids.split(',');
+      return { data: { data: [recordA, recordB].filter((record) => ids.includes(record.id)) } };
+    }
     fetchCall += 1;
     const records = fetchCall === 1 ? [recordA] : [recordB];
     return { data: { data: records, info: { more_records: false } } };
@@ -422,6 +430,6 @@ test('Test 8 — exhausted retries: a genuinely long-held claim is safely deferr
   const result = await leadSyncService.syncLeads(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
 
   assert.equal(result.recordsInserted, 0, 'the record must be deferred, not inserted, when the claim stays held through every retry');
-  assert.equal(result.recordsFailed, 0, 'an unavailable claim after retries must not be reported as a failure');
+  assert.equal(result.recordsFailed, 1, 'deferred work makes the run incomplete so the watermark cannot advance past it');
   assert.equal(catalystApp._insertedRows.length, 0);
 });

@@ -30,14 +30,14 @@ test('clearAllForUser deletes every notification the caller can see and reports 
   const { app, deleted } = buildApp([[{ ROWID: '1' }, { ROWID: '2' }, { ROWID: '3' }]]);
   const result = await clearAllForUser(app, { userId: 'u1', role: 'ADMIN' });
   assert.deepEqual(deleted.sort(), ['1', '2', '3']);
-  assert.deepEqual(result, { deleted: 3 });
+  assert.deepEqual(result, { deleted: 3, hasMore: false });
 });
 
 test('clearAllForUser with nothing to clear deletes nothing', async () => {
   const { app, deleted } = buildApp([[]]);
   const result = await clearAllForUser(app, { userId: 'u1', role: 'ADMIN' });
   assert.deepEqual(deleted, []);
-  assert.deepEqual(result, { deleted: 0 });
+  assert.deepEqual(result, { deleted: 0, hasMore: false });
 });
 
 test('clearAllForUser keeps going in batches while full pages come back, and stops when they run out', async () => {

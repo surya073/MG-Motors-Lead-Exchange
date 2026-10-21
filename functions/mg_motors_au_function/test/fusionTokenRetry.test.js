@@ -155,7 +155,7 @@ test('flag on: an answer from Fusion (401 wrong keys, 500) is never retried', as
 
     await assert.rejects(
       () => fusionSdOAuthHelper.getAccessTokenForFusionSd({}, fakeIntegration()),
-      (err) => err.code === 'AUTHENTICATION_FAILED' && err.response.status === status
+      (err) => err.code === (status === 401 ? 'AUTHENTICATION_FAILED' : 'EXTERNAL_CRM_ERROR') && err.response.status === status
     );
     assert.equal(calls, 1, `HTTP ${status} is not retried`);
     t.mock.restoreAll();

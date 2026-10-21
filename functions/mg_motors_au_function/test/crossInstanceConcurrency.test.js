@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const axios = require('axios');
 
 const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const zohoAuthService = require('../services/zohoAuthService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
@@ -42,7 +43,7 @@ function slaDb(count, extra = {}) {
     });
     leads.push({ crm_record_id: id, lead_status: 'Not Contacted', sync_status: 'SYNCED' });
   }
-  return createInMemoryZcql({
+  return createSlaFixture({
     lead_integrations: mappings, leads, dealer_integrations: [{ dealer_code: 'D1', status: 'ACTIVE' }],
     outbound_sync_claims: [], ...extra,
   }, { enforceUnique: true });
@@ -116,8 +117,8 @@ test('SLA: an instance that read its candidates before another finished does not
 test('SLA: a lead whose dealer update is being applied right now is left for the next sweep, untouched', async (t) => {
   const { oemWrites } = slaMocks(t);
   const db = slaDb(1);
-  // The inbound-update path holds the same claim key (`<integration>:<lead>`).
-  db.tables.outbound_sync_claims.push({ claim_key: '1000:lead-0', claimed_at: utc(Date.now()), request_reference: 'inbound' });
+  // The inbound-update path holds the same claim key (`lead:<OEM lead>`).
+  db.tables.outbound_sync_claims.push({ claim_key: 'lead:lead-0', claimed_at: utc(Date.now()), request_reference: 'inbound' });
   const before = { ...db.tables.lead_integrations[0] };
 
   const result = await sweepAt(db.app);
@@ -132,7 +133,7 @@ test('SLA: a lead whose dealer update is being applied right now is left for the
 test('SLA: a claim abandoned by a crashed instance expires, so the lead is not blocked forever', async (t) => {
   const { oemWrites } = slaMocks(t);
   const db = slaDb(1);
-  db.tables.outbound_sync_claims.push({ claim_key: '1000:lead-0', claimed_at: utc(Date.now() - 60 * 60 * 1000), request_reference: 'crashed' });
+  db.tables.outbound_sync_claims.push({ claim_key: 'lead:lead-0', claimed_at: utc(Date.now() - 60 * 60 * 1000), request_reference: 'crashed' });
 
   const result = await sweepAt(db.app);
 

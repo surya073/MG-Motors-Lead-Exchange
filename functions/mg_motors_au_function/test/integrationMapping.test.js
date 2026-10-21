@@ -139,22 +139,8 @@ test('sync summary does not call unchanged rows duplicates', () => {
 });
 
 test('webhook dedupe never mistakes a record id or identical Zoho envelope for an event id', async () => {
-  const seen = new Set();
-  const catalystApp = {
-    datastore: () => ({
-      table: () => ({
-        insertRow: async (row) => {
-          if (seen.has(row.dedupe_key)) {
-            const err = new Error('duplicate unique value');
-            err.code = 'DUPLICATE_DATA';
-            throw err;
-          }
-          seen.add(row.dedupe_key);
-          return { ROWID: String(seen.size) };
-        },
-      }),
-    }),
-  };
+  const db = require('./helpers/inMemoryZcql').createInMemoryZcql({ webhook_events: [] }, { enforceUnique: true });
+  const catalystApp = db.app;
   const integration = { ROWID: '9', dealer_code: 'D001' };
   const body = Buffer.from(JSON.stringify({ ids: ['dealer-lead-1'], affected_fields: ['Lead_Status'] }));
 
@@ -164,6 +150,7 @@ test('webhook dedupe never mistakes a record id or identical Zoho envelope for a
   assert.equal(noIdSecond.isDuplicate, false);
 
   const eventFirst = await crmIntegration.checkAndRecordWebhookEvent(catalystApp, integration, body, 'evt-1');
+  await crmIntegration.markWebhookEventStatus(catalystApp, eventFirst.eventRowId, 'SUCCESS');
   const eventRetry = await crmIntegration.checkAndRecordWebhookEvent(catalystApp, integration, body, 'evt-1');
   assert.equal(eventFirst.isDuplicate, false);
   assert.equal(eventRetry.isDuplicate, true);

@@ -44,6 +44,7 @@ const OUTBOUND_RETRY_CONCURRENCY = (() => {
 function safeQuoteForZcql(value) {
   return String(value).replace(/'/g, "''");
 }
+const budgetSpent = (deadline) => typeof deadline === 'number' && Date.now() >= deadline;
 
 /**
  * outboundRetryScheduler.js
@@ -84,7 +85,7 @@ function safeQuoteForZcql(value) {
  * row that is examined but never leaves the set cannot starve the rows behind it.
  * Read-only: nothing is written to make the rotation work.
  */
-async function selectRetryCandidates(catalystApp, now = Date.now()) {
+async function selectRetryCandidates(catalystApp, now = Date.now(), windowSequence) {
   const where = `WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL')`;
   // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
   const slice = (offset, size) =>
@@ -99,7 +100,7 @@ async function selectRetryCandidates(catalystApp, now = Date.now()) {
     await catalystApp.zcql().executeZCQLQuery(`SELECT COUNT(ROWID) FROM ${LEAD_INTEGRATIONS_TABLE} ${where}`),
     LEAD_INTEGRATIONS_TABLE
   );
-  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now });
+  const tail = tailWindow({ total, headSize: HEAD_ROWS, tailSize: TAIL_ROWS, now, windowSequence });
   if (!tail) return head;
 
   const tailRows = await slice(tail.offset, TAIL_ROWS);
@@ -111,9 +112,12 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   const ignoreSchedule = Boolean(options && options.ignoreSchedule);
   // CRON_WORK_BUDGET_MS (Batch 8, S3): no new batch is started after this.
   const deadline = options && options.deadline;
+  if (budgetSpent(deadline)) {
+    return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
+  }
   const now = new Date(Date.now());
 
-  const dueRows = await selectRetryCandidates(catalystApp, now.getTime());
+  const dueRows = await selectRetryCandidates(catalystApp, now.getTime(), options?.windowSequence);
 
   // `recovered` counts ONLY leads that actually reached the dealer CRM.
   // syncLeadToExternalCrm RETURNS {skipped:true, reason} for a validation
@@ -234,7 +238,7 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   // starve every valid retry behind them. They are examined (two cheap lookups)
   // and passed over, nothing is written to them, and the sweep carries on.
   for (let index = 0; index < dueNow.length && results.attempted < MAX_LEADS_PER_SWEEP;) {
-    if (deadline && Date.now() >= deadline) {
+    if (budgetSpent(deadline)) {
       results.deferred = dueNow.length - index;
       break;
     }
@@ -243,8 +247,8 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
     index += size;
   }
 
-  if (options && options.includeRoutingHolds && !(deadline && Date.now() >= deadline)) {
-    results.routingHolds = await reprocessRoutingHolds(catalystApp);
+  if (options && options.includeRoutingHolds && !budgetSpent(deadline)) {
+    results.routingHolds = await reprocessRoutingHolds(catalystApp, { deadline });
   }
 
   logger.info('outboundRetryScheduler', `Sweep complete: ${JSON.stringify(results)}`);
@@ -271,8 +275,9 @@ const UNROUTABLE_INTEGRATION_STATUSES = ['NOT_CONFIGURED', 'CONFIGURING', 'DISAB
  * A fixed lead is delivered as Happy 1 — never Happy 4, since nothing
  * failed.
  */
-async function reprocessRoutingHolds(catalystApp) {
+async function reprocessRoutingHolds(catalystApp, { deadline } = {}) {
   const summary = { candidates: 0, attempted: 0, delivered: 0, stillHeld: 0, errored: 0 };
+  if (budgetSpent(deadline)) return { ...summary, skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
 
   // The old version read the 20 OLDEST held leads and skipped any whose dealer
   // had not been fixed — without touching them. Those 20 therefore stayed the
@@ -307,6 +312,7 @@ async function reprocessRoutingHolds(catalystApp) {
   // still have candidates.
   for (const perDealerCap of [ROUTING_HOLDS_PER_DEALER_PER_SWEEP, MAX_ROUTING_HOLDS_PER_SWEEP]) {
     for (const dealerCode of rotated) {
+      if (budgetSpent(deadline)) return { ...summary, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
       const remaining = MAX_ROUTING_HOLDS_PER_SWEEP - summary.candidates;
       if (remaining <= 0) break;
       if (exhausted.has(dealerCode)) continue;
@@ -334,6 +340,7 @@ async function reprocessRoutingHolds(catalystApp) {
         if (held.length < limit) exhausted.add(dealerCode);
 
         for (const row of held) {
+          if (budgetSpent(deadline)) return { ...summary, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
           const leadRow = row[LEADS_TABLE];
           summary.candidates += 1;
           if (!leadRow.crm_record_id) continue;

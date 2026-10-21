@@ -548,6 +548,18 @@ async function syncLeads(catalystApp, { trigger = 'Manual', triggeredBy = 'Syste
   });
 }
 
+// Retry brief contention before declaring the record deferred. A deferred
+// mutation remains a failed run so the incremental checkpoint cannot pass it.
+async function withLeadMutationClaim(catalystApp, leadId, fn) {
+  let outcome;
+  for (let attempt = 1; attempt <= LEAD_SYNC_CLAIM_MAX_ATTEMPTS; attempt += 1) {
+    outcome = await outboundSyncClaimService.withOutboundSyncClaim(catalystApp, 'lead', leadId, leadId, fn);
+    if (outcome?.reason !== 'CONCURRENT_SYNC_IN_PROGRESS') return outcome;
+    if (attempt < LEAD_SYNC_CLAIM_MAX_ATTEMPTS) await wait(LEAD_SYNC_CLAIM_RETRY_DELAY_MS);
+  }
+  return outcome;
+}
+
 /**
  * Shared sync engine. The three loaders are the only things that differ
  * between a full sync and an incremental one; everything after them —
@@ -610,16 +622,43 @@ async function runLeadSyncInternal(catalystApp, {
   const seenCrmIds = new Set();
   const scenarioCounts = {};
 
-  for (const crmRecord of crmRecords) {
+  for (let crmRecord of crmRecords) {
     try {
       if (!crmRecord.id) throw new Error('CRM record missing id — skipped');
 
       seenCrmIds.add(crmRecord.id);
 
-      const mappedRow = stripEmptyDateFields(mapCrmRecordToLeadRow(crmRecord));
+      // No mutation needs no claim or extra per-lead read. This common echo /
+      // unchanged-import case keeps the cost of the original bulk snapshot.
+      const snapshotRow = existingLeadsByCrmId.get(crmRecord.id);
+      const proposedRow = stripEmptyDateFields(mapCrmRecordToLeadRow(crmRecord));
+      if (snapshotRow && snapshotRow.sync_status !== 'Removed'
+        && !hasChanges(snapshotRow, proposedRow) && !maintenanceBackfill(snapshotRow, proposedRow)) {
+        unchanged += 1;
+        continue;
+      }
+
+      const recordOutcome = await withLeadMutationClaim(catalystApp, crmRecord.id, async () => {
+      let mappedRow = stripEmptyDateFields(mapCrmRecordToLeadRow(crmRecord));
+      const existingRow = (await loadExistingLeadsByCrmIds(catalystApp, [crmRecord.id])).get(crmRecord.id);
+      // A batch may have been fetched before a consent/reassignment/delete
+      // event won this claim. Refresh only proposed mutations, never trusting
+      // that older batch to restore a tombstone or overwrite newer ownership.
+      if (!existingRow || existingRow.sync_status === 'Removed' || hasChanges(existingRow, mappedRow)) {
+        const currentRecords = await fetchOemLeadsByIds([crmRecord.id]);
+        const currentRecord = currentRecords.find((record) => String(record.id) === String(crmRecord.id));
+        if (!currentRecord) {
+          if (existingRow) {
+            await markLeadRemovedUnderClaim(catalystApp, existingRow);
+            removed += 1;
+          } else unchanged += 1;
+          return;
+        }
+        crmRecord = currentRecord;
+        mappedRow = stripEmptyDateFields(mapCrmRecordToLeadRow(currentRecord));
+      }
       const validation = pathPolicy.validateLeadForDelivery(mappedRow);
       const now = toCatalystDateTime();
-      const existingRow = existingLeadsByCrmId.get(crmRecord.id);
 
       if (!existingRow) {
         // Cross-instance guard for the confirmed syncLeads() race: two
@@ -786,7 +825,11 @@ async function runLeadSyncInternal(catalystApp, {
           // leadSync claim for this dealer_code after every retry — this
           // record was NOT inserted, classified, or dispatched. It stays
           // exactly as it is in OEM and will be picked up as a new record
-          // again on the next sync/webhook/manual run.
+          // again on the next sync/webhook/manual run. This must count as an
+          // incomplete run, otherwise an incremental checkpoint could advance
+          // past a record we never stored and permanently miss it.
+          failed += 1;
+          errors.push({ crm_record_id: crmRecord.id, error: `Processing deferred: ${claimResult.reason || 'CONCURRENT_SYNC_IN_PROGRESS'}` });
           logger.info(
             'leadSyncService',
             `Deferred new-lead classification for crm_record_id=${crmRecord.id} (dealer_code=${mappedRow.dealer_code}) — another sync is still processing a new lead for this dealer after ${LEAD_SYNC_CLAIM_MAX_ATTEMPTS} attempts; will retry next pass`
@@ -864,6 +907,11 @@ async function runLeadSyncInternal(catalystApp, {
         unchanged += 1;
       }
 
+      });
+      if (recordOutcome?.skipped && ['CLAIM_UNAVAILABLE', 'CONCURRENT_SYNC_IN_PROGRESS'].includes(recordOutcome.reason)) {
+        throw Object.assign(new Error('Lead mutation deferred while another operation holds its claim'), { code: recordOutcome.reason });
+      }
+
 
     } catch (err) {
       failed += 1;
@@ -880,12 +928,7 @@ async function runLeadSyncInternal(catalystApp, {
   for (const [crmId, existingRow] of removalPass ? existingLeadsByCrmId : []) {
     if (!seenCrmIds.has(crmId) && existingRow.sync_status !== 'Removed') {
       try {
-        await table.updateRow({
-          ROWID: existingRow.ROWID,
-          sync_status: 'Removed',
-          last_synced_at: toCatalystDateTime(),
-        });
-        removed += 1;
+        if (await markLeadRemovedUnderClaim(catalystApp, existingRow, { verifyMissing: true })) removed += 1;
       } catch (err) {
         logger.error('leadSyncService', `Failed soft-deleting crm_record_id=${crmId}`, err);
       }
@@ -954,13 +997,36 @@ function runIncrementalSerially(job) {
  * Marks local rows Removed for OEM records deleted in Zoho (a delete
  * notification carries ids but the records can no longer be fetched).
  */
+async function markLeadRemovedUnderClaim(catalystApp, row, { verifyMissing = false } = {}) {
+  const outcome = await outboundSyncClaimService.withOutboundSyncClaim(
+    catalystApp, 'lead', row.crm_record_id, row.crm_record_id, async () => {
+      // A full-import absence can be stale by the time this claim is taken.
+      if (verifyMissing && (await fetchOemLeadsByIds([row.crm_record_id])).length) return false;
+      await catalystApp.datastore().table(LEADS_TABLE).updateRow({
+        ROWID: row.ROWID, sync_status: 'Removed', last_synced_at: toCatalystDateTime(),
+      });
+      // Retire queued work even when a prior removal partially completed.
+      const mappings = await catalystApp.zcql().executeZCQLQuery(
+        `SELECT * FROM lead_integrations WHERE zoho_lead_id = '${safeQuoteForZcql(row.crm_record_id)}'`
+      );
+      for (const wrapped of mappings) {
+        const mapping = wrapped.lead_integrations;
+        if (mapping.sync_status === 'HELD' && mapping.last_error === 'LEAD_REMOVED') continue;
+        await catalystApp.datastore().table('lead_integrations').updateRow({
+          ROWID: mapping.ROWID, sync_status: 'HELD', last_error: 'LEAD_REMOVED', next_retry_at: null,
+        });
+      }
+    }
+  );
+  if (outcome?.skipped) throw Object.assign(new Error('Lead removal deferred until its claim is available'), { code: outcome.reason });
+  return outcome !== false;
+}
+
 async function markLeadsRemoved(catalystApp, crmIds) {
   const existing = await loadExistingLeadsByCrmIds(catalystApp, crmIds);
-  const table = catalystApp.datastore().table(LEADS_TABLE);
   let removed = 0;
   for (const row of existing.values()) {
-    if (row.sync_status === 'Removed') continue;
-    await table.updateRow({ ROWID: row.ROWID, sync_status: 'Removed', last_synced_at: toCatalystDateTime() });
+    await markLeadRemovedUnderClaim(catalystApp, row);
     removed += 1;
   }
   return { status: 'Success', totalRecordsFetched: 0, recordsRemoved: removed };

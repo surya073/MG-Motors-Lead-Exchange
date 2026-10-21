@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 const fixtures = require('./helpers/fusionFixtures');
 const { setupOutbound, fakeAdapter, withEnv } = require('./helpers/outboundHarness');
 const { FIELD_PRESET, STATUS_PRESET } = require('./helpers/fusionPresets');
-const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const oemCrmService = require('../services/zohoCrmService');
@@ -97,7 +97,7 @@ const DAYS_AGO = (n) => utc(NOW - n * 24 * 3600 * 1000);
 function slaDb(t, mappingOverrides, { flag = 'true', leadStatus = 'Not Contacted' } = {}) {
   _resetForTests();
   withEnv(t, { SLA_DEALER_ACTION_CLOCK: flag === null ? undefined : flag });
-  const db = createInMemoryZcql({
+  const db = createSlaFixture({
     dealer_integrations: [{ dealer_code: 'AU008', crm_type: 'ZOHO_CRM', status: 'CONNECTED' }],
     lead_integrations: [{ zoho_lead_id: 'Z1', dealer_code: 'AU008', integration_id: '1000', sync_status: 'SYNCED', ...mappingOverrides }],
     leads: [{ crm_record_id: 'Z1', lead_status: leadStatus, sync_status: 'SYNCED' }],

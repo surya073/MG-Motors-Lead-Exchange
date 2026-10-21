@@ -8,6 +8,12 @@ process.env.DEALER_WEBHOOK_RENEWAL_CONCURRENCY = '2';
 process.env.CRON_SECRET = process.env.CRON_SECRET || 'test-cron-secret';
 
 const test = require('node:test');
+const dns = require('dns').promises;
+const { mockCredentialSnapshot } = require('./helpers/dealerZohoFixture');
+test.beforeEach((t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+  mockCredentialSnapshot(t);
+});
 const assert = require('node:assert/strict');
 const axios = require('axios');
 const catalyst = require('zcatalyst-sdk-node');
@@ -52,7 +58,8 @@ function buildDealerIntegration(rowId, dealerCode) {
     dealer_code: dealerCode,
     integration_type: 'EXTERNAL_CRM',
     crm_type: 'ZOHO_CRM',
-    base_url: `https://${dealerCode.toLowerCase()}.zohoapis.in`,
+    base_url: Number(rowId) % 2 ? 'https://www.zohoapis.in' : 'https://www.zohoapis.com.au',
+    status: 'ACTIVE', inbound_enabled: true,
   };
 }
 
@@ -63,6 +70,10 @@ function buildFakeCatalystApp(integrations) {
         if (sql.includes("FROM dealer_integrations WHERE integration_type = 'EXTERNAL_CRM' AND crm_type = 'ZOHO_CRM'")) {
           return integrations.map((i) => ({ dealer_integrations: i }));
         }
+        if (sql.includes('FROM dealers WHERE')) {
+          const code = /dealer_code = '([^']+)'/.exec(sql)?.[1];
+          return integrations.filter((row) => row.dealer_code === code).map((row) => ({ dealers: { dealer_code: code, sync_status: row.test_dealer_status || 'Synced' } }));
+        }
         if (sql.includes('FROM webhook_channels')) {
           return []; // no prior channel — keeps each renewal on the simple "first registration" path
         }
@@ -71,6 +82,7 @@ function buildFakeCatalystApp(integrations) {
     }),
     datastore: () => ({
       table: () => ({
+        getRow: async (id) => integrations.find((row) => row.ROWID === id),
         insertRow: async (fields) => ({ ROWID: 'generic-row', ...fields }),
       }),
     }),
@@ -101,6 +113,7 @@ test('dealer webhook renewals run concurrently, never exceeding the configured l
   await getHandler()(req, res);
 
   assert.equal(getStatus(), 200);
+  assert.equal(maxActive, 2, 'eligible renewals must actually overlap');
   assert.ok(maxActive <= 2, `concurrency limit of 2 must be enforced, saw ${maxActive} concurrent renewals`);
   assert.equal(getJson().results.length, 6, 'all 6 dealers must still be processed');
 });
@@ -182,9 +195,28 @@ test('dealer isolation: each dealer renews against its own base_url/credentials,
   await getHandler()(req, res);
 
   assert.deepEqual(new Set(secretsRequested), new Set(['401', '402']), 'each dealer\'s own credential must be fetched by its own integration id');
-  assert.ok(registeredUrls.some((u) => u.includes('au401.zohoapis.in')));
-  assert.ok(registeredUrls.some((u) => u.includes('au402.zohoapis.in')));
+  assert.ok(registeredUrls.some((u) => u.includes('www.zohoapis.in')));
+  assert.ok(registeredUrls.some((u) => u.includes('www.zohoapis.com.au')));
   const results = getJson().results;
   assert.equal(results.find((r) => r.dealerCode === 'AU401').dealerCode, 'AU401');
   assert.equal(results.find((r) => r.dealerCode === 'AU402').dealerCode, 'AU402');
+});
+
+
+test('renewal skips disabled, inbound-disabled and removed dealers without reading credentials', async (t) => {
+  const integrations = [
+    { ...buildDealerIntegration('501', 'AU501'), status: 'DISABLED' },
+    { ...buildDealerIntegration('502', 'AU502'), inbound_enabled: false },
+    { ...buildDealerIntegration('503', 'AU503'), test_dealer_status: 'Removed' },
+    buildDealerIntegration('504', 'AU504'),
+  ];
+  t.mock.method(catalyst, 'initialize', () => buildFakeCatalystApp(integrations));
+  const secrets = t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'synthetic-secret');
+  t.mock.method(axios, 'post', async (url) => url.includes('/oauth/')
+    ? { data: { access_token: 'token', expires_in: 3600 } }
+    : { data: { watch: [{ code: 'SUCCESS' }] } });
+  const { req, res, getJson } = buildFakeReqRes();
+  await getHandler()(req, res);
+  assert.deepEqual(getJson().results.map((row) => row.dealerCode), ['AU504']);
+  assert.ok(secrets.mock.calls.every((call) => call.arguments[1] === '504'));
 });

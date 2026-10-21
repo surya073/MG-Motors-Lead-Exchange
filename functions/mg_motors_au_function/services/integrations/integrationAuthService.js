@@ -87,7 +87,7 @@ async function getDecryptedCredential(catalystApp, integrationId, credentialType
     return decrypt(rows[0].integration_credentials.encrypted_value);
   } catch (err) {
     logger.error('integrationAuthService', `Failed to decrypt credential for integration ${integrationId}`, err);
-    throw new Error('CREDENTIAL_DECRYPT_FAILED');
+    throw Object.assign(new Error('CREDENTIAL_DECRYPT_FAILED'), { code: 'CREDENTIAL_DECRYPT_FAILED' });
   }
 }
 
@@ -96,6 +96,37 @@ async function hasCredential(catalystApp, integrationId, credentialType) {
     `SELECT ROWID FROM integration_credentials WHERE integration_id = ${integrationId} AND credential_type = '${credentialType}'`
   );
   return rows.length > 0;
+}
+
+// One persisted snapshot makes credential generation changes visible to every
+// warm function instance. Hash ciphertext, never put credential values in a
+// cache key or log. No new datastore columns are required.
+async function getCredentialSnapshot(catalystApp, integrationId, credentialTypes) {
+  if (!/^\d+$/.test(String(integrationId)) ||
+      !credentialTypes.every((type) => /^[A-Z0-9_]+$/.test(type))) {
+    throw Object.assign(new Error('Invalid credential snapshot scope'), { code: 'INVALID_CRM_CONFIGURATION' });
+  }
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT credential_type, encrypted_value FROM integration_credentials WHERE integration_id = ${integrationId} AND credential_type IN (${credentialTypes.map((type) => `'${type}'`).join(', ')})`
+  );
+  const entries = new Map();
+  for (const result of rows) {
+    const row = result.integration_credentials;
+    if (!row || !credentialTypes.includes(row.credential_type)) continue;
+    if (entries.has(row.credential_type)) {
+      throw Object.assign(new Error('Duplicate OAuth credential rows require repair'), { code: 'INVALID_CRM_CONFIGURATION' });
+    }
+    entries.set(row.credential_type, row.encrypted_value);
+  }
+  const serialized = credentialTypes.slice().sort().map((type) => [type, entries.get(type) || null]);
+  const generation = crypto.createHash('sha256').update(JSON.stringify(serialized)).digest('hex');
+  const credentials = {};
+  try {
+    for (const type of credentialTypes) credentials[type] = entries.has(type) ? decrypt(entries.get(type)) : null;
+  } catch {
+    throw Object.assign(new Error('CREDENTIAL_DECRYPT_FAILED'), { code: 'CREDENTIAL_DECRYPT_FAILED' });
+  }
+  return { generation, credentials };
 }
 
 /**
@@ -116,5 +147,6 @@ module.exports = {
   saveCredential,
   getDecryptedCredential,
   hasCredential,
+  getCredentialSnapshot,
   AUTH_TYPE_TO_CREDENTIAL_TYPE,
 };

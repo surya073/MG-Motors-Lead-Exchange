@@ -17,25 +17,27 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const integrationAuthService = require('../services/integrations/integrationAuthService');
 const oemCrmService = require('../services/zohoCrmService');
 const slaMonitorService = require('../services/integrations/slaMonitorService');
+const fusionProof = require('../services/integrations/fusionReturnChannelProof');
+const TEST_SIGNING_SECRET = 'fixture-fusion-signing-secret';
 
 const NOW = Date.parse('2026-10-13T06:00:00Z');
 const utc = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 const OVERDUE = utc(NOW - 3 * 24 * 3600 * 1000);
 
 // Integration ROWIDs are positional: 1000 = AU008 (Zoho), 1001 = Buckby (Fusion).
-function setup(t, { v2 = 'true', inbound = true, signingSecret = true, webhookEvents } = {}) {
+function setup(t, { v2 = 'true', inbound = true, signingSecret = true, webhookEvents, proof = webhookEvents === undefined } = {}) {
   _resetForTests();
   const before = process.env.FUSION_INBOUND_V2;
   if (v2 === null) delete process.env.FUSION_INBOUND_V2; else process.env.FUSION_INBOUND_V2 = v2;
   t.after(() => { if (before === undefined) delete process.env.FUSION_INBOUND_V2; else process.env.FUSION_INBOUND_V2 = before; });
 
-  const db = createInMemoryZcql({
+  const db = createSlaFixture({
     dealer_integrations: [
       { dealer_code: 'AU008', crm_type: 'ZOHO_CRM', status: 'CONNECTED', inbound_enabled: true },
       { dealer_code: '725001', crm_type: 'FUSION_SD', status: 'ACTIVE', inbound_enabled: inbound },
@@ -51,10 +53,13 @@ function setup(t, { v2 = 'true', inbound = true, signingSecret = true, webhookEv
     webhook_events: webhookEvents ?? [
       { integration_id: '1001', event_id: 'msg_1', processing_status: 'SUCCESS' },
     ],
-    outbound_sync_claims: [],
+    outbound_sync_claims: proof ? [{
+      claim_key: 'proof:fusion-return-channel:1001', claimed_at: '2026-10-13 06:00:00',
+      request_reference: JSON.stringify({ signingSecretFingerprint: fusionProof.signingSecretFingerprint(TEST_SIGNING_SECRET), verifiedAt: '2026-10-13T06:00:00.000Z', dealerCode: '725001' }),
+    }] : [],
   });
-  t.mock.method(integrationAuthService, 'hasCredential', async (app, id, type) =>
-    signingSecret && String(id) === '1001' && type === 'WEBHOOK_SIGNING_SECRET');
+  t.mock.method(integrationAuthService, 'getDecryptedCredential', async (app, id, type) =>
+    signingSecret && String(id) === '1001' && type === 'WEBHOOK_SIGNING_SECRET' ? TEST_SIGNING_SECRET : null);
   t.mock.method(oemCrmService, 'updateOemLead', async () => ({ status: 'success' }));
   t.mock.method(crmIntegrationService, 'recordScenario', async () => {});
   return db;
@@ -91,7 +96,8 @@ for (const [label, options, reason] of [
     assert.deepEqual(db.tables.lead_integrations[1], before, 'Fusion mapping untouched (not breached, not rotated)');
     assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
     assert.deepEqual(results.exemptNoReturnChannel, [{ dealerCode: '725001', reason }]);
-    assert.equal(results.candidates, 1, 'the exempt dealer\'s rows are not even read');
+    assert.equal(results.candidates, 2, 'candidate rows are read before their own return-channel check');
+    assert.equal(results.skippedNoReturnChannel, 1);
   });
 }
 
@@ -117,19 +123,19 @@ test('no Fusion dealers: the sweep reads exactly what it did before', async (t) 
 // DEALER_ACTION_SLA_DEALERS are not checked at all.
 test('a failing credential lookup leaves that Fusion dealer exempt; AU008 is still judged', async (t) => {
   const db = setup(t);
-  integrationAuthService.hasCredential.mock.mockImplementation(async () => { throw new Error('datastore busy'); });
+  integrationAuthService.getDecryptedCredential.mock.mockImplementation(async () => { throw new Error('datastore busy'); });
   const results = await sweep(db);
   assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
   assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
   assert.deepEqual(results.exemptNoReturnChannel, [{ dealerCode: '725001', reason: 'CHECK_FAILED' }]);
 });
 
-test('a failing webhook-event lookup leaves that Fusion dealer exempt; AU008 is still judged', async (t) => {
+test('a failing durable proof lookup leaves that Fusion dealer exempt; AU008 is still judged', async (t) => {
   const db = setup(t);
   const zcql = db.app.zcql;
   db.app.zcql = () => ({
     executeZCQLQuery: async (sql) => {
-      if (sql.includes('FROM webhook_events')) throw new Error('INVALID_TABLE webhook_events');
+      if (sql.includes("claim_key = 'proof:fusion-return-channel:")) throw new Error('proof lookup unavailable');
       return zcql().executeZCQLQuery(sql);
     },
   });
@@ -145,14 +151,14 @@ test('a Fusion dealer outside DEALER_ACTION_SLA_DEALERS is not checked at all', 
   t.after(() => { if (before === undefined) delete process.env.DEALER_ACTION_SLA_DEALERS; else process.env.DEALER_ACTION_SLA_DEALERS = before; });
   const db = setup(t, { webhookEvents: [] });
   const results = await sweep(db);
-  assert.equal(integrationAuthService.hasCredential.mock.callCount(), 0);
+  assert.equal(integrationAuthService.getDecryptedCredential.mock.callCount(), 0);
   assert.equal(db.queries.some((q) => q.includes('FROM webhook_events')), false);
   assert.deepEqual(results.exemptNoReturnChannel, []);
   assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
   assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED', 'out of scope, as before');
 });
 
-test('if the Fusion integrations cannot even be listed, no Fusion lead is breached; AU008 is still judged', async (t) => {
+test('a dealer directory list outage does not block candidate-scoped proof validation', async (t) => {
   const db = setup(t);
   const zcql = db.app.zcql;
   db.app.zcql = () => ({
@@ -164,6 +170,50 @@ test('if the Fusion integrations cannot even be listed, no Fusion lead is breach
   const before = { ...db.tables.lead_integrations[1] };
   const results = await sweep(db);
   assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
-  assert.deepEqual(db.tables.lead_integrations[1], before, 'Fusion mapping untouched');
-  assert.equal(results.skippedNoReturnChannel, 1);
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SLA_BREACH');
+  assert.equal(results.skippedNoReturnChannel, 0);
+});
+
+test('a historical successful token-only event does not prove the signed Fusion return channel', async (t) => {
+  const db = setup(t, { proof: false, webhookEvents: [{ integration_id: '1001', event_id: 'unsigned-with-id', processing_status: 'SUCCESS' }] });
+  const result = await sweep(db);
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(result.exemptNoReturnChannel[0].reason, 'NO_VERIFIED_WEBHOOK');
+});
+
+test('retaining channel proof separately lets event retention remove every SUCCESS event safely', async (t) => {
+  const db = setup(t);
+  db.tables.webhook_events.length = 0;
+  const result = await sweep(db);
+  assert.equal(result.breached, 2);
+  assert.deepEqual(result.exemptNoReturnChannel, []);
+});
+
+test('rotating the signing secret requires a new successful signed proof', async (t) => {
+  const db = setup(t);
+  integrationAuthService.getDecryptedCredential.mock.mockImplementation(async () => 'rotated-fixture-signing-secret');
+  const result = await sweep(db);
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(result.exemptNoReturnChannel[0].reason, 'NO_VERIFIED_WEBHOOK');
+});
+
+test('changing dealer identity invalidates a previous dealer\'s proof', async (t) => {
+  const db = setup(t);
+  db.tables.dealer_integrations[1].dealer_code = '725002';
+  db.tables.dealers[1].dealer_code = '725002';
+  db.tables.leads[1].dealer_code = '725002';
+  const result = await sweep(db);
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.equal(result.exemptNoReturnChannel[0].reason, 'NO_VERIFIED_WEBHOOK');
+});
+
+test('deleting durable proof leaves the Fusion dealer exempt without affecting Zoho', async (t) => {
+  const db = setup(t);
+  db.tables.outbound_sync_claims[0] = { __deleted: true };
+  const result = await sweep(db);
+  assert.equal(statusOf(db, 'Z-BUCKBY'), 'SYNCED');
+  assert.equal(statusOf(db, 'Z-AU008'), 'SLA_BREACH');
+  assert.equal(result.exemptNoReturnChannel[0].reason, 'NO_VERIFIED_WEBHOOK');
 });

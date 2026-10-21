@@ -360,7 +360,8 @@ async function loadTripleGroups(catalystApp) {
   const rows = await runPaged(
     catalystApp,
     `SELECT happy_unhappy_path_name, sync_status, lead_status, COUNT(ROWID) FROM ${LEADS_TABLE} ` +
-      'GROUP BY happy_unhappy_path_name, sync_status, lead_status'
+      'GROUP BY happy_unhappy_path_name, sync_status, lead_status ' +
+      'ORDER BY happy_unhappy_path_name, sync_status, lead_status'
   );
   return rows.map((row) => {
     const r = row[LEADS_TABLE];
@@ -462,10 +463,12 @@ async function getLeadsPage(catalystApp, query = {}) {
 
   // Facets need the triple groups too; load them once and reuse.
   let groups = null;
-  if (wantsPathFilter || query.includeFacets) groups = await loadTripleGroups(catalystApp);
+  // Happy/Unhappy alone is a fixed rule. Only scenario filters and facets
+  // need the global triple groups; ordinary path pages avoid that read.
+  if (query.scenario || query.includeFacets) groups = await loadTripleGroups(catalystApp);
 
   const pathCondition = wantsPathFilter
-    ? buildPathCondition(groups, { path: query.path, scenario: query.scenario })
+    ? buildPathCondition(groups || [], { path: query.path, scenario: query.scenario })
     : undefined;
 
   const facetsPromise = query.includeFacets ? getLeadFacets(catalystApp, groups) : null;
@@ -539,6 +542,7 @@ module.exports = {
   getLeadsPage,
   getLeadFacets,
   getLeadByIdentifier,
+  fetchDealerNames,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   FilterTooComplexError,

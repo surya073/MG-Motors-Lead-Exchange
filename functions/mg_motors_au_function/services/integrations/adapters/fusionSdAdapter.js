@@ -2,7 +2,7 @@
 
 const axios = require('axios');
 const logger = require('../../../utils/logger');
-const { assertSafeUrl } = require('./genericRestAdapter');
+const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
 const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
 const { isFusionInboundV2Enabled } = require('../../../config/env');
@@ -232,31 +232,64 @@ async function sendWithTokenRetry(catalystApp, integration, send) {
   }
 }
 
-// Fusion refuses request bodies over 32 KB. A lead that large is carrying
-// long free text (a customer message or chat transcript an admin mapped), so
-// the longest text values are shortened, with a marker, until the body fits
-// and the lead is still delivered (answer to Q2). The same input always gives
-// the same body, so a retry repeats it under the same Idempotency-Key.
+// Trim only free-text notes/messages. Identifiers, contact details and enums
+// must never be shortened to make a request fit. Measure the final nested
+// JSON, including structured messages and UTF-8/JSON escaping.
 const MAX_BODY_BYTES = 32000;
 const TRUNCATION_MARKER = ' [truncated]';
 
 function bodyWithinLimit(payload) {
-  let body = nestDottedKeys(payload);
-  let size = Buffer.byteLength(JSON.stringify(body));
+  let serialized;
+  try { serialized = JSON.stringify(nestDottedKeys(payload)); } catch {
+    const err = new Error('Fusion SD payload cannot be serialized as JSON');
+    err.code = 'FIELD_MAPPING_INVALID';
+    throw err;
+  }
+  let size = Buffer.byteLength(serialized);
+  const body = JSON.parse(serialized);
   if (size <= MAX_BODY_BYTES) return body;
 
-  const trimmed = { ...payload };
+  const textFields = [];
+  const collect = (value, path = []) => {
+    if (!value || typeof value !== 'object') return;
+    Object.entries(value).forEach(([key, child]) => {
+      const childPath = [...path, key];
+      if (typeof child === 'string') {
+        const isMessage = path[0] === 'messages' && path.length === 2 && /^(text|html)$/.test(key);
+        if (key === 'notes' || isMessage) textFields.push({ parent: value, key, path: childPath.join('.'), value: child });
+      } else if (typeof child === 'object') collect(child, childPath);
+    });
+  };
+  collect(body);
+  textFields.sort((a, b) => Buffer.byteLength(JSON.stringify(b.value)) - Buffer.byteLength(JSON.stringify(a.value)));
   const shortened = [];
-  while (size > MAX_BODY_BYTES) {
-    const [key, value] = Object.entries(trimmed)
-      .filter(([, v]) => typeof v === 'string')
-      .sort(([, a], [, b]) => Buffer.byteLength(b) - Buffer.byteLength(a))[0] || [];
-    if (!key || value.length <= TRUNCATION_MARKER.length) break; // nothing left to shorten
-    const keep = Math.max(0, value.length - (size - MAX_BODY_BYTES) - TRUNCATION_MARKER.length - 8);
-    trimmed[key] = `${value.slice(0, keep)}${TRUNCATION_MARKER}`;
-    if (!shortened.includes(key)) shortened.push(key);
-    body = nestDottedKeys(trimmed);
+  for (const { parent, key, path, value } of textFields) {
+    if (Buffer.byteLength(JSON.stringify(value)) <= Buffer.byteLength(JSON.stringify(TRUNCATION_MARKER))) continue;
+    parent[key] = TRUNCATION_MARKER;
+    shortened.push(path);
     size = Buffer.byteLength(JSON.stringify(body));
+    if (size <= MAX_BODY_BYTES) {
+      // Retain as much of the last shortened text as possible. Code points
+      // avoid splitting surrogate pairs; re-measure handles escaped text.
+      const points = Array.from(value);
+      let low = 0;
+      let high = points.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        parent[key] = `${points.slice(0, middle).join('')}${TRUNCATION_MARKER}`;
+        if (Buffer.byteLength(JSON.stringify(body)) <= MAX_BODY_BYTES) low = middle;
+        else high = middle - 1;
+      }
+      parent[key] = `${points.slice(0, low).join('')}${TRUNCATION_MARKER}`;
+      size = Buffer.byteLength(JSON.stringify(body));
+      break;
+    }
+  }
+  if (size > MAX_BODY_BYTES) {
+    const err = new Error(`Fusion SD payload exceeds ${MAX_BODY_BYTES} bytes after trimming note/message fields`);
+    err.code = 'FIELD_MAPPING_INVALID';
+    err.payloadBytes = size;
+    throw err;
   }
   logger.info('fusionSdAdapter', `Body over ${MAX_BODY_BYTES} bytes; shortened: ${shortened.join(', ')} (now ${size} bytes)`);
   return body;
@@ -269,6 +302,7 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
   const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
     method: integration.http_method || 'POST',
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
@@ -277,6 +311,7 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
       ...(idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : {}),
     },
     data: body,
+    maxBodyLength: MAX_BODY_BYTES,
     timeout: 10000,
   }));
   if (error) {
@@ -395,11 +430,13 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
     method: 'PATCH',
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers: {
       'Content-Type': 'application/merge-patch+json',
       Authorization: `Bearer ${accessToken}`,
     },
     data: body,
+    maxBodyLength: MAX_BODY_BYTES,
     timeout: 10000,
   }));
   if (error) {

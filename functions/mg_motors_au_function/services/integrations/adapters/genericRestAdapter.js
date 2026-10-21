@@ -1,12 +1,12 @@
 'use strict';
 
-const https = require('https');
-const dns = require('dns').promises;
 const { URL } = require('url');
 const axios = require('axios');
 const logger = require('../../../utils/logger');
 const integrationAuthService = require('../integrationAuthService');
 const { getAccessTokenForDealerZoho } = require('./zohoCrmOAuthHelper');
+const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
+const { assertZohoEndpoint } = require('./zohoEndpointPolicy');
 
 /**
  * genericRestAdapter.js
@@ -33,74 +33,9 @@ const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 500;
 
-const PRIVATE_IP_RANGES = [
-  /^127\./, /^10\./, /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-  /^169\.254\./,        // link-local, includes cloud metadata (169.254.169.254)
-  /^::1$/, /^fc00:/, /^fe80:/,
-];
-
-function isPrivateIp(ip) {
-  return PRIVATE_IP_RANGES.some((re) => re.test(ip));
-}
-
-/**
- * SSRF guard: resolves the hostname and rejects private/loopback/
- * link-local targets before any request is made. Re-checked on every
- * call (not cached) since DNS can change between config-save time and
- * 
-
-
-
-
- * request time (DNS rebinding).
- */
-async function assertSafeUrl(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    const err = new Error('Invalid URL');
-    err.code = 'INVALID_CRM_CONFIGURATION';
-    throw err;
-  }
-
-  if (parsed.protocol !== 'https:') {
-    const err = new Error('Only HTTPS endpoints are allowed');
-    err.code = 'INVALID_CRM_CONFIGURATION';
-    throw err;
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === 'localhost' || hostname === 'metadata.google.internal') {
-    const err = new Error('URL resolves to a disallowed host');
-    err.code = 'INVALID_CRM_CONFIGURATION';
-    throw err;
-  }
-
-  let addresses;
-  try {
-    addresses = await dns.lookup(hostname, { all: true });
-  } catch {
-    // A host that does not resolve is a connectivity failure, not a
-    // configuration error: the URL is well formed and passed every check
-    // above, and a dealer's DNS or domain going down is a real outage.
-    // Per the flow it must be Unhappy 1 (retried, later Happy 4), not
-    // Unhappy 5 (held as a mapping exception, never retried). The
-    // malformed / non-HTTPS / disallowed / private-address cases around
-    // this remain INVALID_CRM_CONFIGURATION.
-    const err = new Error(`Could not resolve dealer CRM host ${hostname}`);
-    err.code = 'DEALER_HOST_UNREACHABLE';
-    throw err;
-  }
-
-  if (addresses.some((a) => isPrivateIp(a.address))) {
-    const err = new Error('URL resolves to a private/internal address');
-    err.code = 'INVALID_CRM_CONFIGURATION';
-    throw err;
-  }
-
-  return parsed;
+async function safeIntegrationUrl(integration, rawUrl) {
+  if (integration.crm_type === 'ZOHO_CRM') assertZohoEndpoint(rawUrl, 'api');
+  return assertSafeUrl(rawUrl);
 }
 
 async function buildAuthHeaders(catalystApp, integration) {
@@ -184,7 +119,7 @@ async function createLead(
   payload,
   { idempotencyKey, idempotencyField } = {}
 ) {
-  let url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
+  let url = await safeIntegrationUrl(integration, `${integration.base_url}${integration.create_lead_endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
   const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
@@ -194,7 +129,7 @@ async function createLead(
     // Its supported exactly-once mechanism is /upsert with a unique or
     // external field. `enquiry_id` is mandatory in our mapping and the
     // dealer target must be configured as unique during onboarding.
-    url = toZohoUpsertUrl(url);
+    url = await safeIntegrationUrl(integration, toZohoUpsertUrl(url).toString());
   }
   const requestBody = buildCreateRequestBody(
     isZohoCrm,
@@ -205,6 +140,7 @@ async function createLead(
   const response = await requestWithRetry({
     method: useZohoUpsert ? 'POST' : (integration.http_method || 'POST'),
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers: {
       'Content-Type': 'application/json',
       ...headers,
@@ -251,7 +187,7 @@ async function createLead(
 
 async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const endpoint = integration.update_lead_endpoint.replace('{externalLeadId}', encodeURIComponent(externalLeadId));
-  const url = await assertSafeUrl(`${integration.base_url}${endpoint}`);
+  const url = await safeIntegrationUrl(integration, `${integration.base_url}${endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
   const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
@@ -260,6 +196,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const response = await requestWithRetry({
     method: integration.update_http_method || 'PUT',
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers: { 'Content-Type': 'application/json', ...headers },
     data: requestBody,
     timeout: 10000,
@@ -280,12 +217,13 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
 
 async function getLead(catalystApp, integration, externalLeadId) {
   const endpoint = integration.update_lead_endpoint.replace('{externalLeadId}', encodeURIComponent(externalLeadId));
-  const url = await assertSafeUrl(`${integration.base_url}${endpoint}`);
+  const url = await safeIntegrationUrl(integration, `${integration.base_url}${endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
   const response = await requestWithRetry({
     method: 'GET',
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers,
     timeout: 10000,
   });
@@ -308,13 +246,14 @@ async function testConnection(catalystApp, integration) {
   const testPath = integration.crm_type === 'ZOHO_CRM'
     ? '/crm/v8/Leads?per_page=1&fields=Last_Name'
     : '';
-  const url = await assertSafeUrl(`${integration.base_url}${testPath}`);
+  const url = await safeIntegrationUrl(integration, `${integration.base_url}${testPath}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
   const start = Date.now();
 
   const response = await axios({
     method: 'GET',
     url: url.toString(),
+    ...safeRequestOptions(url),
     headers,
     timeout: 8000,
     validateStatus: () => true,

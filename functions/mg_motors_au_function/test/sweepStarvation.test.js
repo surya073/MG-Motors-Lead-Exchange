@@ -10,7 +10,7 @@ process.env.ZOHO_WEBHOOK_TOKEN = process.env.ZOHO_WEBHOOK_TOKEN || 'test-webhook
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createInMemoryZcql } = require('./helpers/inMemoryZcql');
+const { createSlaFixture } = require('./helpers/slaFixture');
 const { tailWindow, ROTATION_BUCKET_MS } = require('../services/integrations/sweepWindow');
 const { _resetForTests } = require('../services/integrations/sweepOverlapGuard');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
@@ -77,7 +77,7 @@ function slaDb({ poison = 0, good = 0, notDue = 0, nullAck = 0, missingIntegrati
   for (let i = 0; i < actioned; i += 1) add('actioned', 60 * 24 * 8 - i, {}, 'Contacted');
   for (let i = 0; i < good; i += 1) add('good', 60 * 24 * 7 - i);
   for (let i = 0; i < notDue; i += 1) add('fresh', 60 - (i % 50));
-  return createInMemoryZcql({
+  return createSlaFixture({
     lead_integrations: mappings,
     leads,
     dealer_integrations: [{ dealer_code: 'D1', status: 'ACTIVE' }],
@@ -179,10 +179,12 @@ test('SLA: already-actioned leads rotate out and are not breached; dealer scope 
   const { oemCalls } = slaMocks(t);
   const db = slaDb({ actioned: 4, good: 2 });
   db.tables.lead_integrations.push({
-    zoho_lead_id: 'other-dealer', dealer_code: 'D2', integration_id: '1000', sync_status: 'SYNCED',
+    zoho_lead_id: 'other-dealer', dealer_code: 'D2', integration_id: '1001', sync_status: 'SYNCED',
     last_synced_at: utc(BASE_NOW - 5 * 24 * HOUR),
   });
-  db.tables.leads.push({ crm_record_id: 'other-dealer', lead_status: 'Not Contacted', sync_status: 'SYNCED' });
+  db.tables.dealer_integrations.push({ dealer_code: 'D2', status: 'ACTIVE' });
+  db.tables.dealers.push({ dealer_code: 'D2', sync_status: 'Synced' });
+  db.tables.leads.push({ crm_record_id: 'other-dealer', dealer_code: 'D2', accept_privacy_policy: true, lead_status: 'Not Contacted', sync_status: 'SYNCED' });
 
   const [first] = await runSlaSweeps(db, 1);
   assert.equal(first.skippedActioned, 4);
@@ -209,7 +211,7 @@ function routingDb({ blockedCount = 40, fixedA = 60, fixedB = 5, noDealer = 12 }
   hold('FIXED-A', fixedA, 'fixedA', '2026-09-25 08:00:00');
   hold('FIXED-B', fixedB, 'fixedB', '2026-09-26 08:00:00');
   hold('STALE-C', 30, 'staleC', '2026-10-05 08:00:00'); // held AFTER the dealer's last change
-  return createInMemoryZcql({
+  return createSlaFixture({
     leads,
     dealer_integrations: [
       integ('BLOCKED', 'NOT_CONFIGURED', '2026-10-08 08:00:00:000'),
@@ -310,7 +312,7 @@ function replayDb({ awaiting = 300, workable = 120, dealers = 8 }) {
   // they stay FAILED indefinitely and used to fill the whole 200-row window.
   for (let i = 0; i < awaiting; i += 1) row('awaiting', i, 'STATUS_MAPPING_NOT_FOUND: dealer status "Mystery"', 'UNMAPPED_STATUS');
   for (let i = 0; i < workable; i += 1) row('workable', i, 'EXTERNAL_CRM_UNREACHABLE', '');
-  return createInMemoryZcql({
+  return createSlaFixture({
     integration_logs: logs,
     dealer_integrations: integrations,
     lead_integrations: mappings,
@@ -371,7 +373,7 @@ test('replay: a sweep reads head + one rotating slice, never the whole queue', a
 
 test('a job that must see every row reads past the 300-row cut-off of a bare SELECT', async () => {
   const rows = Array.from({ length: 650 }, (_, i) => ({ dealer_code: `Z${i}`, integration_type: 'EXTERNAL_CRM', crm_type: 'ZOHO_CRM' }));
-  const db = createInMemoryZcql({ dealer_integrations: rows });
+  const db = createSlaFixture({ dealer_integrations: rows });
 
   const bare = await db.app.zcql().executeZCQLQuery("SELECT * FROM dealer_integrations WHERE integration_type = 'EXTERNAL_CRM' AND crm_type = 'ZOHO_CRM'");
   assert.equal(bare.length, 300, 'the old webhook-renewal query silently stopped at 300 dealers');

@@ -1,8 +1,16 @@
 'use strict';
 
+const { baseIntegration, oauthApp, mockCredentialSnapshot } = require('./helpers/dealerZohoFixture');
 const test = require('node:test');
+test.beforeEach(mockCredentialSnapshot);
 const assert = require('node:assert/strict');
 const axios = require('axios');
+const dns = require('dns').promises;
+
+// OAuth HTTP is stubbed, so DNS must be deterministic as well.
+test.beforeEach((t) => {
+  t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
+});
 
 // Covers the single-flight refresh fixes added for the 200+ dealer
 // concurrency audit: zohoAuthService.js (OEM-side, one shared token) and
@@ -79,11 +87,11 @@ test('zohoCrmOAuthHelper.getAccessTokenForDealerZoho: concurrent calls for the s
   });
   t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => 'value');
 
-  const integration = { ROWID: '9001', oauth_accounts_domain: 'https://accounts.zoho.in' };
+  const integration = { ...baseIntegration, ROWID: '9001', oauth_accounts_domain: 'https://accounts.zoho.in' };
   const [a, b, c] = await Promise.all([
-    zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, integration),
-    zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, integration),
-    zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, integration),
+    zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(integration), integration),
+    zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(integration), integration),
+    zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(integration), integration),
   ]);
 
   assert.equal(postCallCount, 1, 'three concurrent callers for the same dealer should trigger exactly one refresh');
@@ -100,18 +108,18 @@ test('zohoCrmOAuthHelper.getAccessTokenForDealerZoho: token cache/in-flight refr
   zohoCrmOAuthHelper._resetForTests();
 
   const tokensIssued = { '7001': 'tok-dealer-a', '7002': 'tok-dealer-b' };
-  t.mock.method(axios, 'post', async (url, body, config) => ({
-    data: { access_token: tokensIssued[config.params.client_id], expires_in: 3600 },
+  t.mock.method(axios, 'post', async (url, body) => ({
+    data: { access_token: tokensIssued[new URLSearchParams(body).get('client_id')], expires_in: 3600 },
   }));
   t.mock.method(integrationAuthService, 'getDecryptedCredential', async (_app, integrationId, credType) =>
     credType === 'OAUTH2_CLIENT_ID' ? String(integrationId) : 'secret-or-refresh'
   );
 
-  const dealerA = { ROWID: '7001', oauth_accounts_domain: 'https://accounts.zoho.in' };
-  const dealerB = { ROWID: '7002', oauth_accounts_domain: 'https://accounts.zoho.in' };
+  const dealerA = { ...baseIntegration, ROWID: '7001', oauth_accounts_domain: 'https://accounts.zoho.in' };
+  const dealerB = { ...baseIntegration, ROWID: '7002', oauth_accounts_domain: 'https://accounts.zoho.in' };
 
-  const tokenA = await zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, dealerA);
-  const tokenB = await zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, dealerB);
+  const tokenA = await zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(dealerA), dealerA);
+  const tokenB = await zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(dealerB), dealerB);
 
   assert.equal(tokenA, 'tok-dealer-a');
   assert.equal(tokenB, 'tok-dealer-b');
@@ -128,7 +136,7 @@ test('zohoCrmOAuthHelper.getAccessTokenForDealerZoho: missing credentials fail a
   t.mock.method(integrationAuthService, 'getDecryptedCredential', async () => null);
 
   await assert.rejects(
-    () => zohoCrmOAuthHelper.getAccessTokenForDealerZoho({}, { ROWID: '7003' }),
+    () => zohoCrmOAuthHelper.getAccessTokenForDealerZoho(oauthApp(baseIntegration), { ...baseIntegration, ROWID: '7003' }),
     (err) => err.code === 'AUTHENTICATION_FAILED'
   );
 

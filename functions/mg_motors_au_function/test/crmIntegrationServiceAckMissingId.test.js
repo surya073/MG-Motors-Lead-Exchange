@@ -32,6 +32,7 @@ function buildIntegration(overrides = {}) {
   return {
     ROWID: '601',
     dealer_code: 'AU888',
+    integration_type: 'EXTERNAL_CRM',
     crm_type: 'GENERIC_REST',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
@@ -67,7 +68,7 @@ function buildLeadRow(overrides = {}) {
  * reported "no existing mapping") — needed here to prove the mapping row
  * really gets created/updated on a DEALER_ACK_MISSING_ID failure.
  */
-function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
+function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow, integration, leadRow }) {
   const leadIntegrationsById = new Map();
   const integrationLogs = [];
   let nextRowId = 1;
@@ -82,6 +83,7 @@ function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
+        if (sql.includes('FROM dealer_integrations')) return [{ dealer_integrations: { ...integration } }];
         if (sql.includes('FROM dealers')) return dealerRow ? [{ dealers: dealerRow }] : [];
         if (sql.includes('FROM integration_field_mappings')) {
           return fieldMappings.map((row) => ({ integration_field_mappings: row }));
@@ -93,7 +95,7 @@ function buildStatefulFakeCatalystApp({ fieldMappings, dealerRow }) {
           const row = findMapping(match[2], match[1]);
           return row ? [{ lead_integrations: row }] : [];
         }
-        if (sql.includes('FROM leads')) return [];
+        if (sql.includes('FROM leads')) return [{ leads: { ...leadRow } }];
         if (sql.includes('FROM notifications') || sql.includes('FROM integration_alert_queue')) return [];
         throw new Error(`Unexpected ZCQL query in test: ${sql}`);
       },
@@ -147,6 +149,7 @@ test('syncLeadToExternalCrm: DEALER_ACK_MISSING_ID on a brand-new lead creates a
   const integration = buildIntegration();
   const leadRow = buildLeadRow();
   const catalystApp = buildStatefulFakeCatalystApp({
+    integration, leadRow,
     fieldMappings: buildFieldMappings(),
     dealerRow: { dealer_code: 'AU888', sync_status: 'Active' },
   });
@@ -175,6 +178,7 @@ test('syncLeadToExternalCrm: a repeat DEALER_ACK_MISSING_ID failure advances ret
   const integration = buildIntegration({ ROWID: '602' });
   const leadRow = buildLeadRow({ crm_record_id: 'ZOHO-LEAD-ACK-2', ROWID: '9102' });
   const catalystApp = buildStatefulFakeCatalystApp({
+    integration, leadRow,
     fieldMappings: buildFieldMappings(),
     dealerRow: { dealer_code: 'AU888', sync_status: 'Active' },
   });
@@ -214,6 +218,7 @@ test('syncLeadToExternalCrm: DEALER_ACK_MISSING_ID surfaces the dealer response\
   const integration = buildIntegration({ ROWID: '603' });
   const leadRow = buildLeadRow({ crm_record_id: 'ZOHO-LEAD-ACK-3', ROWID: '9103' });
   const catalystApp = buildStatefulFakeCatalystApp({
+    integration, leadRow,
     fieldMappings: buildFieldMappings(),
     dealerRow: { dealer_code: 'AU888', sync_status: 'Active' },
   });

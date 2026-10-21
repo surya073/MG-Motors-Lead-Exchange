@@ -3,7 +3,7 @@
 const axios = require('axios');
 const integrationAuthService = require('../integrationAuthService');
 const logger = require('../../../utils/logger');
-const { assertSafeUrl } = require('./genericRestAdapter');
+const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { isFusionTokenRetryEnabled, getFusionTokenTimeoutMs } = require('../../../config/env');
 
 /**
@@ -64,6 +64,7 @@ async function requestNewToken(catalystApp, integration) {
       tokenUrl.toString(),
       'grant_type=client_credentials',
       {
+        ...safeRequestOptions(tokenUrl),
         auth: { username: accessKey, password: secretKey },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: getFusionTokenTimeoutMs(),
@@ -93,18 +94,23 @@ async function requestNewToken(catalystApp, integration) {
       'fusionSdOAuthHelper',
       `Token request failed for integration ${integration.ROWID} (HTTP ${err.response?.status || 'network error'})`
     );
-    // Fusion answered with an error: the keys or the client are refused. No
-    // answer at all (a timeout or a connection that could not be made) is a
-    // connection problem, labelled as createLead/updateLead label one, so it
-    // is not mistaken for wrong keys; it has no status and is retried as
-    // temporary.
-    const wrapped = err.response
-      ? new Error('Failed to obtain Fusion SD access token')
-      : new Error('Fusion SD token endpoint did not respond');
-    wrapped.code = err.response ? 'AUTHENTICATION_FAILED' : 'EXTERNAL_CRM_ERROR';
+    const status = err.response?.status;
+    const transient = !status || status === 408 || status === 429 || status >= 500;
+    const wrapped = new Error(status
+      ? (transient ? 'Fusion SD token endpoint is temporarily unavailable' : 'Failed to obtain Fusion SD access token')
+      : 'Fusion SD token endpoint did not respond');
+    wrapped.code = transient ? 'EXTERNAL_CRM_ERROR' : 'AUTHENTICATION_FAILED';
     // Only the HTTP status is kept, so Test Connection can show it. A network
     // error has no response and therefore no status.
-    if (err.response) wrapped.response = { status: err.response.status };
+    if (err.response) {
+      wrapped.response = { status };
+      const value = err.response.headers?.['retry-after'] ?? err.response.headers?.['Retry-After'];
+      const text = String(value ?? '').trim();
+      if (text) {
+        const seconds = /^\d+$/.test(text) ? Number(text) : Math.ceil((Date.parse(text) - Date.now()) / 1000);
+        if (Number.isFinite(seconds)) wrapped.vendor = { status, retryAfter: Math.max(0, seconds) };
+      }
+    }
     throw wrapped;
   }
 

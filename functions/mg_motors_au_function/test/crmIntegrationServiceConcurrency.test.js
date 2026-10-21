@@ -32,6 +32,7 @@ function buildIntegration(overrides = {}) {
   return {
     ROWID: '501',
     dealer_code: 'AU777',
+    integration_type: 'EXTERNAL_CRM',
     crm_type: 'GENERIC_REST',
     base_url: 'https://dealer-crm.example.com',
     create_lead_endpoint: '/api/leads',
@@ -70,7 +71,7 @@ function buildLeadRow(overrides = {}) {
  * outboundSyncClaimService.test.js for why this fake is a trustworthy
  * stand-in for that specific behavior).
  */
-function buildFakeCatalystApp({ fieldMappings, dealerRow }) {
+function buildFakeCatalystApp({ fieldMappings, dealerRow, integration, leadRow }) {
   const claimRowsById = new Map();
   const claimRowIdByKey = new Map();
   let nextClaimId = 1;
@@ -78,6 +79,7 @@ function buildFakeCatalystApp({ fieldMappings, dealerRow }) {
   return {
     zcql: () => ({
       executeZCQLQuery: async (sql) => {
+        if (sql.includes('FROM dealer_integrations')) return [{ dealer_integrations: { ...integration } }];
         if (sql.includes('FROM dealers')) {
           return dealerRow ? [{ dealers: dealerRow }] : [];
         }
@@ -91,7 +93,7 @@ function buildFakeCatalystApp({ fieldMappings, dealerRow }) {
           return []; // no existing mapping — every caller sees a brand-new lead
         }
         if (sql.includes('FROM leads')) {
-          return []; // writeLog's scenario-mirror lookup — fine to no-op
+          return [{ leads: { ...leadRow } }]; // authoritative reread under the shared lead claim
         }
         if (sql.includes('claim_key')) {
           const match = /claim_key = '([^']*)'/.exec(sql);
@@ -161,6 +163,7 @@ test('syncLeadToExternalCrm: two simultaneous syncs for the same brand-new lead 
   const integration = buildIntegration();
   const leadRow = buildLeadRow();
   const catalystApp = buildFakeCatalystApp({
+    integration, leadRow,
     fieldMappings,
     dealerRow: { dealer_code: 'AU777', sync_status: 'Active' },
   });
@@ -199,6 +202,7 @@ test('syncLeadToExternalCrm: after a completed sync, a later independent call is
   const integration = buildIntegration({ ROWID: '502' });
   const leadRow = buildLeadRow({ crm_record_id: 'ZOHO-LEAD-2', ROWID: '9002' });
   const catalystApp = buildFakeCatalystApp({
+    integration, leadRow,
     fieldMappings,
     dealerRow: { dealer_code: 'AU777', sync_status: 'Active' },
   });

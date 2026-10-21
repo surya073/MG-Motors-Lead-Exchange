@@ -24,8 +24,19 @@ const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
 const { withCrmApiLimit } = require('../services/integrations/crmApiConcurrencyLimiter');
 const aiAssistantToolService = require('../services/aiAssistantToolService');
 const logger = require('../utils/logger');
+const { adminSuggestions } = require('../services/searchSuggestionsService');
 
 const router = express.Router();
+
+router.get('/admin/search-suggestions', requireAdminOrViewRole, async (req, res) => {
+  try {
+    const result = await adminSuggestions(res.locals.catalystApp, req.query.search);
+    res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    logger.error('adminDashboardRoutes', 'GET /admin/search-suggestions failed', err);
+    res.status(err.statusCode || 502).json({ success: false, error: err.message });
+  }
+});
 
 // requireAdminRole is applied per-route below, NOT via router.use() —
 // router.use(requireAdminRole) was found to leak into sibling routers
@@ -56,7 +67,7 @@ router.get('/admin/dealers', requireAdminOrViewRole, async (req, res) => {
  * fromDate, toDate (YYYY-MM-DD), includeFacets. The response keeps the
  * existing `leads` / `count` fields and adds `pagination` (and `facets`).
  * Without either param it behaves exactly as before and returns every lead,
- * which the navbar search and dealer detail tabs still rely on.
+ * for legacy consumers such as dealer detail tabs; filters are applied in SQL.
  */
 router.get('/admin/leads', requireAdminOrViewRole, async (req, res) => {
   try {
@@ -99,7 +110,7 @@ router.get('/admin/leads', requireAdminOrViewRole, async (req, res) => {
  */
 const OUT_OF_ORDER_DETAIL_LIMIT = 25;
 
-// The panel refreshes every 30s; without a cache each refresh spent up to
+// The visible panel refreshes every two minutes; without a cache each refresh spent up to
 // 25 dealer API credits. Dealer-side name/status are display-only, so a
 // few minutes' staleness is fine.
 const DEALER_DETAIL_TTL_MS = 10 * 60 * 1000;

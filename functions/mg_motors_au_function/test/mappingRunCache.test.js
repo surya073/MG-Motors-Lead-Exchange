@@ -56,13 +56,23 @@ async function sweep(t, db) {
   return { results, calls };
 }
 
-test('flag off: each of 3 leads re-reads the dealer\'s mappings, as before', async (t) => {
-  withEnv(t, { MAPPING_CACHE_PER_RUN: undefined });
+test('explicit flag off: each of 3 leads re-reads the dealer\'s mappings', async (t) => {
+  withEnv(t, { MAPPING_CACHE_PER_RUN: 'false' });
   const db = sweepDb(3);
   const { results } = await sweep(t, db);
   assert.equal(results.recovered, 3);
   assert.ok(reads(db, 'integration_field_mappings') >= 3);
   assert.ok(reads(db, 'integration_status_mappings') >= 3);
+});
+
+test('default: a sweep reads each dealer\'s mappings once without an environment change', async (t) => {
+  withEnv(t, { MAPPING_CACHE_PER_RUN: undefined });
+  const db = sweepDb(3);
+  const { results, calls } = await sweep(t, db);
+  assert.equal(results.recovered, 3);
+  assert.equal(calls.update.length, 3);
+  assert.equal(reads(db, 'integration_field_mappings'), 1);
+  assert.equal(reads(db, 'integration_status_mappings'), 1);
 });
 
 test('flag on: one sweep of 3 leads reads each dealer\'s mappings once, and delivers the same payloads', async (t) => {

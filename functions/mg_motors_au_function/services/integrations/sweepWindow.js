@@ -41,11 +41,15 @@ const ROTATION_BUCKET_MS = 2 * 60 * 1000;
  * @returns {{offset: number, rotations: number, index: number} | null}
  *   offset is a true 0-based row offset into the ordered set.
  */
-function tailWindow({ total, headSize, tailSize, now = Date.now() }) {
+function tailWindow({ total, headSize, tailSize, now = Date.now(), windowSequence }) {
   const remaining = Number(total) - headSize;
   if (!Number.isFinite(remaining) || remaining <= 0) return null;
   const rotations = Math.max(1, Math.ceil(remaining / tailSize));
-  const index = Math.floor(now / ROTATION_BUCKET_MS) % rotations;
+  // Shared-budget callers advance this once per complete stage cycle. Using
+  // the stage-selection bucket itself aliases when only one stage has time.
+  const sequence = Number.isSafeInteger(windowSequence) && windowSequence >= 0
+    ? windowSequence : Math.floor(now / ROTATION_BUCKET_MS);
+  const index = sequence % rotations;
   return { offset: headSize + index * tailSize, rotations, index };
 }
 

@@ -173,12 +173,12 @@ test('withOutboundSyncClaim: a crashed/abandoned claim past the TTL is reclaimed
   assert.equal(result, 'reclaimed');
 });
 
-test('withOutboundSyncClaim: fails OPEN (runs fn, does not throw) when the claims table itself is missing/broken', async () => {
+test('withOutboundSyncClaim: defers by default when the claims table is missing/broken', async () => {
   // Simulates the exact state of a fresh deployment before the
   // outbound_sync_claims table has been created in Catalyst Console:
   // insertRow AND the SELECT fallback both fail, since the table does
-  // not exist. Breaking outbound sync entirely over this would be worse
-  // than the race the claim exists to close.
+  // not exist. Work must be durably deferred rather than creating leads
+  // without duplicate protection.
   const brokenCatalystApp = {
     zcql: () => ({
       executeZCQLQuery: async () => {
@@ -200,8 +200,8 @@ test('withOutboundSyncClaim: fails OPEN (runs fn, does not throw) when the claim
     return { ok: true };
   });
 
-  assert.equal(ran, true, 'fn must still run — a missing claims table must never block real outbound sync');
-  assert.deepEqual(result, { ok: true });
+  assert.equal(ran, false, 'missing claims must never bypass duplicate protection');
+  assert.deepEqual(result, { skipped: true, reason: 'CLAIM_UNAVAILABLE' });
 });
 
 test('withOutboundSyncClaim: a FRESH competing claim (not stale) is respected, never reclaimed early', async () => {
