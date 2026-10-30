@@ -4,6 +4,7 @@ const axios = require('axios');
 const { getZohoConfig, getLeadSyncSince, zohoTimeoutOption } = require('../config/env');
 const { getAccessToken } = require('./zohoAuthService');
 const logger = require('../utils/logger');
+const usageContext = require('./usageContext');
 
 /**
  * zohoCrmService.js
@@ -57,7 +58,7 @@ async function fetchDealerMaster() {
   while (moreRecords) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/${DEALERS_MODULE}`, {
+      response = await usageContext.trackApiCall('mg', () => axios.get(`${apiDomain}/crm/v8/${DEALERS_MODULE}`, {
       ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
@@ -67,7 +68,7 @@ async function fetchDealerMaster() {
           page,
           per_page: CRM_PAGE_SIZE,
         },
-      });
+      }));
     } catch (err) {
       logger.error('zohoCrmService', 'Dealers fetch failed', err);
       throw new Error(
@@ -156,7 +157,7 @@ async function fetchOemLeads() {
   while (moreRecords && !reachedCutoff) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+      response = await usageContext.trackApiCall('mg', () => axios.get(`${apiDomain}/crm/v8/Leads`, {
         ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
@@ -168,7 +169,7 @@ async function fetchOemLeads() {
           sort_order: since ? 'desc' : 'asc',
           ...(pageToken ? { page_token: pageToken } : {}),
         },
-      });
+      }));
     } catch (err) {
       logger.error('zohoCrmService', 'OEM_Leads fetch failed', err);
       throw new Error(
@@ -222,14 +223,14 @@ async function fetchOemLeadsByIds(ids) {
   for (let i = 0; i < unique.length; i += LEADS_BY_IDS_CHUNK) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+      response = await usageContext.trackApiCall('mg', () => axios.get(`${apiDomain}/crm/v8/Leads`, {
         ...zohoTimeoutOption(),
         headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
         params: {
           fields: OEM_LEADS_FIELDS.join(','),
           ids: unique.slice(i, i + LEADS_BY_IDS_CHUNK).join(','),
         },
-      });
+      }));
     } catch (err) {
       logger.error('zohoCrmService', 'OEM_Leads fetch-by-ids failed', err);
       throw new Error(
@@ -261,7 +262,7 @@ async function fetchOemLeadsModifiedSince(modifiedSince) {
   while (moreRecords) {
     let response;
     try {
-      response = await axios.get(`${apiDomain}/crm/v8/Leads`, {
+      response = await usageContext.trackApiCall('mg', () => axios.get(`${apiDomain}/crm/v8/Leads`, {
         ...zohoTimeoutOption(),
         headers: {
           Authorization: `Zoho-oauthtoken ${accessToken}`,
@@ -274,7 +275,7 @@ async function fetchOemLeadsModifiedSince(modifiedSince) {
           sort_order: 'asc',
           ...(pageToken ? { page_token: pageToken } : {}),
         },
-      });
+      }));
     } catch (err) {
       if (err.response?.status === 304) break;
       logger.error('zohoCrmService', 'OEM_Leads modified-since fetch failed', err);
@@ -310,7 +311,7 @@ async function updateOemLead(crmRecordId, fields) {
 
   let response;
   try {
-    response = await axios.put(
+    response = await usageContext.trackApiCall('mg', () => axios.put(
       `${apiDomain}/crm/v8/Leads/${crmRecordId}`,
       { data: [fields] },
       {
@@ -320,7 +321,7 @@ async function updateOemLead(crmRecordId, fields) {
           'Content-Type': 'application/json',
         },
       }
-    );
+    ));
   } catch (err) {
     logger.error('zohoCrmService', `OEM_Leads write-back failed for ${crmRecordId}`, err);
     // Unhappy 4 must say which of three categories a failed write-back
@@ -361,11 +362,11 @@ async function fetchFieldPicklistValues(moduleApiName, fieldApiName) {
 
   let response;
   try {
-    response = await axios.get(`${apiDomain}/crm/v8/settings/fields`, {
+    response = await usageContext.trackApiCall('mg', () => axios.get(`${apiDomain}/crm/v8/settings/fields`, {
       ...zohoTimeoutOption(),
       headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
       params: { module: moduleApiName },
-    });
+    }));
   } catch (err) {
     logger.error('zohoCrmService', `Field metadata fetch failed for ${moduleApiName}`, err);
     throw new Error(`Zoho CRM API call failed: ${err.response?.data?.message || err.message}`);

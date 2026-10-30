@@ -224,8 +224,8 @@ function routingDb({ blockedCount = 40, fixedA = 60, fixedB = 5, noDealer = 12 }
 
 function routingMocks(t, db) {
   const attempts = [];
-  t.mock.method(crmIntegrationService, 'getIntegrationByDealerCode', async (_app, code) =>
-    db.tables.dealer_integrations.find((d) => d.dealer_code === code) || null);
+  t.mock.method(crmIntegrationService, 'getIntegrationsByDealerCode', async () =>
+    new Map(db.tables.dealer_integrations.map((d) => [d.dealer_code, d])));
   t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async (app, _integration, leadRow) => {
     attempts.push(leadRow.crm_record_id);
     const idx = db.tables.leads.findIndex((l) => l.crm_record_id === leadRow.crm_record_id);
@@ -277,7 +277,7 @@ test('routing holds: a dealer with 5 held leads is served in the first sweep, no
 test('routing holds: a lead that is re-held after an attempt stops being a candidate (no endless retry)', async (t) => {
   const db = routingDb({ blockedCount: 0, noDealer: 0, fixedA: 3, fixedB: 0 });
   const attempts = [];
-  t.mock.method(crmIntegrationService, 'getIntegrationByDealerCode', async (_a, code) => db.tables.dealer_integrations.find((d) => d.dealer_code === code));
+  t.mock.method(crmIntegrationService, 'getIntegrationsByDealerCode', async () => new Map(db.tables.dealer_integrations.map((d) => [d.dealer_code, d])));
   t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async (app, _i, leadRow) => {
     attempts.push(leadRow.crm_record_id);
     const idx = db.tables.leads.findIndex((l) => l.crm_record_id === leadRow.crm_record_id);
@@ -383,4 +383,45 @@ test('a job that must see every row reads past the 300-row cut-off of a bare SEL
   );
   assert.equal(all.length, 650);
   assert.equal(new Set(all.map((r) => r.dealer_code)).size, 650);
+});
+
+test('routing holds: dealers without an integration cost no per-dealer read (one integrations query per sweep)', async (t) => {
+  const leads = [];
+  for (let d = 0; d < 120; d += 1) {
+    leads.push({ crm_record_id: `n-${d}`, dealer_code: `NOINT-${d}`, sync_status: 'ROUTING_HOLD', MODIFIEDTIME: '2026-09-20 08:00:00:000' });
+  }
+  const db = createSlaFixture({ leads, dealer_integrations: [] });
+  t.mock.timers.enable({ apis: ['Date'], now: BASE_NOW });
+  const send = t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async () => ({ ok: true }));
+
+  const result = await outboundRetryScheduler._test.reprocessRoutingHolds(db.app);
+
+  assert.equal(send.mock.callCount(), 0);
+  assert.equal(result.attempted, 0);
+  assert.equal(db.queries.filter((q) => /FROM dealer_integrations/.test(q)).length, 1);
+});
+
+test('routing holds: a failed integrations read is contained and attempts nothing', async (t) => {
+  const db = routingDb({});
+  t.mock.method(crmIntegrationService, 'getIntegrationsByDealerCode', async () => { throw new Error('datastore down'); });
+  const send = t.mock.method(crmIntegrationService, 'syncLeadToExternalCrm', async () => ({ ok: true }));
+
+  const result = await outboundRetryScheduler._test.reprocessRoutingHolds(db.app);
+
+  assert.equal(result.errored, 1);
+  assert.equal(send.mock.callCount(), 0);
+});
+
+test('getIntegrationsByDealerCode: one query, keyed by dealer_code, first row wins on a repeated code', async () => {
+  const db = createSlaFixture({ dealer_integrations: [
+    { dealer_code: 'A1', status: 'ACTIVE' },
+    { dealer_code: 'B2', status: 'NOT_CONFIGURED' },
+    { dealer_code: 'A1', status: 'DISABLED' },
+  ] });
+  const byCode = await crmIntegrationService.getIntegrationsByDealerCode(db.app);
+  assert.equal(byCode.size, 2);
+  assert.equal(byCode.get('A1').status, 'ACTIVE');
+  assert.equal(byCode.get('B2').status, 'NOT_CONFIGURED');
+  assert.equal(byCode.get('NONE'), undefined);
+  assert.equal(db.queries.filter((q) => /FROM dealer_integrations/.test(q)).length, 1);
 });

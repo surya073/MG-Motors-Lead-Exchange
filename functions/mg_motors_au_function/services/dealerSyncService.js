@@ -5,6 +5,7 @@ const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const dashboardStats = require('./dashboardStatsService');
+const operationClaims = require('./integrations/integrationOperationClaimService');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_ROW_BOUND = 50000;
@@ -135,4 +136,54 @@ async function syncDealers(catalystApp, { trigger = 'Manual', triggeredBy = 'Sys
   return { status, totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated, recordsFailed: failed, recordsRemoved: removed, errors };
 }
 
-module.exports = { syncDealers, _test: { mapCrmRecordToDealerRow, hasChanges } };
+// Zoho sends one Dealers notification per edited batch: a bulk edit in MG's
+// CRM (live: ~213 notifications at 05:00-05:04 IST) used to start ~213 full
+// syncs, each reading every dealers row, and overlapping runs could write a
+// stale CRM read over a newer one (undoing a rename, soft-deleting a new
+// dealer). Notification-driven syncs now run one at a time across instances
+// and at most once per claim lease (5 minutes); a skipped notification leaves
+// one pending marker, and fast-recover runs the trailing sync once the lease
+// has expired, so the last change of a burst is never lost.
+const DEALER_SYNC_OPERATION = 'dealer-sync';
+
+async function markPendingSafely(catalystApp) {
+  try {
+    await operationClaims.markPending(catalystApp, DEALER_SYNC_OPERATION);
+  } catch (err) {
+    logger.error('dealerSyncService', 'Cannot record a pending dealer sync', err);
+  }
+}
+
+async function syncDealersCoalesced(catalystApp, options = {}) {
+  const result = await operationClaims.withOperationClaim(catalystApp, DEALER_SYNC_OPERATION, async (lease) => {
+    // Keep the claim for its full lease so the rest of a burst is skipped.
+    lease.retain();
+    // Cleared before the CRM read: a notification arriving during this run
+    // marks it again and gets its own trailing sync.
+    await operationClaims.clearPending(catalystApp, DEALER_SYNC_OPERATION);
+    try {
+      return await syncDealers(catalystApp, options);
+    } catch (err) {
+      await markPendingSafely(catalystApp);
+      throw err;
+    }
+  });
+  if (result?.skipped) {
+    await markPendingSafely(catalystApp);
+    return { ...result, pending: true };
+  }
+  return result;
+}
+
+/** fast-recover stage: one read when nothing is pending. */
+async function runPendingDealerSync(catalystApp) {
+  if (!(await operationClaims.hasPending(catalystApp, DEALER_SYNC_OPERATION))) return { pending: false };
+  return syncDealersCoalesced(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM (coalesced)' });
+}
+
+module.exports = {
+  syncDealers,
+  syncDealersCoalesced,
+  runPendingDealerSync,
+  _test: { mapCrmRecordToDealerRow, hasChanges, DEALER_SYNC_OPERATION },
+};

@@ -146,6 +146,69 @@ function latest(values) {
   return values.filter(Boolean).sort().pop() || '';
 }
 
+// How a hold stands right now: how long it has waited, whether Unhappy 7
+// retention is past, whether it only waits for a status mapping, and whether
+// its ordinary replay interval has elapsed. Rows are oldest first.
+function holdState(logRows, now = Date.now()) {
+  const heldSinceAt = parseSystemTimestamp(logRows[0].CREATEDTIME);
+  const waitedMinutes = heldSinceAt ? Math.floor((now - heldSinceAt.getTime()) / 60000) : 0;
+  const retentionExceeded = logRows.every(isOutOfOrderHold)
+    && Boolean(heldSinceAt)
+    && waitedMinutes >= UNHAPPY_7_RETENTION_MINUTES;
+  const mappingFailuresOnly = logRows.every(isMappingFailure);
+  return { heldSinceAt, waitedMinutes, retentionExceeded, mappingFailuresOnly };
+}
+
+// Quoted IN lists of 99 values: verified against live ZCQL on 22 Oct 2026.
+const MAPPING_READ_CHUNK = 90;
+const ZCQL_ROW_CAP = 300;
+
+/**
+ * COST_OPTIMIZATION_PLAN.md, Batch 3 (F4): the lead_integrations row of each
+ * hold this sweep is about to examine, read in one query per integration
+ * (per MAPPING_READ_CHUNK holds) instead of one query per hold. On 21 Oct
+ * about half the held dealer records only waited for a status mapping and
+ * paid that read on every sweep to learn nothing had changed.
+ *
+ * Returns "integration:record" -> row, or null when the row does not exist.
+ * A key that is absent (chunk failed, or a capped result) is read singly by
+ * the caller, exactly as before.
+ */
+async function prefetchLeadMappings(catalystApp, holds) {
+  const found = new Map();
+  const byIntegration = new Map();
+  for (const { integrationId, externalLeadId } of holds) {
+    if (!byIntegration.has(integrationId)) byIntegration.set(integrationId, new Set());
+    byIntegration.get(integrationId).add(String(externalLeadId));
+  }
+  for (const [integrationId, idSet] of byIntegration) {
+    const ids = [...idSet];
+    for (let i = 0; i < ids.length; i += MAPPING_READ_CHUNK) {
+      const chunk = ids.slice(i, i + MAPPING_READ_CHUNK);
+      try {
+        const rows = await catalystApp.zcql().executeZCQLQuery(
+          `SELECT ROWID, external_crm_lead_id, last_error, MODIFIEDTIME FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integrationId} AND external_crm_lead_id IN (${chunk.map((id) => `'${safeQuoteForZcql(id)}'`).join(', ')})`
+        );
+        for (const wrapped of rows) {
+          const row = wrapped[LEAD_INTEGRATIONS_TABLE];
+          const key = `${integrationId}:${row.external_crm_lead_id}`;
+          if (!found.has(key)) found.set(key, row);
+        }
+        // A capped result may have left rows out: only a complete one proves absence.
+        if (rows.length < ZCQL_ROW_CAP) {
+          for (const id of chunk) {
+            const key = `${integrationId}:${id}`;
+            if (!found.has(key)) found.set(key, null);
+          }
+        }
+      } catch (err) {
+        logger.error('inboundReplayScheduler', `Batched mapping read failed for integration ${integrationId}; reading singly`, err);
+      }
+    }
+  }
+  return found;
+}
+
 /**
  * Replays held inbound (dealer -> MG) updates: Unhappy 4, Unhappy 7 and
  * held Unhappy 9. The FAILED audit row is the durable queue reference
@@ -259,6 +322,28 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     return statusMapChangedAt.get(integrationId);
   }
 
+  // A dealer CRM that cannot be read back is replayable only from stored events.
+  const isReplayable = (integration) => Boolean(integration) && (
+    !integration.crm_type || crmAdapterFactory.supports(integration.crm_type, 'getLead') ||
+    crmIntegrationService.canReplayFromStoredEvents(integration)
+  );
+
+  // Batch 3 (cost): batch the mapping reads of the holds the loop below will
+  // read. Holds past Unhappy 7 retention are left out, so the row an expiry
+  // relies on is read just before it, as before.
+  const prefetchHolds = [];
+  for (const logRows of groups.values()) {
+    if (budgetSpent(deadline)) break;
+    const state = holdState(logRows);
+    if (state.retentionExceeded) continue;
+    if (!state.mappingFailuresOnly && !isReplayDue(logRows[0], state.waitedMinutes)) continue;
+    let integration;
+    try { integration = await getIntegration(logRows[0].integration_id); } catch (_) { continue; }
+    if (!isReplayable(integration)) continue;
+    prefetchHolds.push({ integrationId: logRows[0].integration_id, externalLeadId: logRows[0].external_lead_id });
+  }
+  const leadMappings = prefetchHolds.length ? await prefetchLeadMappings(catalystApp, prefetchHolds) : new Map();
+
   const replaysByDealer = new Map(); // integration_id -> replays attempted so far this sweep
 
   let groupsVisited = 0;
@@ -280,12 +365,7 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     // Unhappy 7 expiry applies only when EVERY held row for this dealer
     // record is an out-of-order hold; rows are oldest first, so logRows[0]
     // is when the wait began.
-    const heldSinceAt = parseSystemTimestamp(logRows[0].CREATEDTIME);
-    const waitedMinutes = heldSinceAt ? Math.floor((Date.now() - heldSinceAt.getTime()) / 60000) : 0;
-    const retentionExceeded = logRows.every(isOutOfOrderHold)
-      && Boolean(heldSinceAt)
-      && waitedMinutes >= UNHAPPY_7_RETENTION_MINUTES;
-    const mappingFailuresOnly = logRows.every(isMappingFailure);
+    const { waitedMinutes, retentionExceeded, mappingFailuresOnly } = holdState(logRows);
     // Ordinary replay backoff is already known from the durable log. Avoid
     // reloading its mapping/dealer while waiting; map changes and expiry
     // still get their immediate release/retention checks.
@@ -296,9 +376,23 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
 
     let mappingAttempt;
     try {
-      const mappingRows = await catalystApp.zcql().executeZCQLQuery(
-        `SELECT ROWID, last_error, MODIFIEDTIME FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integrationId} AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
-      );
+      // Batch 3 (cost): a hold whose integration is missing or cannot be
+      // replayed waits whatever its mapping says, so decide that first.
+      // Past retention the original order stands (expiry needs no readable CRM).
+      if (!retentionExceeded) {
+        let known;
+        try { known = await getIntegration(integrationId); } catch (_) { known = undefined; }
+        if (known !== undefined && !isReplayable(known)) {
+          results.stillWaiting += 1;
+          continue;
+        }
+      }
+      const prefetchKey = `${integrationId}:${externalLeadId}`;
+      const mappingRows = leadMappings.has(prefetchKey)
+        ? (leadMappings.get(prefetchKey) ? [{ [LEAD_INTEGRATIONS_TABLE]: leadMappings.get(prefetchKey) }] : [])
+        : await catalystApp.zcql().executeZCQLQuery(
+          `SELECT ROWID, last_error, MODIFIEDTIME FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integrationId} AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
+        );
       if (mappingRows.length === 0) {
         const integrationForExpiry = retentionExceeded ? await getIntegration(integrationId) : null;
         if (integrationForExpiry) {

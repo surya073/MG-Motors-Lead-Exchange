@@ -651,8 +651,9 @@ export default function DealerCRMConfig() {
       } finally {
         setDealersLoading(false);
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     })();
+    // Runs once on mount (initial dealer list + optional ?dealerCode deep link).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => () => window.clearTimeout(saveSuccessTimeoutRef.current), []);

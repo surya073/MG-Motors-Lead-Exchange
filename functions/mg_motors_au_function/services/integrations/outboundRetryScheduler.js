@@ -6,6 +6,7 @@ const pathPolicy = require('./pathPolicyService');
 const { guardSweep } = require('./sweepOverlapGuard');
 const { withMappingCache } = require('./mappingRunCache');
 const stats = require('../dashboardStatsService');
+const { toCatalystDateTime } = require('../../utils/dateFormat');
 const { ROTATION_BUCKET_MS, tailWindow, countFrom } = require('./sweepWindow');
 
 const LEAD_INTEGRATIONS_TABLE = 'lead_integrations';
@@ -84,9 +85,17 @@ const budgetSpent = (deadline) => typeof deadline === 'number' && Date.now() >= 
  * (priority unchanged) plus a TAIL_ROWS slice that rotates over the rest, so a
  * row that is examined but never leaves the set cannot starve the rows behind it.
  * Read-only: nothing is written to make the rotation work.
+ *
+ * With `dueOnly`, rows whose next_retry_at has not passed are left out in the
+ * query rather than read and discarded in JavaScript (COST_OPTIMIZATION_PLAN.md,
+ * Batch 3). A row with no next_retry_at is due, as before. next_retry_at is
+ * written by toCatalystDateTime, the same UTC format compared here.
  */
-async function selectRetryCandidates(catalystApp, now = Date.now(), windowSequence) {
-  const where = `WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL')`;
+async function selectRetryCandidates(catalystApp, now = Date.now(), windowSequence, { dueOnly = false } = {}) {
+  const where = `WHERE sync_status IN ('FAILED', 'FAILED_CRITICAL')${
+    // The (IS NULL OR <=) group: verified against live ZCQL on 22 Oct 2026.
+    dueOnly ? ` AND (next_retry_at IS NULL OR next_retry_at <= '${toCatalystDateTime(new Date(now))}')` : ''
+  }`;
   // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
   const slice = (offset, size) =>
     catalystApp.zcql().executeZCQLQuery(
@@ -117,7 +126,7 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   }
   const now = new Date(Date.now());
 
-  const dueRows = await selectRetryCandidates(catalystApp, now.getTime(), options?.windowSequence);
+  const dueRows = await selectRetryCandidates(catalystApp, now.getTime(), options?.windowSequence, { dueOnly: !ignoreSchedule });
 
   // `recovered` counts ONLY leads that actually reached the dealer CRM.
   // syncLeadToExternalCrm RETURNS {skipped:true, reason} for a validation
@@ -298,12 +307,20 @@ async function reprocessRoutingHolds(catalystApp, { deadline } = {}) {
   const dealerCodes = holdsByDealer.map((row) => row.dealer_code).filter(Boolean);
   if (dealerCodes.length === 0) return summary;
 
-  // One dealer's integration config is read once per sweep. Start the dealer
-  // order at a rotating position so no dealer is always served first.
+  // All integrations are read in one query: most dealers with held leads have
+  // no integration at all, and a lookup per dealer cost ~124 reads per idle
+  // run. Start the dealer order at a rotating position so no dealer is always
+  // served first.
   const start = Math.floor(Date.now() / ROTATION_BUCKET_MS) % dealerCodes.length;
   const rotated = [...dealerCodes.slice(start), ...dealerCodes.slice(0, start)];
 
-  const integrations = new Map();
+  let integrations;
+  try {
+    integrations = await crmIntegrationService.getIntegrationsByDealerCode(catalystApp);
+  } catch (err) {
+    logger.error('outboundRetryScheduler', 'Routing-hold reprocess could not read dealer integrations', err);
+    return { ...summary, errored: 1 };
+  }
   const exhausted = new Set(); // dealers with nothing (more) to attempt this sweep
 
   // Two passes over the dealers: first each routable dealer gets a small share
@@ -317,10 +334,7 @@ async function reprocessRoutingHolds(catalystApp, { deadline } = {}) {
       if (remaining <= 0) break;
       if (exhausted.has(dealerCode)) continue;
       try {
-        if (!integrations.has(dealerCode)) {
-          integrations.set(dealerCode, await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode));
-        }
-        const integration = integrations.get(dealerCode);
+        const integration = integrations.get(dealerCode) || null;
         const isRoutable = integration
           && integration.integration_type === 'EXTERNAL_CRM'
           && !UNROUTABLE_INTEGRATION_STATUSES.includes(integration.status);

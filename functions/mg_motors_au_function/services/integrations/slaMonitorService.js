@@ -183,6 +183,64 @@ async function selectOverdueMappings(catalystApp, now, excludedIntegrationIds = 
 }
 
 /**
+ * Integration-level reasons the in-claim checks below skip a mapping WITHOUT
+ * writing anything (COST_OPTIMIZATION_PLAN.md, Batch 2, F2). Such a mapping
+ * stays overdue, so before this screen it came back on every sweep and cost a
+ * claim insert, a claim delete and four reads each time (21 Oct: 16 AU008
+ * mappings of a Removed dealer, every sweep). Read once per sweep for the
+ * candidates' integrations only (two reads, none when nothing is overdue).
+ *
+ * Only no-write reasons are screened: an integration in an error status is
+ * still rotated under the claim, as before, so its leads' SLA restarts when it
+ * recovers. The in-claim checks stay as the safety net; this screen can only
+ * defer a lead to the next sweep, never decide an outcome.
+ *
+ * Returns { byId, excluded } (excluded: integration ROWID -> reason), or null
+ * when the screen could not be read (the sweep then runs as before).
+ */
+async function screenIntegrations(catalystApp, rows) {
+  const ids = [...new Set(rows
+    .map((wrapped) => String(wrapped[LEAD_INTEGRATIONS_TABLE].integration_id || '').replace(/\D/g, ''))
+    .filter(Boolean))];
+  if (!ids.length) return null;
+  try {
+    // Quoted ROWID / dealer_code IN lists: verified against live ZCQL on 22 Oct 2026.
+    const integrations = (await catalystApp.zcql().executeZCQLQuery(
+      `SELECT ROWID, dealer_code, crm_type, status, outbound_enabled, inbound_enabled, MODIFIEDTIME FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID IN (${ids.map((id) => `'${id}'`).join(', ')})`
+    )).map((wrapped) => wrapped[DEALER_INTEGRATIONS_TABLE]);
+    const byId = new Map(integrations.map((integration) => [String(integration.ROWID), integration]));
+    const codes = [...new Set(integrations.map((integration) => String(integration.dealer_code || '')).filter(Boolean))];
+    const dealerRows = codes.length
+      ? (await catalystApp.zcql().executeZCQLQuery(
+        `SELECT dealer_code, sync_status FROM dealers WHERE dealer_code IN (${codes.map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`
+      )).map((wrapped) => wrapped.dealers)
+      : [];
+    const isRemoved = (row) => String(row.sync_status || '').toLowerCase() === 'removed';
+
+    const excluded = new Map();
+    for (const id of ids) {
+      const integration = byId.get(id);
+      let reason = null;
+      if (!integration) reason = 'INTEGRATION_MISSING';
+      else if (pathPolicy.resolveBoolean(integration.outbound_enabled) === false) reason = 'OUTBOUND_DISABLED';
+      else if (integration.crm_type !== 'FUSION_SD' && pathPolicy.resolveBoolean(integration.inbound_enabled) === false) reason = 'INBOUND_DISABLED';
+      else {
+        // Excluded only when every row of the dealer says Removed (or there is
+        // none): the in-claim check reads one row, so a duplicate stays judged there.
+        const dealer = dealerRows.filter((row) => String(row.dealer_code) === String(integration.dealer_code));
+        if (!dealer.length) reason = 'DEALER_MISSING';
+        else if (dealer.every(isRemoved)) reason = 'DEALER_REMOVED';
+      }
+      if (reason) excluded.set(id, { dealerCode: integration?.dealer_code ?? null, reason });
+    }
+    return { byId, excluded };
+  } catch (err) {
+    logger.error('slaMonitorService', 'Integration screen failed; this sweep relies on the in-claim checks', err);
+    return null;
+  }
+}
+
+/**
  * @param {object} catalystApp
  * @param {Date}   [now]      the moment SLA age is measured against (tests inject it)
  * @param {object} [options]
@@ -233,10 +291,28 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
   };
   const { clockCol, backfilled } = await resolveClockColumn(catalystApp, { deadline, clock });
   if (spent()) return { ...exhausted(), ...(backfilled ? { backfilledDealerActionClock: backfilled } : {}) };
-  const { rows, overdue } = await selectOverdueMappings(catalystApp, now, [], clockCol, options.windowSequence);
+  let { rows, overdue } = await selectOverdueMappings(catalystApp, now, [], clockCol, options.windowSequence);
+  const screen = await screenIntegrations(catalystApp, rows);
+  const excludedIds = screen ? [...screen.excluded.keys()] : [];
+  const isExcluded = (wrapped) =>
+    excludedIds.includes(String(wrapped[LEAD_INTEGRATIONS_TABLE].integration_id || '').replace(/\D/g, ''));
+  const excludedUnhealthy = rows.filter(isExcluded).length;
+  if (excludedUnhealthy) {
+    if (overdue > rows.length) {
+      // More overdue rows exist than were read: read the window again without
+      // the excluded integrations, so their rows cannot crowd out workable ones.
+      ({ rows, overdue } = await selectOverdueMappings(catalystApp, now, excludedIds, clockCol, options.windowSequence));
+      rows = rows.filter((wrapped) => !isExcluded(wrapped));
+    } else {
+      rows = rows.filter((wrapped) => !isExcluded(wrapped));
+      overdue -= excludedUnhealthy;
+    }
+  }
   const results = {
     ...(isSlaDealerActionClockEnabled() ? { backfilledDealerActionClock: backfilled, dealerActionClock: clockCol } : {}),
     exemptNoReturnChannel: exempt,
+    excludedUnhealthy,
+    excludedIntegrations: screen ? [...screen.excluded.values()] : [],
     candidates: rows.length,
     overdue,
     checked: 0,
@@ -277,6 +353,15 @@ async function runSlaSweepInternal(catalystApp, now = new Date(), options = {}) 
       if (!mapping.integration_id) {
         await rotate(mapping);
         results.skippedUnhealthy += 1;
+        return;
+      }
+
+      // A Fusion dealer with no proven return channel is skipped without
+      // writing (below), so check it before paying for the claim (Batch 2).
+      // Cached per integration state, so the in-claim check reuses the answer.
+      const screened = screen?.byId.get(String(mapping.integration_id).replace(/\D/g, ''));
+      if (screened && await lacksReturnChannel(screened)) {
+        results.skippedNoReturnChannel += 1;
         return;
       }
 

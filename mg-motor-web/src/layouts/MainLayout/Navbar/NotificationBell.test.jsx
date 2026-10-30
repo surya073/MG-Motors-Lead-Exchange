@@ -1,3 +1,7 @@
+/* global globalThis */
+// This test drives React directly (createRoot + React's own act), not Testing
+// Library, so these two Testing Library rules do not apply here.
+/* eslint-disable testing-library/no-unnecessary-act, testing-library/no-render-in-setup */
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import NotificationBell from "./NotificationBell";

@@ -156,6 +156,9 @@ test('the ordinary (paced) sweep still honours next_retry_at: not-yet-due rows a
   _resetForTests();
   const results = await outboundRetryScheduler.runOutboundRetrySweep(db.app);
 
-  assert.equal(results.skippedNotDue, 1);
+  // Batch 3 (cost): the not-yet-due row is now left out by the query itself,
+  // so it is never read (skippedNotDue counts only rows read and then found not due).
+  assert.equal(results.totalCandidates, 2);
+  assert.equal(results.skippedNotDue, 0);
   assert.equal(delivered.length, 2);
 });

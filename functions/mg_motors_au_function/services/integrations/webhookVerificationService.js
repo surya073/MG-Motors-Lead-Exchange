@@ -102,20 +102,70 @@ async function loadTokenSecrets(catalystApp, integration) {
 const STANDARD_WEBHOOK_TOLERANCE_SECONDS = 300;
 
 /**
- * The HMAC key(s) a stored signing secret may stand for. `whsec_<base64>` is
- * the Standard Webhooks form and is decoded. Without the prefix the encoding
- * is unconfirmed (FUSION_REMEDIATION_PLAN.md Q20), so the secret is tried as
- * given and, when it is valid base64, decoded too.
+ * The HMAC key(s) a stored signing secret may stand for, as { form, key }.
+ * `whsec_<base64>` is the Standard Webhooks form and is decoded. Fusion SD
+ * issues it with its own prefix in front (`lapi_whsec_<base64>`, seen in its
+ * 1Password connection details, 27 Oct 2026); the part after `whsec_` is
+ * decoded the same way, and the whole string is still tried as given.
+ * Without either prefix the encoding is unconfirmed (FUSION_REMEDIATION_PLAN
+ * .md Q20), so the secret is tried as given and, when it is valid base64,
+ * decoded too.
  */
 function signingKeys(secret) {
   const text = String(secret || '').trim();
   if (!text) return [];
-  if (text.startsWith('whsec_')) return [Buffer.from(text.slice('whsec_'.length), 'base64')];
-  const keys = [Buffer.from(text, 'utf8')];
+  if (text.startsWith('whsec_')) return [{ form: 'whsec', key: Buffer.from(text.slice('whsec_'.length), 'base64') }];
+  const keys = [{ form: 'text', key: Buffer.from(text, 'utf8') }];
+  const prefixed = /^[A-Za-z0-9]+_whsec_([A-Za-z0-9+/]+={0,2})$/.exec(text);
+  if (prefixed && prefixed[1].length % 4 === 0) {
+    keys.push({ form: 'prefixed-whsec', key: Buffer.from(prefixed[1], 'base64') });
+  }
   if (/^[A-Za-z0-9+/]+={0,2}$/.test(text) && text.length % 4 === 0) {
-    keys.push(Buffer.from(text, 'base64'));
+    keys.push({ form: 'base64', key: Buffer.from(text, 'base64') });
+  }
+  // A hex secret (e.g. the 64-character shared one) is often used as the
+  // bytes it encodes. Fusion's webhooks failed every form above on 23 Oct.
+  if (/^[0-9a-fA-F]+$/.test(text) && text.length % 2 === 0 && text.length >= 32) {
+    keys.push({ form: 'hex', key: Buffer.from(text, 'hex') });
   }
   return keys;
+}
+
+/**
+ * For a signature that matched none of the accepted forms: which common
+ * slip would have produced it, if any (a pasted label in front of the
+ * secret, signing the body alone, the {timestamp}.{body} form). Diagnostic
+ * only: these are never accepted. Returns a variant NAME, never key
+ * material or body content.
+ */
+function diagnoseSignatureMismatch(secret, webhookId, timestamp, rawBody, provided) {
+  const text = String(secret || '').trim();
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
+  const keyVariants = [
+    ['secret-as-text', Buffer.from(text, 'utf8')],
+    ['secret-hex', /^[0-9a-fA-F]+$/.test(text) && text.length % 2 === 0 ? Buffer.from(text, 'hex') : null],
+    ['note-label-prefix', Buffer.from(`FUSIONWEBHOOKSECRET=${text}`, 'utf8')],
+    ['note-label-prefix-newline', Buffer.from(`FUSIONWEBHOOKSECRET=\n${text}`, 'utf8')],
+    ['note-label-prefix-space', Buffer.from(`FUSIONWEBHOOKSECRET= ${text}`, 'utf8')],
+    ['whsec-prefix-as-text', Buffer.from(`whsec_${text}`, 'utf8')],
+  ].filter(([, key]) => key);
+  const contentVariants = [
+    ['id.timestamp.body', (h) => h.update(`${webhookId}.${timestamp}.`).update(body)],
+    ['timestamp.body', (h) => h.update(`${timestamp}.`).update(body)],
+    ['body-only', (h) => h.update(body)],
+  ];
+  for (const [keyName, key] of keyVariants) {
+    for (const [contentName, feed] of contentVariants) {
+      const hmac = feed(crypto.createHmac('sha256', key));
+      const digest = hmac.digest();
+      const asBase64 = digest.toString('base64');
+      const asHex = digest.toString('hex');
+      if (provided.some((sig) => timingSafeEqualBase64(sig, asBase64) || sig.toLowerCase() === asHex)) {
+        return `${keyName}/${contentName}`;
+      }
+    }
+  }
+  return null;
 }
 
 // Standard Webhooks secrets are 24 to 64 random bytes; fewer than this is
@@ -182,8 +232,19 @@ async function verifyStandardWebhook(catalystApp, integration, rawBody, headers)
     );
     return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
   }
-  const keys = signingKeys(signingSecret);
-  if (keys.length === 0) {
+  // The shared secret (FUSION_WEBHOOK_SECRET) is also accepted for the dealers
+  // FUSION_WEBHOOK_DEALER_CODES scopes it to: we sent it to Fusion via
+  // LastPass while some dealers store Fusion's own secret (27 Oct 2026).
+  const shared = getSharedWebhookConfig();
+  const sharedApplies = Boolean(
+    shared.secret && shared.dealerCodes.has(String(integration.dealer_code || '').toLowerCase()) &&
+    shared.secret !== String(signingSecret || '').trim()
+  );
+  const candidates = [
+    ...signingKeys(signingSecret).map((k) => ({ ...k, source: 'dealer', secret: signingSecret })),
+    ...(sharedApplies ? signingKeys(shared.secret).map((k) => ({ ...k, source: 'shared', secret: shared.secret })) : []),
+  ];
+  if (candidates.length === 0) {
     logger.error('webhookVerificationService', `No webhook signing secret configured for integration ${integration.ROWID}`);
     return { ok: false, reason: 'WEBHOOK_SIGNING_SECRET_MISSING' };
   }
@@ -194,11 +255,31 @@ async function verifyStandardWebhook(catalystApp, integration, rawBody, headers)
     .split(' ')
     .filter((entry) => entry.startsWith('v1,'))
     .map((entry) => entry.slice(3));
-  const valid = keys.some((key) => {
+  const matched = candidates.find(({ key }) => {
     const expected = signStandardWebhook(key, webhookId, timestampText, rawBody);
     return provided.some((signature) => timingSafeEqualBase64(signature, expected));
   });
-  if (!valid) return { ok: false, reason: 'INVALID_SIGNATURE' };
+  if (!matched) {
+    // Safe to log: header shape, clock skew, body size and a variant name.
+    // Never the secret, the signature value or the body.
+    const header = String(headers['webhook-signature']);
+    let wouldMatch = null;
+    try { wouldMatch = diagnoseSignatureMismatch(signingSecret, webhookId, timestampText, rawBody, provided); } catch { wouldMatch = null; }
+    const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
+    logger.error('webhookVerificationService', `Signature mismatch for integration ${integration.ROWID}: ${JSON.stringify({
+      // Lets Fusion and us find the same delivery; neither reveals the body.
+      webhookId: webhookId.slice(0, 80),
+      bodySha256: crypto.createHash('sha256').update(bodyBuffer).digest('hex').slice(0, 16),
+      candidates: candidates.map(({ source, form }) => `${source}/${form}`),
+      v1Entries: provided.length,
+      otherEntries: header.split(' ').filter((entry) => entry && !entry.startsWith('v1,')).map((entry) => entry.split(',')[0].slice(0, 10)),
+      signatureLengths: provided.map((sig) => sig.length),
+      clockSkewSeconds: now - timestamp,
+      bodyBytes: Buffer.isBuffer(rawBody) ? rawBody.length : Buffer.byteLength(String(rawBody)),
+      wouldMatch: wouldMatch || 'none',
+    })}`);
+    return { ok: false, reason: 'INVALID_SIGNATURE' };
+  }
 
   // A static token sent alongside must match as well (Q19). Fusion's own
   // webhooks carry only the signature headers.
@@ -208,10 +289,13 @@ async function verifyStandardWebhook(catalystApp, integration, rawBody, headers)
     const tokenValid = secrets.some((secret) => timingSafeEqual(String(tokenHeader), secret));
     if (!tokenValid) return { ok: false, reason: 'INVALID_TOKEN' };
   }
+  logger.info('webhookVerificationService', `Signature verified for integration ${integration.ROWID} with ${matched.source}/${matched.form}`);
+  // The fingerprint of the secret that actually matched: the SLA return-channel
+  // proof only counts a dealer's own stored secret (fusionReturnChannelProof).
   return {
     ok: true,
     method: 'STANDARD_WEBHOOKS',
-    signingSecretFingerprint: signingSecretFingerprint(signingSecret),
+    signingSecretFingerprint: signingSecretFingerprint(matched.secret),
   };
 }
 

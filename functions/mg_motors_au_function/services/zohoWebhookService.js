@@ -5,6 +5,7 @@ const { getZohoConfig } = require('../config/env');
 const { getAccessToken } = require('./zohoAuthService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
+const usageContext = require('./usageContext');
 const integrationAuthService = require('./integrations/integrationAuthService');
 const { deriveZohoWatchToken } = require('./integrations/webhookVerificationService');
 const { guardSweep } = require('./integrations/sweepOverlapGuard');
@@ -71,14 +72,14 @@ async function registerWatchChannelsInternal(catalystApp) {
   let response;
   try {
     logger.info('zohoWebhookService', `Calling watch API at ${apiDomain}/crm/v8/actions/watch (OEM)`);
-    response = await axios.post(watchUrl.toString(), payload, {
+    response = await usageContext.trackApiCall('mg', () => axios.post(watchUrl.toString(), payload, {
       ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
         'Content-Type': 'application/json',
       },
       timeout: ZOHO_REQUEST_TIMEOUT_MS,
-    });
+    }));
     logger.info('zohoWebhookService', 'Watch API call returned (OEM)');
   } catch (err) {
     const zohoError = `HTTP ${err.response?.status || 'network error'}`;
@@ -157,14 +158,14 @@ async function deregisterExistingChannel(catalystApp, dealerCode, accessToken, w
   const oldChannelId = existing[0].webhook_channels.channel_id;
   const scopeLabel = dealerCode || 'OEM';
   try {
-    await axios.delete(watchUrl.toString(), {
+    await usageContext.trackApiCall(dealerCode || 'mg', () => axios.delete(watchUrl.toString(), {
       ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
       },
       params: { channel_ids: String(oldChannelId) },
       timeout: ZOHO_REQUEST_TIMEOUT_MS,
-    });
+    }));
     logger.info('zohoWebhookService', `Deregistered old channel ${oldChannelId} for ${scopeLabel}`);
   } catch (err) {
     logger.error(
@@ -234,14 +235,14 @@ async function registerDealerWatchChannelInternal(catalystApp, integration) {
   let response;
   try {
     logger.info('zohoWebhookService', `Calling watch API at ${apiDomain}/crm/v8/actions/watch for ${integration.dealer_code}`);
-    response = await axios.post(watchUrl.toString(), payload, {
+    response = await usageContext.trackApiCall(integration.dealer_code, () => axios.post(watchUrl.toString(), payload, {
       ...safeRequestOptions(watchUrl),
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
         'Content-Type': 'application/json',
       },
       timeout: ZOHO_REQUEST_TIMEOUT_MS,
-    });
+    }));
     logger.info('zohoWebhookService', `Watch API call returned for ${integration.dealer_code}`);
   } catch (err) {
     const zohoError = `HTTP ${err.response?.status || 'network error'}`;

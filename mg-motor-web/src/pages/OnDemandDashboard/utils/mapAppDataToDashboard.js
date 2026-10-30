@@ -1,7 +1,7 @@
 ﻿export function mapAppDataToDashboard(summary) {
   if (!summary) return null;
 
-  const { totalDealers, totalLeads, leadStatusSummary, dealerStatusSummary, topDealers, activityTimeline, recentSyncLogs } = summary;
+  const { totalLeads, leadStatusSummary, dealerStatusSummary, topDealers, activityTimeline, recentSyncLogs } = summary;
 
   const deliveredPct = leadStatusSummary?.total
     ? Math.round((leadStatusSummary.delivered / leadStatusSummary.total) * 100)

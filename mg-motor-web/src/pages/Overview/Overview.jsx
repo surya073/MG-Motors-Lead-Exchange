@@ -1374,7 +1374,9 @@ function AIAssistantPanel({ isDealer }) {
   //                does that, matching the requested state table)
   // Deliberately does nothing while "processing" (transcribing/sending) —
   // there's no in-flight audio or recording to stop at that point.
-  const handleMicClick = useCallback(() => {
+  // A plain function, not useCallback: it must call this render's
+  // startRecording, whose onstop handler sends the current chat history.
+  function handleMicClick() {
     if (speaking) {
       const el = audioPlayerRef.current;
       if (el) {
@@ -1389,7 +1391,7 @@ function AIAssistantPanel({ isDealer }) {
     } else {
       startRecording();
     }
-  }, [speaking, recording]);
+  }
 
   async function handleVoiceMessage(blob) {
     setTranscribing(true);

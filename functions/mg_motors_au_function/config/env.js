@@ -355,6 +355,30 @@ function getFusionTokenTimeoutMs() {
   return ms > 0 ? ms : 10000;
 }
 
+/**
+ * USAGE_LOG: each request writes one `[usage]` log line with its Data Store
+ * operation counts, CRM calls and token refreshes, and every log line carries
+ * the request's id (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only, no
+ * behaviour change. On unless set to false. Read on every request.
+ */
+function isUsageLogEnabled() {
+  return String(process.env.USAGE_LOG || '').trim().toLowerCase() !== 'false';
+}
+
+/** Hourly usage totals in cost_usage_hourly (usageRollup.js). Default on; needs USAGE_LOG on too. */
+function isUsageRollupEnabled() {
+  return isUsageLogEnabled() && String(process.env.USAGE_ROLLUP || '').trim().toLowerCase() !== 'false';
+}
+
+/**
+ * Access key for the internal cost page (/internal/cost). Unset means the
+ * page and its data endpoint answer 404. Not a Catalyst user login: anyone
+ * with the key can read the usage totals (counts and route names only).
+ */
+function getCostDashboardKey() {
+  return String(process.env.COST_DASHBOARD_KEY || '').trim() || null;
+}
+
 module.exports = {
   getZohoConfig,
   getIntegrationCredentialsKey,
@@ -380,4 +404,7 @@ module.exports = {
   isKeepOutboundRetryOnInboundEnabled,
   isFusionTokenRetryEnabled,
   getFusionTokenTimeoutMs,
+  isUsageLogEnabled,
+  isUsageRollupEnabled,
+  getCostDashboardKey,
 };

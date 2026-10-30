@@ -36,6 +36,9 @@ Configure these Catalyst environment variables before deployment:
 - `ALLOW_INSECURE_WEBHOOKS` must be absent/false in production.
 - `gemini_api_key` (lowercase, exact casing matters — `process.env` is case-sensitive) and optionally `GEMINI_MODEL` (defaults to `gemini-3.5-flash`): power the Overview.jsx AI assistant's Gemini tool-calling (`routes/aiAssistantRoutes.js`) and the OnDemand Dashboard's chat (`services/onDemandAiService.js`). Both read the same var — get one key configured, not two.
 - `Sarvam_api_key` (exact casing) — optional; enables the AI assistant's voice input/output (speech-to-text + text-to-speech). Text-only chat works without it.
+- `USAGE_LOG` — omit it (on by default). Each request writes one `[usage]` log line with its Data Store op counts, CRM calls and token refreshes, and every log line carries `[cid=…]` (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only; `USAGE_LOG=false` turns it off.
+- `USAGE_ROLLUP` — omit it (on by default, needs `USAGE_LOG` on). Saves those usage counts as hourly totals per component in the `cost_usage_hourly` table (one insert per function instance about every 10 minutes). `USAGE_ROLLUP=false` turns the saving off.
+- `COST_DASHBOARD_KEY` — a long random value (e.g. `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`). It is the access key for the internal cost page at `/server/mg_motors_au_function/internal/cost`. That page is not in the MG portal and has no Catalyst login. Without this var the page answers 404.
 
 For each external dealer, complete and test the connection, generate a webhook secret, map every mandatory field shown in the UI, map every dealer status MG has approved, then register the webhook. Do not map `Junk Lead` to `Not Qualified`; both live AU008 and MG picklists contain the exact value `Junk Lead`.
 

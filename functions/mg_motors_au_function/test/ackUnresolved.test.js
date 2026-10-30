@@ -114,7 +114,7 @@ test("linking the dealer's lead id completes the delivery, and later edits are s
   assert.equal(mapping.external_crm_lead_id, fixtures.FUSION_TEST_LEAD_ID);
   assert.equal(db.tables.leads[0].sync_status, 'SYNCED');
   assert.equal(db.tables.leads[0].lead_status, 'Not Contacted', 'the acknowledgement a delivered create records');
-  assert.deepEqual(oemWrites.at(-1), { zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted' } });
+  assert.deepEqual(oemWrites.at(-1), { zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted', Lead_Exchanged: true } });
   assert.equal(logs().at(-1).happy_unhappy_path_name, 'Happy 1');
   assert.match(logs().at(-1).happy_unhappy_path_message, /linked/i);
 

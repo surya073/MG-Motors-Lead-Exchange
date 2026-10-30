@@ -13,7 +13,7 @@ import Pagination from "../../ui/Pagination/Pagination";
 import TableSkeleton from "../../ui/Skeleton/TableSkeleton";
 import "../../ui/Skeleton/Skeleton.css";
 import "../../ui/Skeleton/TableSkeleton.css";
-import { PhoneIcon, MailIcon } from "../../ui/icons";
+import { PhoneIcon } from "../../ui/icons";
 import { Alert, useAlerts } from "../../ui/Alerts/Alerts";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";

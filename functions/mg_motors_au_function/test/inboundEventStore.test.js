@@ -240,3 +240,29 @@ test('review: a body that cannot fit is stored without its payload but keeps its
   assert.ok(row.lease_until);
   assert.equal(row.external_lead_id, 'lead_01ABC');
 });
+
+test('with FUSION_INBOUND_V2, Fusion\'s enquiryStatus and leadId are stored for replay too (28 Oct 2026 body)', async (t) => {
+  const db = setup(t);
+  withEnv(t, { FUSION_INBOUND_V2: 'true' });
+  const body = bodyOf({
+    event_id: 'e1', lead_id: 'lead_01ABC', leadId: 'lead_01ABC', dealer_id: '725001', dealer_name: 'Buckby Motors',
+    pushed_at: '2026-10-28T00:29:44.838Z', enquiryStatus: 'Lost', lostReason: 'Bought-Another-Brand',
+  });
+  await crmIntegrationService.checkAndRecordWebhookEvent(db.app, FUSION, body, 'msg_e1', { externalLeadId: 'lead_01ABC' });
+  assert.deepEqual(JSON.parse(integrationAuthService.decrypt(db.tables.webhook_events[0].payload_encrypted)), {
+    lead_id: 'lead_01ABC', leadId: 'lead_01ABC', dealer_id: '725001', enquiryStatus: 'Lost', pushed_at: '2026-10-28T00:29:44.838Z',
+    lostReason: 'Bought-Another-Brand',
+  });
+});
+
+test('with FUSION_INBOUND_V2, a status under any other name is stored too, so it can be replayed once read (28 Oct 2026)', async (t) => {
+  const db = setup(t);
+  withEnv(t, { FUSION_INBOUND_V2: 'true' });
+  const body = bodyOf({
+    lead_id: 'lead_01ABC', dealer_id: '725001', first_name: 'Jane', enquiry_status: 'Lost', pushed_at: '2026-10-28T00:29:44.838Z',
+  });
+  await crmIntegrationService.checkAndRecordWebhookEvent(db.app, FUSION, body, 'msg_e2', { externalLeadId: 'lead_01ABC' });
+  assert.deepEqual(JSON.parse(integrationAuthService.decrypt(db.tables.webhook_events[0].payload_encrypted)), {
+    lead_id: 'lead_01ABC', dealer_id: '725001', enquiry_status: 'Lost', pushed_at: '2026-10-28T00:29:44.838Z',
+  });
+});

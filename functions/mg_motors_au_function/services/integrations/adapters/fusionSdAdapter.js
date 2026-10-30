@@ -2,6 +2,7 @@
 
 const axios = require('axios');
 const logger = require('../../../utils/logger');
+const usageContext = require('../../usageContext');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
 const { RESERVED_TARGET_SEGMENTS } = require('../leadMappingService');
@@ -299,7 +300,7 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
   const url = await assertSafeUrl(`${integration.base_url}${integration.create_lead_endpoint}`);
   const body = bodyWithinLimit(payload);
 
-  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
+  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => usageContext.trackApiCall(integration.dealer_code, () => axios.request({
     method: integration.http_method || 'POST',
     url: url.toString(),
     ...safeRequestOptions(url),
@@ -313,7 +314,7 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
     data: body,
     maxBodyLength: MAX_BODY_BYTES,
     timeout: 10000,
-  }));
+  })));
   if (error) {
     logger.error(
       'fusionSdAdapter',
@@ -427,7 +428,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const url = await assertSafeUrl(`${integration.base_url}${updatePath(integration, externalLeadId)}`);
   const body = bodyWithinLimit(payload);
 
-  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => axios.request({
+  const { response, error } = await sendWithTokenRetry(catalystApp, integration, (accessToken) => usageContext.trackApiCall(integration.dealer_code, () => axios.request({
     method: 'PATCH',
     url: url.toString(),
     ...safeRequestOptions(url),
@@ -438,7 +439,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
     data: body,
     maxBodyLength: MAX_BODY_BYTES,
     timeout: 10000,
-  }));
+  })));
   if (error) {
     if (isUpdatesNotEnabled(error)) {
       logger.info(

@@ -64,6 +64,30 @@ test('translator: a missing or blank lead_id gives no external id; a body that i
   assert.equal(translateFusionWebhook([], FIELD_PRESET).externalLeadId, null);
 });
 
+// Fusion's reworked webhook (Buckby, 28 Oct 2026): the status comes as
+// enquiryStatus, and the id as leadId as well as lead_id. Before this was
+// read, every live call was acknowledged as "no status" and MG never changed.
+const REWORKED_BODY = {
+  event_id: '8206852615287_f1xkkfm1', lead_id: fixtures.FUSION_TEST_LEAD_ID, dealer_id: '725001',
+  dealer_name: 'Buckby Motors', enquiry_id: '0AK4E4nNuRsFRthSWJQb', pushed_at: '2026-10-28T00:29:44.838Z',
+  update_url: 'https://app.fusionamspro.com/api/leadapi/v1/leads/x',
+  enquiryStatus: 'Lost', lostReason: 'Bought-Another-Brand', lostSubReason: null, leadId: fixtures.FUSION_TEST_LEAD_ID,
+};
+
+test('translator: Fusion\'s enquiryStatus is read as the status; lostReason and the rest are ignored', () => {
+  const { externalLeadId, record } = translateFusionWebhook(REWORKED_BODY, FIELD_PRESET);
+  assert.equal(externalLeadId, fixtures.FUSION_TEST_LEAD_ID);
+  assert.deepEqual(record, { enquiryStatus: 'Lost', modified_at: '2026-10-28T00:29:44.838Z' });
+});
+
+test('translator: status wins over enquiryStatus; leadId is used only without lead_id; blanks fall through', () => {
+  assert.equal(translateFusionWebhook({ lead_id: 'l', status: 'Open', enquiryStatus: 'Lost' }, FIELD_PRESET).record.enquiryStatus, 'Open');
+  assert.equal(translateFusionWebhook({ lead_id: 'l', status: ' ', enquiryStatus: 'Lost' }, FIELD_PRESET).record.enquiryStatus, 'Lost');
+  assert.equal(translateFusionWebhook({ lead_id: 'l', enquiryStatus: null }, FIELD_PRESET).record.enquiryStatus, undefined);
+  assert.equal(translateFusionWebhook({ leadId: 'lead_2', enquiryStatus: 'Open' }, FIELD_PRESET).externalLeadId, 'lead_2');
+  assert.equal(translateFusionWebhook({ lead_id: 'lead_1', leadId: 'lead_2' }, FIELD_PRESET).externalLeadId, 'lead_1');
+});
+
 function withFlag(t, value) {
   const before = process.env.FUSION_INBOUND_V2;
   if (value === null) delete process.env.FUSION_INBOUND_V2;
@@ -142,4 +166,60 @@ test('flag on: a GENERIC_REST dealer\'s body is processed exactly as before', as
   );
   assert.equal(result.ok, true);
   assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead', Nature_of_enquiry: 'Walk In' });
+});
+
+test('flag on: Fusion\'s reworked body (enquiryStatus Lost) updates MG to Lost Lead', async (t) => {
+  withFlag(t, 'true');
+  const harness = withPresets(t);
+  const result = await receive(harness, REWORKED_BODY);
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, undefined);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: {
+    Lead_Status: 'Lost Lead', Reason_for_Lost: 'Bought Other Make',
+    Reason_For_Loss_Other: 'Dealer (Fusion): Bought Another Brand', Lost_Date: '2026-10-28',
+  } }]);
+});
+
+// 28 Oct 2026: keep a renamed status from being acknowledged unread again,
+// and match Fusion's code-form statuses (the spec lists `prospectLost`).
+test('flag on: Fusion\'s code form prospectLost maps like Prospect Lost (MG Not Qualified)', async (t) => {
+  withFlag(t, 'true');
+  const harness = withPresets(t);
+  const result = await receive(harness, { ...REWORKED_BODY, enquiryStatus: 'prospectLost' });
+  assert.equal(result.ok, true);
+  assert.equal(result.held, undefined);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Qualified' } }]);
+});
+
+test('flag on: a status under a name we do not read is logged as a mapping failure, without its value, and not written', async (t) => {
+  withFlag(t, 'true');
+  const harness = withPresets(t);
+  const { enquiryStatus, ...rest } = REWORKED_BODY;
+  const result = await receive(harness, { ...rest, enquiryStatus: null, enquiry_status: enquiryStatus });
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'UNREAD_STATUS_FIELD');
+  assert.equal(result.held, true, 'held, so the event is PENDING rather than SUCCESS');
+  assert.deepEqual(result.fields, ['enquiry_status']);
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'HELD');
+  assert.equal(harness.oemWrites.length, 0);
+  const log = harness.logs().find((row) => row.error_message?.startsWith('UNREAD_STATUS_FIELD'));
+  assert.ok(log, 'a FAILED log names the field');
+  assert.equal(log.status, 'FAILED');
+  assert.equal(log.error_message.includes('Lost'), false, 'the value is not logged');
+});
+
+test('flag on: null status-like fields (Fusion sends absent values as null) raise nothing', async (t) => {
+  withFlag(t, 'true');
+  const harness = withPresets(t);
+  const result = await receive(harness, { ...REWORKED_BODY, enquiryStatus: null, testDriveStatus: null, lostReason: null });
+  assert.equal(result.reason, 'NO_STATUS_IN_WEBHOOK');
+  assert.equal(harness.logs().length, 0);
+});
+
+test('translator: a dealer whose status mapping names its own field is read from that field (per-dealer map)', () => {
+  const mappings = FIELD_PRESET.map((m) => (m.source_field === 'lead_status' ? { ...m, target_field: 'dealerStage' } : m));
+  const { record } = translateFusionWebhook({ lead_id: 'lead_1', dealerStage: 'Lost' }, mappings);
+  assert.equal(record.dealerStage, 'Lost');
+  // The standard names still win when present.
+  assert.equal(translateFusionWebhook({ lead_id: 'lead_1', enquiryStatus: 'Open', dealerStage: 'Lost' }, mappings).record.dealerStage, 'Open');
 });

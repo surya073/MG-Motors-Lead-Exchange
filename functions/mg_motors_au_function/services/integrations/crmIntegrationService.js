@@ -209,6 +209,28 @@ async function getIntegrationByDealerCode(catalystApp, dealerCode) {
   return rows.length > 0 ? rows[0][DEALER_INTEGRATIONS_TABLE] : null;
 }
 
+/**
+ * Every dealer integration, keyed by dealer_code (the first row by ROWID when a
+ * code repeats). The table holds one row per onboarded dealer, so a sweep that
+ * needs many dealers' integrations reads it once instead of once per dealer:
+ * the routing-hold sweep looked up ~124 dealer codes per run, almost all of
+ * them dealers with no integration (27 Oct 2026).
+ */
+async function getIntegrationsByDealerCode(catalystApp) {
+  const byCode = new Map();
+  const PAGE = 300; // ZCQL's row cap per query
+  for (let offset = 0; ; offset += PAGE) {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT * FROM ${DEALER_INTEGRATIONS_TABLE} ORDER BY ROWID ASC LIMIT ${offset + 1}, ${PAGE}`
+    );
+    for (const row of rows) {
+      const integration = row[DEALER_INTEGRATIONS_TABLE];
+      if (integration && !byCode.has(integration.dealer_code)) byCode.set(integration.dealer_code, integration);
+    }
+    if (rows.length < PAGE) return byCode;
+  }
+}
+
 // Read once per dealer per sweep when MAPPING_CACHE_PER_RUN is on (Batch 9a).
 async function getFieldMappings(catalystApp, integrationId) {
   return cachedForRun('field', integrationId, async () => {
@@ -574,9 +596,26 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings, { crmType,
     );
   }
 
+  // Lead outcome (CRM fields for Exchange, Fusion SD Map, 28 Oct 2026): an
+  // order outcome is Won at Fusion and a Lost outcome is Lost, whatever the
+  // lead's status maps to. Test Drive and Outcome Pending leave the status.
+  const outcomeStatus = crmType === 'FUSION_SD' && FUSION_OUTCOME_STATUS[String(leadRow.enquiry_outcome || '').trim().toLowerCase()];
+  if (outcomeStatus && statusFieldMapping) payload[statusFieldMapping.target_field] = outcomeStatus;
+
   if (crmType === 'FUSION_SD') applyFusionPayloadRules(payload, fieldMappings, operation);
   return payload;
 }
+
+// MG's labels and stored values (Retail Order = Purchase, On-Sold Demo =
+// On-Sold; MG Leads.Enquiry_Outcome, 28 Oct 2026).
+const FUSION_OUTCOME_STATUS = Object.freeze({
+  'retail order': 'Won',
+  purchase: 'Won',
+  'fleet order': 'Won',
+  'on-sold demo': 'Won',
+  'on-sold': 'Won',
+  lost: 'Lost',
+});
 
 function validateIntegrationConfiguration(integration, fieldMappings, statusMappings, leadStatus) {
   const missingConfig = [];
@@ -978,6 +1017,10 @@ async function recordUnresolvedAcknowledgement(catalystApp, integration, leadRow
   return { skipped: true, reason: 'ACK_UNRESOLVED', scenarioCode: 'Unhappy 11' };
 }
 
+// What MG records when a dealer has accepted the lead (Happy 1): the dealer
+// acknowledgement, and MG's "Lead Exchanged" checkbox (MG, 28 Oct 2026).
+const DELIVERY_ACKNOWLEDGEMENT_FIELDS = Object.freeze({ Lead_Status: 'Not Contacted', Lead_Exchanged: true });
+
 /**
  * Links an ACK_UNRESOLVED lead to the dealer lead id an admin looked up, and
  * completes the delivery as a create would have (Happy 1): the mapping is
@@ -1009,7 +1052,7 @@ async function linkUnresolvedLead(catalystApp, integration, leadRow, externalLea
 
   let acknowledged = true;
   try {
-    await oemCrmService.updateOemLead(zohoLeadId, { Lead_Status: 'Not Contacted' });
+    await oemCrmService.updateOemLead(zohoLeadId, DELIVERY_ACKNOWLEDGEMENT_FIELDS);
   } catch (err) {
     acknowledged = false;
     logger.error('crmIntegrationService', `Acknowledgement write-back failed for linked lead ${zohoLeadId}`, err);
@@ -1221,7 +1264,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       operation === 'CREATE_LEAD' || existingMapping?.last_error === 'ZOHO_ACK_UPDATE_FAILED';
     if (needsAcknowledgementWriteback) {
       try {
-        await oemCrmService.updateOemLead(zohoLeadId, { Lead_Status: 'Not Contacted' });
+        await oemCrmService.updateOemLead(zohoLeadId, DELIVERY_ACKNOWLEDGEMENT_FIELDS);
         if (leadRow.ROWID) {
           await catalystApp.datastore().table(LEADS_TABLE).updateRow({
             ROWID: leadRow.ROWID,
@@ -1511,6 +1554,48 @@ const INTERNAL_FIELD_TO_ZOHO_API_FIELD = {
   // dealer_rejected_reason is deliberately ABSENT — the MG OEM Leads module has
   // no Dealer_Rejected_Reason field and Zoho rejects unknown names on write.
 };
+
+// Fusion's lost reason and sub-reason (28 Oct 2026), carried on the translated
+// record under a key no field mapping can name.
+const FUSION_LOST_DETAIL = '__fusionLost';
+
+// Fusion lost reasons (dealer list, e.g. "Bought-Private") onto MG's
+// Reason_for_Lost picklist; anything else is Other. Fusion's own wording, with
+// the sub-reason, always goes to Reason_For_Loss_Other so nothing is lost.
+const FUSION_LOST_REASON_TO_MG = Object.freeze({
+  'bought another brand': 'Bought Other Make',
+  'bought from another dealer': 'Bought Elsewhere',
+  'bought private': 'Bought Elsewhere',
+  'trade value': 'Trade-In',
+});
+
+function fusionLostReasonFields(lost) {
+  if (!lost || !lost.reason) return {};
+  const words = (value) => String(value).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const reason = words(lost.reason);
+  const fields = {
+    Reason_for_Lost: FUSION_LOST_REASON_TO_MG[reason.toLowerCase()] || 'Other',
+    Reason_For_Loss_Other: `Dealer (Fusion): ${reason}${lost.subReason ? ` / ${words(lost.subReason)}` : ''}`.slice(0, 2000),
+  };
+  const at = lost.at ? new Date(lost.at) : null;
+  if (at && !Number.isNaN(at.getTime())) {
+    // The dealer's date (Australia), not UTC.
+    fields.Lost_Date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(at);
+  }
+  return fields;
+}
+
+// The lost reason on the lead's timeline / integration log: what Fusion sent
+// and what MG received.
+function lostReasonChange(lost, mgFields) {
+  return {
+    field: 'lost_reason',
+    to: mgFields.Reason_for_Lost,
+    raw_dealer_value: [lost.reason, lost.subReason].filter(Boolean).join(' / '),
+    mg_text: mgFields.Reason_For_Loss_Other,
+    lost_date: mgFields.Lost_Date || null,
+  };
+}
 
 function toZohoApiFields(internalFieldsObject) {
   const zohoFields = {};
@@ -1824,13 +1909,27 @@ async function recordScenario(catalystApp, {
 function resolveInboundRecord(integration, externalPayload, fieldMappings) {
   if (integration.crm_type === 'FUSION_SD' && isFusionInboundV2Enabled()) {
     const translated = translateFusionWebhook(externalPayload, fieldMappings);
+    const record = translated.lost
+      ? { ...translated.record, [FUSION_LOST_DETAIL]: translated.lost }
+      : translated.record;
     return {
       externalLeadId: translated.externalLeadId,
-      record: translated.record,
+      record,
       hasStatus: Object.prototype.hasOwnProperty.call(translated.record, translated.statusTarget),
     };
   }
   return { externalLeadId: externalPayload.id || externalPayload.leadId, record: externalPayload, hasStatus: true };
+}
+
+// Top-level fields of a Fusion body whose name mentions a status and that
+// carry a value, other than the ones the translator reads. Names only: the
+// values are never logged.
+const READ_FUSION_STATUS_FIELDS = new Set(['status', 'enquiryStatus']);
+function unreadFusionStatusFields(body, dealerStatusField) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return [];
+  return Object.keys(body).filter((key) => /status/i.test(key)
+    && !READ_FUSION_STATUS_FIELDS.has(key) && key !== dealerStatusField
+    && typeof body[key] === 'string' && body[key].trim() !== '');
 }
 
 async function processInboundWebhook(catalystApp, integration, externalPayload, zohoCrmService) {
@@ -1844,6 +1943,38 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
 
   const { externalLeadId, record: externalRecord, hasStatus } = resolveInboundRecord(integration, externalPayload, fieldMappings);
   if (externalLeadId && !hasStatus) {
+    // A status-like field we do not read (28 Oct 2026: Fusion renamed
+    // `status` to `enquiryStatus` and five updates were acknowledged unread).
+    // Raised as a mapping failure so it is noticed the same day; the stored
+    // event keeps the field, so it can be replayed once the reader is fixed.
+    const statusTarget = fieldMappings.find((m) => m.source_field === 'lead_status')?.target_field;
+    const unreadStatusFields = unreadFusionStatusFields(externalPayload, statusTarget);
+    if (unreadStatusFields.length > 0) {
+      // Held, not acknowledged as done: the event stays PENDING and the lead
+      // mapping HELD, like an unmapped status, so it is not counted as applied.
+      const heldMappingRows = await catalystApp.zcql().executeZCQLQuery(
+        `SELECT * FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integration.ROWID} AND external_crm_lead_id = '${safeQuoteForZcql(externalLeadId)}' LIMIT 1`
+      );
+      const heldMapping = heldMappingRows[0]?.[LEAD_INTEGRATIONS_TABLE] || null;
+      const heldReason = `UNREAD_STATUS_FIELD:${unreadStatusFields.join(',')}`;
+      if (heldMapping) await markMappingHeld(catalystApp, heldMapping.ROWID, heldReason);
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'EXTERNAL_CRM_TO_ZOHO',
+        operation: 'UPDATE_LEAD',
+        zoho_lead_id: heldMapping?.zoho_lead_id || null,
+        external_lead_id: externalLeadId,
+        status: 'FAILED',
+        error_message: `UNREAD_STATUS_FIELD: ${unreadStatusFields.join(', ')}`,
+        request_reference: requestReference,
+      }, {
+        scenarioCode: 'Unhappy 4',
+        scenarioMessage: `Mapping failure — Fusion sent ${unreadStatusFields.join(', ')}, which is not read as the status`,
+        reason: `Fusion webhook for ${externalLeadId} has a status field the middleware does not read (${unreadStatusFields.join(', ')}); nothing was applied to MG.`,
+      });
+      return { ok: true, skipped: true, held: true, reason: 'UNREAD_STATUS_FIELD', fields: unreadStatusFields };
+    }
     // Fusion notes, activities and the like: nothing for MG to take, and
     // nothing to hold. Acknowledged so Fusion does not retry it.
     logger.info(
@@ -2561,6 +2692,27 @@ async function attemptInboundLeadUpdate(
       await markMappingHeld(catalystApp, mapping.ROWID, 'OWNERSHIP_CONFLICT');
       return { skipped: true, held: true, reason: 'OWNERSHIP_CONFLICT', scenarioCode: 'Unhappy 6' };
     }
+    // Already Lost in MG, and Fusion sends Lost again with a (new or
+    // corrected) reason: the reason is still written, and only the reason.
+    // The status, the mirror and the echo marker are left as they are, so
+    // nothing is sent back to the dealer.
+    const lostOnly = mappedUpdate.lead_status === 'Lost Lead'
+      ? fusionLostReasonFields(externalRecord?.[FUSION_LOST_DETAIL]) : {};
+    if (Object.keys(lostOnly).length > 0) {
+      await zohoCrmService.updateOemLead(mapping.zoho_lead_id, lostOnly);
+      await writeLog(catalystApp, {
+        integration_id: integration.ROWID,
+        dealer_code: integration.dealer_code,
+        direction: 'EXTERNAL_CRM_TO_ZOHO',
+        operation: 'UPDATE_LEAD',
+        zoho_lead_id: mapping.zoho_lead_id,
+        external_lead_id: externalLeadId,
+        status: 'SUCCESS',
+        request_reference: requestReference,
+        field_changes: JSON.stringify([lostReasonChange(externalRecord[FUSION_LOST_DETAIL], lostOnly)]),
+      }, { scenarioCode: 'Happy 2', leadRow: existingLeadRow });
+      return { ok: true, reason: 'LOST_REASON_UPDATED', zohoLeadId: mapping.zoho_lead_id };
+    }
     return { skipped: true, reason: 'NO_CHANGES' };
   }
 
@@ -2583,7 +2735,11 @@ async function attemptInboundLeadUpdate(
     return { skipped: true, reason: 'ECHO_SUPPRESSED_INBOUND' };
   }
 
-  const zohoApiFields = toZohoApiFields(internalUpdate);
+  const zohoApiFields = {
+    ...toZohoApiFields(internalUpdate),
+    ...(internalUpdate.lead_status === 'Lost Lead' ? fusionLostReasonFields(externalRecord?.[FUSION_LOST_DETAIL]) : {}),
+  };
+  if (zohoApiFields.Reason_for_Lost) fieldChanges.push(lostReasonChange(externalRecord[FUSION_LOST_DETAIL], zohoApiFields));
 
   // Tracked separately from the try/catch below: MG's live Zoho record is
   // the system of record, and once updateOemLead() resolves, that write
@@ -2802,8 +2958,9 @@ function isDuplicateConstraintError(err) {
 // webhook_events.payload_encrypted is a Text column (10,000 characters).
 const MAX_STORED_PAYLOAD_LENGTH = 10000;
 // What replay needs from a Fusion body when FUSION_INBOUND_V2 translates it:
-// only the status comes back to MG (Q16), so nothing else is stored.
-const FUSION_REPLAY_FIELDS = ['lead_id', 'dealer_id', 'status', 'pushed_at'];
+// only the status comes back to MG (Q16), so nothing else is stored. Fusion
+// also names the status enquiryStatus and the id leadId (28 Oct 2026).
+const FUSION_REPLAY_FIELDS = ['lead_id', 'leadId', 'dealer_id', 'status', 'enquiryStatus', 'pushed_at', 'lostReason', 'lostSubReason'];
 
 function payloadToStore(integration, rawBody) {
   const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
@@ -2811,8 +2968,12 @@ function payloadToStore(integration, rawBody) {
   try {
     const body = JSON.parse(text);
     if (!body || typeof body !== 'object' || Array.isArray(body)) return text;
+    // Any other status-like field is kept too, so a renamed status can still
+    // be replayed once it is read (28 Oct 2026).
     return JSON.stringify(Object.fromEntries(
-      FUSION_REPLAY_FIELDS.filter((field) => field in body).map((field) => [field, body[field]])
+      Object.keys(body)
+        .filter((field) => FUSION_REPLAY_FIELDS.includes(field) || /status/i.test(field))
+        .map((field) => [field, body[field]])
     ));
   } catch {
     return text;
@@ -2985,6 +3146,7 @@ async function getLeadActivityTimeline(catalystApp, crmRecordId) {
 module.exports = {
   findDealerByCode,
   getIntegrationByDealerCode,
+  getIntegrationsByDealerCode,
   getFieldMappings,
   getStatusMappings,
   syncLeadToExternalCrm,

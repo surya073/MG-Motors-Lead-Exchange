@@ -56,9 +56,8 @@ under `/`. Route mounting order matters:
    `userManagement().getCurrentUser()` and stores `res.locals.catalystApp` /
    `res.locals.currentUser`, 401'ing anything without a session. Everything mounted after this
    (dealer/admin/lead/dashboard routes) can assume both are set.
-3. Legacy inline `/dealers` and `/leads` CRUD lives directly in `index.js` (pre-dates the
-   route-module split); newer functionality is added as its own file under `routes/` +
-   `services/`.
+3. All functionality lives in its own file under `routes/` + `services/`. (The legacy inline
+   `/dealers` and `/leads` CRUD that used to sit in `index.js` was removed on 27 Oct 2026.)
 
 Role checks (`middleware/requireAdminRole.js`, `requireSuperAdminRole.js`) compare
 `currentUser.role_details.role_id` against hardcoded Catalyst role IDs. **These role IDs and the
@@ -170,5 +169,5 @@ endpoints — it is meant to run *alongside*, not instead of, the paced sweeps.
   (Zoho client secret/refresh token, SMTP password, cron secret) committed in plaintext. Treat
   any value in that file as already-compromised/rotatable, not as a template to copy secrets into
   going forward — new secrets should go through Catalyst Console env vars, not this file.
-- Table/field IDs in `index.js` (e.g. `DEALERS_TABLE_ID`, `LEADS_TABLE_ID`) are hardcoded numeric
-  Catalyst datastore IDs specific to this project's environment.
+- Services address Data Store tables by name (e.g. `'leads'`, `'dealer_integrations'`); the old
+  numeric table IDs went away with the legacy `index.js` CRUD.

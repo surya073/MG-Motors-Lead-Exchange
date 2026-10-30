@@ -72,9 +72,9 @@ test('routing holds stop at the shared deadline and leave unstarted records unto
   })) });
   let now = 1000;
   t.mock.method(Date, 'now', () => now);
-  t.mock.method(crm, 'getIntegrationByDealerCode', async () => ({
+  t.mock.method(crm, 'getIntegrationsByDealerCode', async () => new Map([['D1', {
     ROWID: '1000', dealer_code: 'D1', integration_type: 'EXTERNAL_CRM', status: 'CONNECTED', MODIFIEDTIME: '2026-10-02 09:00:00:000',
-  }));
+  }]]));
   const send = t.mock.method(crm, 'syncLeadToExternalCrm', async () => { now = 2000; return { ok: true }; });
   const result = await retry._test.reprocessRoutingHolds(db.app, { deadline: 1500 });
   assert.equal(send.mock.callCount(), 1);

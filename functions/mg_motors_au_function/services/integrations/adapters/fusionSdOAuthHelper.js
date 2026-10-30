@@ -3,6 +3,7 @@
 const axios = require('axios');
 const integrationAuthService = require('../integrationAuthService');
 const logger = require('../../../utils/logger');
+const usageContext = require('../../usageContext');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { isFusionTokenRetryEnabled, getFusionTokenTimeoutMs } = require('../../../config/env');
 
@@ -59,8 +60,9 @@ async function requestNewToken(catalystApp, integration) {
     throw err;
   }
 
-  const postTokenRequest = () =>
-    axios.post(
+  const postTokenRequest = () => {
+    usageContext.countToken('refresh');
+    return axios.post(
       tokenUrl.toString(),
       'grant_type=client_credentials',
       {
@@ -70,6 +72,7 @@ async function requestNewToken(catalystApp, integration) {
         timeout: getFusionTokenTimeoutMs(),
       }
     );
+  };
 
   let response;
   try {
@@ -137,6 +140,7 @@ async function getAccessTokenForFusionSd(catalystApp, integration, { forceRefres
   const integrationId = integration.ROWID;
   const cached = tokenCache.get(integrationId);
   if (!forceRefresh && cached && cached.refreshAt > Date.now()) {
+    usageContext.countToken('hit');
     return cached.accessToken;
   }
 
@@ -144,6 +148,7 @@ async function getAccessTokenForFusionSd(catalystApp, integration, { forceRefres
   // progress, reuse it instead of starting a second concurrent request.
   const existingRefresh = inFlightRefreshes.get(integrationId);
   if (existingRefresh) {
+    usageContext.countToken('hit');
     return existingRefresh;
   }
 

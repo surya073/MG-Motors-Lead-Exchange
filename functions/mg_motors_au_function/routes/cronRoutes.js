@@ -11,10 +11,12 @@ const dealerReconciliationService = require('../services/integrations/dealerReco
 const dailyErrorReportService = require('../services/integrations/dailyErrorReportService');
 const webhookEventRetention = require('../services/integrations/webhookEventRetention');
 const logger = require('../utils/logger');
+const usageContext = require('../services/usageContext');
 const integrationAlertService = require('../services/integrations/integrationAlertService');
 const integrationAlertBatchService = require('../services/integrations/integrationAlertBatchService');
 const alertContext = require('../services/integrations/alertContext');
 const { syncModifiedLeads } = require('../services/leadSyncService');
+const dealerSyncService = require('../services/dealerSyncService');
 const dashboardStats = require('../services/dashboardStatsService');
 const { getOutboundRetryConfig, getCronWorkBudgetMs } = require('../config/env');
 
@@ -105,7 +107,7 @@ router.post('/cron/renew-webhook', async (req, res) => {
   }
 
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const result = await registerWatchChannels(catalystApp);
     logger.info('cronRoutes', 'Webhook channel renewed via cron', result);
     res.status(200).json({ success: true, ...result });
@@ -125,8 +127,9 @@ router.post('/cron/sync-modified-leads', async (req, res) => {
   }
 
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const result = await syncModifiedLeads(catalystApp, { triggeredBy: 'Cron' });
+    usageContext.annotateSweepOutcome(result);
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     logger.error('cronRoutes', 'Cron sync-modified-leads failed', err);
@@ -141,7 +144,7 @@ router.post('/cron/renew-dealer-webhooks', async (req, res) => {
   }
 
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     // Read completely in ordered pages: a bare SELECT silently stops at 300
     // rows, which would leave any dealer beyond that without a webhook renewal.
     const integrations = await dashboardStats.selectEveryRow(
@@ -200,9 +203,10 @@ router.post('/cron/retry-outbound-syncs', backgroundRun, async (req, res) => {
   }
 
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const results = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, deadlineOption(workDeadline(Date.now())));
     logger.info('cronRoutes', 'Outbound retry sweep completed via cron', results);
+    usageContext.annotateSweepOutcome(results);
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Outbound retry sweep cron failed', err);
@@ -238,11 +242,12 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
     const fastRecoverStartedAt = Date.now();
     const deadline = Math.min(workDeadline(fastRecoverStartedAt) ?? Infinity,
       fastRecoverStartedAt + FAST_RECOVER_BUDGET_MS);
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const results = {};
     // Due maintenance goes first because its narrow daily window may not be
     // present on the next invocation. It shares the same request deadline.
     if (isReconciliationDue()) {
+      usageContext.setStage('reconciliation');
       try {
         results.reconciliation = await dealerReconciliationService.runDealerReconciliation(catalystApp, {
           heldExistenceOnly: true, deadline,
@@ -254,6 +259,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
       }
     }
     if (Date.now() < deadline && webhookEventRetention.isRetentionDue()) {
+      usageContext.setStage('webhookEventRetention');
       try {
         results.webhookEventRetention = await webhookEventRetention.purgeOldWebhookEvents(catalystApp);
       } catch (err) {
@@ -261,10 +267,22 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         results.webhookEventRetention = { error: err.message };
       }
     }
+    // Trailing sync for Dealers notifications skipped during a burst (one
+    // read when nothing is pending).
+    if (Date.now() < deadline) {
+      usageContext.setStage('dealerSync');
+      try {
+        results.dealerSync = await dealerSyncService.runPendingDealerSync(catalystApp);
+      } catch (err) {
+        logger.error('cronRoutes', 'Pending dealer sync within fast recovery failed', err);
+        results.dealerSync = { error: err.message };
+      }
+    }
 
     const windowSequence = Math.floor(fastRecoverStartedAt / (2 * 60 * 1000 * 4));
     const stages = [
       async () => {
+        usageContext.setStage('outbound');
         const outbound = await outboundRetryScheduler.runOutboundRetrySweep(catalystApp, {
           ignoreSchedule: !getOutboundRetryConfig().fastRecoverHonourSchedule,
           includeRoutingHolds: true, deadline, windowSequence,
@@ -273,6 +291,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         if (outbound.recovered > 0) logger.info('cronRoutes', `Fast recovery delivered ${outbound.recovered} lead(s)`);
       },
       async () => {
+        usageContext.setStage('inboundReplay');
         try {
           results.inboundReplay = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, { deadline, windowSequence });
         } catch (err) {
@@ -281,6 +300,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         }
       },
       async () => {
+        usageContext.setStage('slaCheck');
         try {
           results.slaCheck = await slaMonitorService.runSlaSweep(catalystApp, new Date(), { deadline, windowSequence });
         } catch (err) {
@@ -289,6 +309,7 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
         }
       },
       async () => {
+        usageContext.setStage('alertBatch');
         try {
           results.alertBatch = await integrationAlertBatchService.flushIfWindowElapsed(catalystApp, { deadline });
         } catch (err) {
@@ -304,6 +325,8 @@ router.post('/cron/fast-recover', backgroundRun, async (req, res) => {
     for (let step = 0; step < stages.length; step += 1) {
       await stages[(first + step) % stages.length]();
     }
+    usageContext.setStage(null);
+    usageContext.annotateSweepOutcome(results);
     res.status(200).json({ success: true, mode: 'fast-recovery', results });
   } catch (err) {
     logger.error('cronRoutes', 'Fast recovery sweep failed', err);
@@ -317,8 +340,9 @@ router.post('/cron/replay-inbound-events', backgroundRun, async (req, res) => {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const results = await inboundReplayScheduler.runInboundReplaySweep(catalystApp, deadlineOption(workDeadline(Date.now())));
+    usageContext.annotateSweepOutcome(results);
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Inbound replay sweep failed', err);
@@ -332,8 +356,9 @@ router.post('/cron/check-lead-sla', backgroundRun, async (req, res) => {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const results = await slaMonitorService.runSlaSweep(catalystApp);
+    usageContext.annotateSweepOutcome(results);
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Lead SLA sweep failed', err);
@@ -347,12 +372,13 @@ router.post('/cron/reconcile-dealer-leads', backgroundRun, async (req, res) => {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const results = await dealerReconciliationService.runDealerReconciliation(catalystApp, deadlineOption(workDeadline(Date.now())));
+    usageContext.annotateSweepOutcome(results);
     res.status(200).json({ success: true, results });
   } catch (err) {
     logger.error('cronRoutes', 'Dealer reconciliation failed', err);
-    await alertReconciliationFailure(catalyst.initialize(req), err);
+    await alertReconciliationFailure(usageContext.initialize(catalyst, req), err);
     res.status(502).json({ success: false, error: err.message });
   }
 });
@@ -363,7 +389,7 @@ router.post('/cron/daily-error-report', async (req, res) => {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const report = await dailyErrorReportService.sendDailyErrorReport(catalystApp);
     let webhookEventRetentionResult;
     try {
@@ -392,7 +418,7 @@ router.post('/cron/test-alert', async (req, res) => {
   }
 
   try {
-    const catalystApp = catalyst.initialize(req);
+    const catalystApp = usageContext.initialize(catalyst, req);
     const integrationAlertService = require('../services/integrations/integrationAlertService');
 
     const result = await integrationAlertService.sendTestAlert(catalystApp);

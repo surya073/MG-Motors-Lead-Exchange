@@ -319,8 +319,6 @@ export default function UserManagementPage() {
     );
   };
 
-  const selfTag = () => <span className="user-mgmt__self-tag">You</span>;
-
   // Shared name/role cell content for editable state.
   const nameCell = (row) => {
     if (editingId === row.ROWID) {

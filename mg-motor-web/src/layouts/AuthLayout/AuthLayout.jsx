@@ -123,7 +123,7 @@ export default function AuthLayout() {
         <div className="auth-layout__panel-inner">
           <Outlet />
         </div>
-        <div className="auth-layout__panel-footer">/// MG MORRIS GARAGES ///</div>
+        <div className="auth-layout__panel-footer">{"/// MG MORRIS GARAGES ///"}</div>
       </div>
     </div>
   );

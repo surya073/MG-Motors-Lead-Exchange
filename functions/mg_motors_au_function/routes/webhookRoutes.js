@@ -3,13 +3,14 @@
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
 const { getZohoConfig, isFusionInboundV2Enabled } = require('../config/env');
-const { syncDealers } = require('../services/dealerSyncService');
+const { syncDealersCoalesced } = require('../services/dealerSyncService');
 const { syncLeadsByIds, syncModifiedLeads } = require('../services/leadSyncService');
 const zohoCrmService = require('../services/zohoCrmService');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
 const webhookVerificationService = require('../services/integrations/webhookVerificationService');
 const fusionReturnChannelProof = require('../services/integrations/fusionReturnChannelProof');
 const logger = require('../utils/logger');
+const usageContext = require('../services/usageContext');
 
 const router = express.Router();
 
@@ -41,6 +42,29 @@ async function recordReturnChannelProof(catalystApp, integration, authResult, du
   }
 }
 
+// What a Leads notification did, for its usage line: counts and labels only.
+function crmNotifyUsage(body, ids, result) {
+  const counts = {
+    fetched: result?.totalRecordsFetched ?? 0,
+    inserted: result?.recordsInserted ?? 0,
+    updated: result?.recordsUpdated ?? 0,
+    unchanged: result?.recordsUnchanged ?? 0,
+    failed: result?.recordsFailed ?? 0,
+    removed: result?.recordsRemoved ?? 0,
+  };
+  let outcome = 'unchanged';
+  if (counts.failed > 0) outcome = counts.inserted + counts.updated + counts.removed > 0 ? 'partial' : 'failed';
+  else if (counts.inserted + counts.updated + counts.removed > 0) outcome = 'changed';
+  return {
+    trigger: 'Zoho CRM',
+    module: 'Leads',
+    operation: String(body?.operation || '') || null,
+    ids: ids.length,
+    outcome,
+    result: counts,
+  };
+}
+
 router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
   try {
     const { webhookToken } = getZohoConfig();
@@ -52,10 +76,11 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
     }
 
     const moduleName = req.body?.module;
-    const catalystApp = catalyst.initialize(req);
+    usageContext.annotate({ trigger: 'Zoho CRM', module: moduleName || null });
+    const catalystApp = usageContext.initialize(catalyst, req);
 
     if (moduleName === 'Dealers') {
-      const result = await syncDealers(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
+      const result = await syncDealersCoalesced(catalystApp, { trigger: 'Webhook', triggeredBy: 'Zoho CRM' });
       return res.status(200).json({ received: true, result });
     } else if (moduleName === 'Leads') {
       // Zoho's notification names the affected records, so only those are
@@ -65,6 +90,7 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
       const result = ids.length > 0
         ? await syncLeadsByIds(catalystApp, ids, { operation: req.body?.operation, trigger: 'Webhook', triggeredBy: 'Zoho CRM' })
         : await syncModifiedLeads(catalystApp, { triggeredBy: 'Zoho CRM' });
+      usageContext.annotate(crmNotifyUsage(req.body, ids, result));
       return res.status(200).json({ received: true, result });
     }
 
@@ -77,9 +103,10 @@ router.post('/webhooks/crm-notify', express.json(), async (req, res) => {
 });
 
 router.post('/webhooks/dealers/:dealerCode', express.raw({ type: 'application/json' }), async (req, res) => {
-  const catalystApp = catalyst.initialize(req);
+  const catalystApp = usageContext.initialize(catalyst, req);
   const { dealerCode } = req.params;
   const rawBody = req.body; // Buffer
+  usageContext.annotate({ dealerCode });
 
   try {
     const dealer = await crmIntegrationService.findDealerByCode(catalystApp, dealerCode);

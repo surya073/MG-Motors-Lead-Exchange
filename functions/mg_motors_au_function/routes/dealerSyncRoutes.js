@@ -5,6 +5,8 @@ const { fetchDealerMaster } = require('../services/zohoCrmService');
 const { syncDealers } = require('../services/dealerSyncService');
 const { syncLeads } = require('../services/leadSyncService');
 const logger = require('../utils/logger');
+const { requireAdminRole } = require('../middleware/requireAdminRole');
+const { requireAdminOrViewRole } = require('../middleware/requireAdminOrViewRole');
 
 const router = express.Router();
 
@@ -35,7 +37,7 @@ function mapCrmDealerToResponse(crmRecord) {
  * Fetch-only: pulls Dealers from Zoho CRM, maps to the app's clean
  * shape, and returns it. No Catalyst Datastore writes here.
  */
-router.get('/crm/dealers', async (req, res) => {
+router.get('/crm/dealers', requireAdminOrViewRole, async (req, res) => {
   try {
     const crmRecords = await fetchDealerMaster();
 
@@ -76,7 +78,7 @@ router.get('/crm/dealers', async (req, res) => {
  * `dealers` table (insert new, update changed, skip unchanged), and logs
  * the run to sync_logs.
  */
-router.post('/sync/dealers', async (req, res) => {
+router.post('/sync/dealers', requireAdminRole, async (req, res) => {
   try {
     const catalystApp = res.locals.catalystApp;
     const currentUser = res.locals.currentUser;
@@ -100,7 +102,7 @@ router.post('/sync/dealers', async (req, res) => {
  * `leads` table (insert new, update changed, skip unchanged), keyed on
  * crm_record_id, and logs the run to sync_logs.
  */
-router.post('/sync/leads', async (req, res) => {
+router.post('/sync/leads', requireAdminRole, async (req, res) => {
   if (leadSyncRunning) {
     return res.status(409).json({ success: false, error: 'A lead sync is already running. Wait for it to finish.' });
   }

@@ -91,7 +91,12 @@ test('dealer scope avoids both out-of-scope candidates and their channel proofs'
   const result = await sweep(db);
   assert.equal(result.candidates, 1);
   assert.deepEqual(result.exemptNoReturnChannel, []);
-  assert.equal(db.queries.filter((sql) => sql.includes('FROM dealer_integrations')).length, 1);
+  // Batch 2 (cost): one screen read of the candidates' integrations by ROWID,
+  // plus the in-claim read; never a read of out-of-scope integrations.
+  const integrationReads = db.queries.filter((sql) => sql.includes('FROM dealer_integrations'));
+  assert.equal(integrationReads.length, 2);
+  const id = db.tables.lead_integrations.find((m) => m.dealer_code === 'Z1').integration_id;
+  assert.ok(integrationReads.every((sql) => sql.includes(`WHERE ROWID IN ('${id}')`) || sql.includes(`WHERE ROWID = ${id} `)), integrationReads.join('\n'));
 });
 
 for (const state of ['Removed lead', 'Reassigned lead', 'Removed dealer', 'Missing dealer', 'Consent withdrawn', 'Consent unknown', 'Disabled integration', 'Outbound disabled', 'Inbound disabled']) {

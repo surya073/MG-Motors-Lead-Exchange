@@ -4,6 +4,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const integrationAuthService = require('../integrationAuthService');
 const logger = require('../../../utils/logger');
+const usageContext = require('../../usageContext');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { assertZohoEndpoint } = require('./zohoEndpointPolicy');
 
@@ -54,10 +55,14 @@ async function getAccessTokenForDealerZoho(catalystApp, integration) {
   if ((invalidationEpochs.get(id) || 0) !== epoch) throw changedConfiguration();
   const cached = tokenCache.get(id);
   if (cached?.generation === snapshot.generation && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS) {
+    usageContext.countToken('hit');
     return cached.accessToken;
   }
   const existing = inFlightRefreshes.get(id);
-  if (existing?.generation === snapshot.generation) return existing.promise;
+  if (existing?.generation === snapshot.generation) {
+    usageContext.countToken('hit');
+    return existing.promise;
+  }
 
   const flight = { generation: snapshot.generation };
   flight.promise = refreshDealerZohoToken(integration, snapshot.credentials, tokenUrl).then(async (token) => {
@@ -82,6 +87,7 @@ async function refreshDealerZohoToken(integration, credentials, tokenUrl) {
 
   let response;
   try {
+    usageContext.countToken('refresh');
     response = await axios.post(tokenUrl.toString(), new URLSearchParams({
       refresh_token: refreshToken,
       client_id: clientId,

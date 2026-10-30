@@ -167,8 +167,10 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+// Fusion's spec lists its statuses as codes (`prospectLost`) as well as
+// names (`Prospect Lost`); a camelCase value is split into words first.
 function normalizeStatus(value) {
-  return normalizeText(value)
+  return normalizeText(String(value ?? '').replace(/([a-z])([A-Z])/g, '$1 $2'))
     .replace(/[-_]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

@@ -3,6 +3,7 @@
 const axios = require('axios');
 const { getZohoConfig, zohoTimeoutOption } = require('../config/env');
 const logger = require('../utils/logger');
+const usageContext = require('./usageContext');
 
 /**
  * zohoAuthService.js
@@ -44,10 +45,12 @@ async function getAccessToken() {
   const now = Date.now();
 
   if (cachedToken && now < cachedTokenExpiryMs - EXPIRY_BUFFER_MS) {
+    usageContext.countToken('hit');
     return cachedToken;
   }
 
   if (inFlightRefresh) {
+    usageContext.countToken('hit');
     return inFlightRefresh;
   }
 
@@ -62,6 +65,7 @@ async function refreshAccessToken() {
 
   let response;
   try {
+    usageContext.countToken('refresh');
     response = await axios.post(
       `${accountsDomain}/oauth/v2/token`,
       null,

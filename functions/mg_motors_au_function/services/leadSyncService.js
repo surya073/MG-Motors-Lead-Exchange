@@ -393,43 +393,49 @@ async function notifyDealerOfNewLead(catalystApp, { dealerCode, customerName, ve
  * see the file-level note above. This function still swallows its own
  * errors internally, so awaiting it can never fail the sync loop.
  */
-async function dispatchNewLeadToDealer(catalystApp, leadRow) {
+/**
+ * Where a new lead goes: held (dealer unusable, or no approved integration
+ * mode), an external CRM, or the portal. Read before the lead is inserted, so
+ * a hold is saved by the insert itself instead of a second write
+ * (COST_OPTIMIZATION_PLAN.md, Batch 4, F1).
+ */
+async function resolveNewLeadRoute(catalystApp, dealerCode) {
+  const dealer = dealerCode ? await crmIntegrationService.findDealerByCode(catalystApp, dealerCode) : null;
+  if (!dealer || dealer.sync_status === 'Removed') {
+    return { hold: { errorCode: 'DEALER_ROUTING_INVALID', reason: 'Assigned Dealer Master record is missing, inactive, or removed.' } };
+  }
+  const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+  if (integration && integration.integration_type === 'EXTERNAL_CRM') return { integration };
+  if (!integration || integration.integration_type !== 'PORTAL') {
+    return { hold: { errorCode: 'INTEGRATION_NOT_CONFIGURED', reason: 'The assigned dealer has no approved Lead Exchange integration mode.' } };
+  }
+  return { portal: true };
+}
+
+/**
+ * @param {object} [route] resolveNewLeadRoute's answer when the caller read it
+ *   before inserting the lead; a hold in it was saved by that insert.
+ */
+async function dispatchNewLeadToDealer(catalystApp, leadRow, route) {
   const stateBeforeDispatch = leadRow.sync_status;
+  const holdSaved = Boolean(route?.hold);
   try {
-    const dealer = leadRow.dealer_code
-      ? await crmIntegrationService.findDealerByCode(catalystApp, leadRow.dealer_code)
-      : null;
-    const dealerIsUsable = dealer && dealer.sync_status !== 'Removed';
-    if (!dealerIsUsable) {
-      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
+    const resolved = route || await resolveNewLeadRoute(catalystApp, leadRow.dealer_code);
+    if (resolved.hold) {
+      if (!holdSaved) await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
       await crmIntegrationService.recordScenario(catalystApp, {
         scenarioCode: 'Unhappy 5',
         dealerCode: leadRow.dealer_code,
         leadRow,
-        errorCode: 'DEALER_ROUTING_INVALID',
-        reason: 'Assigned Dealer Master record is missing, inactive, or removed.',
+        errorCode: resolved.hold.errorCode,
+        reason: resolved.hold.reason,
         notify: true,
       });
-      return { held: true, scenarioCode: 'Unhappy 5', reason: 'DEALER_ROUTING_INVALID' };
+      return { held: true, scenarioCode: 'Unhappy 5', reason: resolved.hold.errorCode };
     }
 
-    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
-
-    if (integration && integration.integration_type === 'EXTERNAL_CRM') {
-      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
-    }
-
-    if (!integration || integration.integration_type !== 'PORTAL') {
-      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
-      await crmIntegrationService.recordScenario(catalystApp, {
-        scenarioCode: 'Unhappy 5',
-        dealerCode: leadRow.dealer_code,
-        leadRow,
-        errorCode: 'INTEGRATION_NOT_CONFIGURED',
-        reason: 'The assigned dealer has no approved Lead Exchange integration mode.',
-        notify: true,
-      });
-      return { held: true, scenarioCode: 'Unhappy 5', reason: 'INTEGRATION_NOT_CONFIGURED' };
+    if (resolved.integration) {
+      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, resolved.integration, leadRow);
     }
 
     // Explicit PORTAL mode — existing Catalyst dealer workflow.
@@ -453,7 +459,7 @@ async function dispatchNewLeadToDealer(catalystApp, leadRow) {
     // Nothing was recorded for this lead yet (e.g. the dealer or integration
     // lookup failed): leave a log row and an alert so it is not lost
     // silently. The lead's state is left as it was.
-    if (leadRow.sync_status === stateBeforeDispatch) {
+    if (!holdSaved && leadRow.sync_status === stateBeforeDispatch) {
       try {
         await crmIntegrationService.recordScenario(catalystApp, {
           scenarioCode: 'Unhappy 1',
@@ -479,46 +485,45 @@ async function dispatchNewLeadToDealer(catalystApp, leadRow) {
  * Callers AWAIT this (see syncLeads loop) for the same reason as
  * dispatchNewLeadToDealer above.
  */
-async function dispatchLeadUpdateToDealer(catalystApp, leadRow) {
-  try {
-    const validation = pathPolicy.validateLeadForDelivery(leadRow);
-    if (validation.routingIssue) {
-      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
-      await crmIntegrationService.recordScenario(catalystApp, {
-        scenarioCode: 'Unhappy 5', leadRow, errorCode: 'DEALER_ROUTING_INVALID',
-        reason: validation.routingIssue.rule, notify: true,
-      });
-      return { held: true, scenarioCode: 'Unhappy 5' };
-    }
-    if (validation.privacyIssue) {
-      await markLeadState(catalystApp, leadRow, 'CONSENT_HOLD');
-      await crmIntegrationService.recordScenario(catalystApp, {
-        scenarioCode: 'Unhappy 8', leadRow, errorCode: 'CONSENT_MISMATCH',
-        reason: validation.privacyIssue.rule, notify: true,
-      });
-      return { held: true, scenarioCode: 'Unhappy 8' };
-    }
-    if (validation.issues.length > 0) {
-      await markLeadState(catalystApp, leadRow, 'VALIDATION_HOLD');
-      await crmIntegrationService.recordScenario(catalystApp, {
-        scenarioCode: 'Unhappy 2', leadRow, errorCode: 'LEAD_VALIDATION_FAILED',
-        reason: describeValidationIssues(validation.issues),
-        notify: true,
-      });
-      return { held: true, scenarioCode: 'Unhappy 2' };
-    }
+/**
+ * Where an MG-side update of a lead goes: a hold (with the scenario it
+ * records), an external CRM, or the portal. Decided before the updated lead
+ * is written, so a hold is saved in that same write (COST_OPTIMIZATION_PLAN.md,
+ * Batch 4, F1).
+ */
+async function decideLeadUpdateRoute(catalystApp, leadRow) {
+  const hold = (syncStatus, scenarioCode, errorCode, reason) => ({ hold: { syncStatus, scenario: { scenarioCode, errorCode, reason } } });
+  const validation = pathPolicy.validateLeadForDelivery(leadRow);
+  if (validation.routingIssue) return hold('ROUTING_HOLD', 'Unhappy 5', 'DEALER_ROUTING_INVALID', validation.routingIssue.rule);
+  if (validation.privacyIssue) return hold('CONSENT_HOLD', 'Unhappy 8', 'CONSENT_MISMATCH', validation.privacyIssue.rule);
+  if (validation.issues.length > 0) {
+    return hold('VALIDATION_HOLD', 'Unhappy 2', 'LEAD_VALIDATION_FAILED', describeValidationIssues(validation.issues));
+  }
+  const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
+  if (integration && integration.integration_type === 'EXTERNAL_CRM') return { integration };
+  if (!integration || integration.integration_type !== 'PORTAL') {
+    return hold('ROUTING_HOLD', 'Unhappy 5', 'INTEGRATION_NOT_CONFIGURED', 'The assigned dealer has no approved Lead Exchange integration mode.');
+  }
+  return { portal: true };
+}
 
-    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, leadRow.dealer_code);
-    if (integration && integration.integration_type === 'EXTERNAL_CRM') {
-      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, integration, leadRow);
+/**
+ * @param {object} [options.route]       decideLeadUpdateRoute's answer, or { error }
+ *   when reading it failed, as the caller read it before writing the lead
+ * @param {boolean} [options.stateWritten] the caller's write already saved a hold
+ */
+async function dispatchLeadUpdateToDealer(catalystApp, leadRow, { route, stateWritten = false } = {}) {
+  try {
+    const decided = route || await decideLeadUpdateRoute(catalystApp, leadRow);
+    if (decided.error) throw decided.error;
+    if (decided.hold) {
+      if (stateWritten) leadRow.sync_status = decided.hold.syncStatus;
+      else await markLeadState(catalystApp, leadRow, decided.hold.syncStatus);
+      await crmIntegrationService.recordScenario(catalystApp, { ...decided.hold.scenario, leadRow, notify: true });
+      return { held: true, scenarioCode: decided.hold.scenario.scenarioCode };
     }
-    if (!integration || integration.integration_type !== 'PORTAL') {
-      await markLeadState(catalystApp, leadRow, 'ROUTING_HOLD');
-      await crmIntegrationService.recordScenario(catalystApp, {
-        scenarioCode: 'Unhappy 5', leadRow, errorCode: 'INTEGRATION_NOT_CONFIGURED',
-        reason: 'The assigned dealer has no approved Lead Exchange integration mode.', notify: true,
-      });
-      return { held: true, scenarioCode: 'Unhappy 5' };
+    if (decided.integration) {
+      return crmIntegrationService.syncLeadToExternalCrm(catalystApp, decided.integration, leadRow);
     }
     await markLeadState(catalystApp, leadRow, 'SYNCED');
     return { skipped: true, reason: 'PORTAL_LIVE_READ' };
@@ -710,6 +715,15 @@ async function runLeadSyncInternal(catalystApp, {
             else if (validation.issues.length > 0) initialSyncStatus = 'VALIDATION_HOLD';
             else if (duplicate) initialSyncStatus = 'DUPLICATE_LINKED';
 
+            // A lead that will be dispatched: route it first, so a dealer or
+            // integration hold is saved by the insert (Batch 4, F1). A failed
+            // read leaves it PENDING; dispatch then reads again and reports.
+            let route;
+            if (initialSyncStatus === 'PENDING') {
+              try { route = await resolveNewLeadRoute(catalystApp, mappedRow.dealer_code); } catch (_) { route = undefined; }
+              if (route?.hold) initialSyncStatus = 'ROUTING_HOLD';
+            }
+
             const insertedRow = await table.insertRow({
               ...mappedRow,
               last_synced_at: now,
@@ -807,7 +821,7 @@ async function runLeadSyncInternal(catalystApp, {
             } else {
               // AWAITED so Catalyst cannot freeze this serverless invocation
               // before dealer delivery and its audit row finish.
-              const dispatchResult = await dispatchNewLeadToDealer(catalystApp, fullLeadRow);
+              const dispatchResult = await dispatchNewLeadToDealer(catalystApp, fullLeadRow, route);
               incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
             }
           }
@@ -866,7 +880,14 @@ async function runLeadSyncInternal(catalystApp, {
           unchanged += 1;
         }
       } else if (existingRow.sync_status === 'Removed' || hasChanges(existingRow, mappedRow)) {
-        await table.updateRow({ ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: 'PENDING' });
+        const updatedLead = { ...mappedRow, crm_record_id: crmRecord.id, ROWID: existingRow.ROWID };
+        // Decide the hold first so it is saved by this one write, not a
+        // second one (Batch 4, F1). A failed read is reported by the dispatch.
+        let route;
+        try { route = await decideLeadUpdateRoute(catalystApp, updatedLead); } catch (err) { route = { error: err }; }
+        await table.updateRow({
+          ROWID: existingRow.ROWID, ...mappedRow, last_synced_at: now, sync_status: route.hold ? route.hold.syncStatus : 'PENDING',
+        });
         updated += 1;
 
         // INTEGRATION POINT: EXTERNAL_CRM dealers also need updates
@@ -876,11 +897,7 @@ async function runLeadSyncInternal(catalystApp, {
         // table. Only EXTERNAL_CRM dealers need an active push on
         // update. AWAITED for the same reason as dispatchNewLeadToDealer
         // above.
-        const dispatchResult = await dispatchLeadUpdateToDealer(catalystApp, {
-          ...mappedRow,
-          crm_record_id: crmRecord.id,
-          ROWID: existingRow.ROWID,
-        });
+        const dispatchResult = await dispatchLeadUpdateToDealer(catalystApp, updatedLead, { route, stateWritten: true });
         incrementScenario(scenarioCounts, dispatchResult?.scenarioCode);
         const scenarioHoldStatus = {
           'Unhappy 2': 'VALIDATION_HOLD',
@@ -943,7 +960,11 @@ async function runLeadSyncInternal(catalystApp, {
     ? 'Success'
     : (inserted + updated > 0 ? 'Partial' : 'Failed');
 
-  if (inserted > 0 || updated > 0) {
+  // A webhook sync covers the one lead MG CRM just changed; that change is
+  // already on the lead's timeline and any Unhappy alert has its own
+  // notification, so the summary only repeated it (user decision 27 Oct 2026,
+  // reversing C10). Manual and scheduled syncs still post it.
+  if ((inserted > 0 || updated > 0) && trigger !== 'Webhook') {
     logger.info('leadSyncService', `Calling notifyAdmins — inserted=${inserted}, updated=${updated}`);
     await notifyAdmins(catalystApp, {
       type: 'SYNC_SUMMARY',

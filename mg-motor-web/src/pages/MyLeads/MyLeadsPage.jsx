@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpDown, SquarePen, LayoutGrid, List, Car, Megaphone, Phone, Mail, Calendar, Eye } from "lucide-react";
+import { ArrowUpDown, SquarePen, LayoutGrid, List, Car, Megaphone, Phone, Mail, Calendar } from "lucide-react";
 import { dealerPortalService } from "../../services/api/dealerPortalService";
 import Table from "../../ui/Table/Table";
 import Badge from "../../ui/Badge/Badge";

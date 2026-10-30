@@ -77,6 +77,14 @@ function buildFakeCatalystApp({ dealer1Count, dealer2Count }) {
           return integration ? [{ dealer_integrations: integration }] : [];
         }
         if (sql.includes('FROM lead_integrations')) {
+          // Batched read (COST_OPTIMIZATION_PLAN.md, Batch 3): one query per integration.
+          const batch = /integration_id = (\d+) AND external_crm_lead_id IN \(([^)]*)\)/.exec(sql);
+          if (batch) {
+            return [...batch[2].matchAll(/'([^']+)'/g)]
+              .map(([, id]) => mappingsByKey.get(`${batch[1]}:${id}`) && { ...mappingsByKey.get(`${batch[1]}:${id}`), external_crm_lead_id: id })
+              .filter(Boolean)
+              .map((mapping) => ({ lead_integrations: mapping }));
+          }
           const match = /integration_id = (\d+) AND external_crm_lead_id = '([^']+)'/.exec(sql);
           if (!match) return [];
           const mapping = mappingsByKey.get(`${match[1]}:${match[2]}`);

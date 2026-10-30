@@ -3,6 +3,7 @@
 const { URL } = require('url');
 const axios = require('axios');
 const logger = require('../../../utils/logger');
+const usageContext = require('../../usageContext');
 const integrationAuthService = require('../integrationAuthService');
 const { getAccessTokenForDealerZoho } = require('./zohoCrmOAuthHelper');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
@@ -86,14 +87,15 @@ function isRetryableError(err) {
   return RETRYABLE_STATUS_CODES.has(err.response.status);
 }
 
-async function requestWithRetry(config, attempt = 1) {
+// `org` labels the call in the request's usage line (the dealer code).
+async function requestWithRetry(org, config, attempt = 1) {
   try {
-    return await axios(config);
+    return await usageContext.trackApiCall(org, () => axios(config));
   } catch (err) {
     if (attempt < MAX_RETRIES && isRetryableError(err)) {
       const delay = RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, delay));
-      return requestWithRetry(config, attempt + 1);
+      return requestWithRetry(org, config, attempt + 1);
     }
     throw err;
   }
@@ -137,7 +139,7 @@ async function createLead(
     useZohoUpsert ? idempotencyField : null
   );
 
-  const response = await requestWithRetry({
+  const response = await requestWithRetry(integration.dealer_code, {
     method: useZohoUpsert ? 'POST' : (integration.http_method || 'POST'),
     url: url.toString(),
     ...safeRequestOptions(url),
@@ -193,7 +195,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
   const isZohoCrm = integration.crm_type === 'ZOHO_CRM';
   const requestBody = isZohoCrm ? { data: [payload] } : payload;
 
-  const response = await requestWithRetry({
+  const response = await requestWithRetry(integration.dealer_code, {
     method: integration.update_http_method || 'PUT',
     url: url.toString(),
     ...safeRequestOptions(url),
@@ -220,7 +222,7 @@ async function getLead(catalystApp, integration, externalLeadId) {
   const url = await safeIntegrationUrl(integration, `${integration.base_url}${endpoint}`);
   const headers = await buildAuthHeaders(catalystApp, integration);
 
-  const response = await requestWithRetry({
+  const response = await requestWithRetry(integration.dealer_code, {
     method: 'GET',
     url: url.toString(),
     ...safeRequestOptions(url),
@@ -250,14 +252,14 @@ async function testConnection(catalystApp, integration) {
   const headers = await buildAuthHeaders(catalystApp, integration);
   const start = Date.now();
 
-  const response = await axios({
+  const response = await usageContext.trackApiCall(integration.dealer_code, () => axios({
     method: 'GET',
     url: url.toString(),
     ...safeRequestOptions(url),
     headers,
     timeout: 8000,
     validateStatus: () => true,
-  });
+  }));
 
   return {
     httpStatus: response.status,

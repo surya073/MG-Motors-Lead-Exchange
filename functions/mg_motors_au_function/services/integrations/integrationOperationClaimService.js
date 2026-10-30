@@ -158,4 +158,37 @@ async function withOperationClaim(catalystApp, operation, fn) {
   }
 }
 
-module.exports = { withOperationClaim, _test: { TABLE, LEASE_MS, keyFor } };
+// A durable "run again later" marker for an operation whose request was
+// skipped because another run held the claim. One row per operation: the
+// unique claim_key coalesces any number of skipped requests into one.
+const pendingKeyFor = (operation) => `${keyFor(operation)}:pending`;
+
+async function markPending(catalystApp, operation) {
+  const key = pendingKeyFor(operation);
+  try {
+    await catalystApp.datastore().table(TABLE).insertRow({
+      claim_key: key,
+      claimed_at: toCatalystDateTime(),
+      request_reference: JSON.stringify({ version: 1, owner: 'pending', phase: 'PENDING' }),
+    });
+    return true;
+  } catch (error) {
+    if (await find(catalystApp, key)) return false; // already pending
+    throw error;
+  }
+}
+
+async function hasPending(catalystApp, operation) {
+  return Boolean(await find(catalystApp, pendingKeyFor(operation)));
+}
+
+async function clearPending(catalystApp, operation) {
+  const row = await find(catalystApp, pendingKeyFor(operation));
+  if (row) await catalystApp.datastore().table(TABLE).deleteRow(row.ROWID);
+  return Boolean(row);
+}
+
+module.exports = {
+  withOperationClaim, markPending, hasPending, clearPending,
+  _test: { TABLE, LEASE_MS, keyFor, pendingKeyFor },
+};

@@ -67,6 +67,13 @@ test('a held Fusion update is applied from its stored event and closed as RECOVE
   assert.equal(harness.db.tables.webhook_events[0].processing_status, 'SUCCESS');
 });
 
+test('a held update stored in Fusion\'s reworked shape (enquiryStatus) is replayed too', async (t) => {
+  const harness = held(t, { events: [['2026-10-28 06:00:00:000', { lead_id: LEAD_ID, leadId: LEAD_ID, enquiryStatus: 'Lost' }]] });
+  const results = await inboundReplayScheduler.runInboundReplaySweep(harness.db.app);
+  assert.equal(results.recovered, 1);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
+});
+
 test('the newest stored event with a status is used; a newer one without a status (notes) is passed over', async (t) => {
   const harness = held(t, {
     events: [

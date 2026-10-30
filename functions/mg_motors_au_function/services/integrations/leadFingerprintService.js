@@ -92,12 +92,30 @@ function fingerprintKeys(fieldMappings) {
  *   full record produce the same fingerprint for the same business state.
  * @param {Array}  fieldMappings - the integration's field mapping rows.
  */
+// MG's Lead_Status labels "Lost" and "Dropped" store Lost Lead and Junk Lead
+// (Q26). We write the stored value, but MG's own notification brings back the
+// label, so without this an applied dealer status never matched its echo and
+// was pushed straight back to the dealer (28 Oct 2026: a Fusion Lost went
+// back out mapped from "Lost", which most Fusion maps send as Prospect Lost).
+const MG_STATUS_LABEL_VALUES = Object.freeze({ lost: 'Lost Lead', dropped: 'Junk Lead' });
+
+function canonicalStatus(value) {
+  const text = normalizeValue(value);
+  return MG_STATUS_LABEL_VALUES[text.toLowerCase()] || text;
+}
+
 function computeFingerprint(internalState, fieldMappings) {
   const keys = fingerprintKeys(fieldMappings);
   const canonical = {};
   keys.forEach((key) => {
-    canonical[key] = normalizeValue(internalState ? internalState[key] : '');
+    const value = internalState ? internalState[key] : '';
+    canonical[key] = key === 'lead_status' ? canonicalStatus(value) : normalizeValue(value);
   });
+  // The lead outcome is sent to Fusion with the status, so an outcome change
+  // is a real change. Left out when empty, so fingerprints of leads without
+  // an outcome are unchanged.
+  const outcome = normalizeValue(internalState ? internalState.enquiry_outcome : '');
+  if (outcome !== '') canonical.enquiry_outcome = outcome;
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
