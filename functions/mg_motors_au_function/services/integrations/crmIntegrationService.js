@@ -21,6 +21,7 @@ const {
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
+const { translateDealerStudioWebhook } = require('./adapters/dealerStudioInbound');
 const { cachedForRun } = require('./mappingRunCache');
 const sentPayloadSnapshot = require('./sentPayloadSnapshot');
 
@@ -621,9 +622,9 @@ function validateIntegrationConfiguration(integration, fieldMappings, statusMapp
   const missingConfig = [];
   if (!integration?.base_url) missingConfig.push('base_url');
   if (!integration?.create_lead_endpoint) missingConfig.push('create_lead_endpoint');
-  // Fusion SD derives its PATCH path from the create endpoint
-  // (fusionSdAdapter.updatePath), so it never uses this field.
-  if (!integration?.update_lead_endpoint && integration?.crm_type !== 'FUSION_SD') {
+  // Fusion SD and Dealer Studio derive their update path from the create
+  // endpoint (the adapters' updatePath), so they never use this field.
+  if (!integration?.update_lead_endpoint && !['FUSION_SD', 'DEALER_STUDIO'].includes(integration?.crm_type)) {
     missingConfig.push('update_lead_endpoint');
   }
 
@@ -1212,7 +1213,9 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
           `Dealer accepted the request (HTTP ${result.httpStatus ?? 'unknown'}) but returned no recognized record-ID field (response fields seen: ${responseShape})`
         );
         acknowledgementError.code = 'DEALER_ACK_MISSING_ID';
-        if (integration.crm_type === 'FUSION_SD') {
+        // Dealer Studio's create response is not documented yet (its adapter reads
+        // the id provisionally), so an unreadable answer is held, not re-created.
+        if (integration.crm_type === 'FUSION_SD' || integration.crm_type === 'DEALER_STUDIO') {
           return recordUnresolvedAcknowledgement(catalystApp, integration, leadRow, existingMapping, {
             payload, result, acknowledgementError, requestReference, attemptStartedAt,
           });
@@ -1932,9 +1935,88 @@ function unreadFusionStatusFields(body, dealerStatusField) {
     && typeof body[key] === 'string' && body[key].trim() !== '');
 }
 
+/**
+ * The ids (of those given) that MG holds a lead mapping for, in this
+ * integration. One query; ids are quoted for ZCQL.
+ */
+async function mappedExternalLeadIds(catalystApp, integration, ids) {
+  if (ids.length === 0) return [];
+  const list = ids.map((id) => `'${safeQuoteForZcql(id)}'`).join(', ');
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT external_crm_lead_id FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integration.ROWID} AND external_crm_lead_id IN (${list}) LIMIT 50`
+  );
+  const found = new Set(rows.map((row) => String(row[LEAD_INTEGRATIONS_TABLE]?.external_crm_lead_id)));
+  return ids.filter((id) => found.has(id));
+}
+
+/**
+ * Dealer Studio Lead Cluster Webhook (adapters/dealerStudioInbound.js). The
+ * body is the whole cluster and most posts carry no status change, so a post
+ * without a status is acknowledged and nothing is held. The status belongs to
+ * the cluster, so it is applied to every lead of it that MG sent: matched on
+ * `leads[].id`, falling back to the cluster id only when none of those match
+ * (a cluster id could coincide with another lead's id, so it is not tried
+ * alongside them). With no match at all, the first id goes through the shared
+ * path, which reports the missing mapping as it does for any dealer.
+ */
+async function processInboundWebhookForDealerStudio(catalystApp, integration, externalPayload, zohoCrmService) {
+  const requestReference = crypto.randomUUID();
+  const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
+  const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
+  const translated = translateDealerStudioWebhook(externalPayload, fieldMappings);
+  const candidates = translated.clusterId ? [...translated.leadIds, translated.clusterId] : translated.leadIds;
+
+  if (candidates.length === 0) {
+    await writeLog(catalystApp, {
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      direction: 'EXTERNAL_CRM_TO_ZOHO',
+      operation: 'UPDATE_LEAD',
+      status: 'FAILED',
+      error_message: 'FIELD_MAPPING_INVALID',
+      request_reference: requestReference,
+    });
+    const err = new Error('Webhook payload carries no lead or cluster id');
+    err.code = 'FIELD_MAPPING_INVALID';
+    throw err;
+  }
+  if (!translated.hasStatus) {
+    logger.info(
+      'crmIntegrationService',
+      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) has no status; nothing to apply to MG`
+    );
+    return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
+  }
+
+  let targets = await mappedExternalLeadIds(catalystApp, integration, translated.leadIds);
+  if (targets.length === 0 && translated.clusterId) {
+    targets = await mappedExternalLeadIds(catalystApp, integration, [translated.clusterId]);
+  }
+  if (targets.length === 0) targets = [candidates[0]];
+
+  const results = [];
+  for (const externalLeadId of targets) {
+    results.push(await processResolvedInboundLead(
+      catalystApp, integration, externalLeadId, { ...translated.record },
+      fieldMappings, statusMappings, requestReference, zohoCrmService
+    ));
+  }
+  if (results.length === 1) return results[0];
+  const pending = results.find((result) => result?.held && !result?.terminal);
+  return {
+    ok: true,
+    leads: results.length,
+    ...(pending ? { held: true, reason: pending.reason } : {}),
+    ...(!pending && results.every((result) => result?.terminal) ? { terminal: true, reason: results[0].reason } : {}),
+  };
+}
+
 async function processInboundWebhook(catalystApp, integration, externalPayload, zohoCrmService) {
   if (integration.crm_type === 'ZOHO_CRM') {
     return processInboundWebhookForZohoCrm(catalystApp, integration, externalPayload, zohoCrmService);
+  }
+  if (integration.crm_type === 'DEALER_STUDIO') {
+    return processInboundWebhookForDealerStudio(catalystApp, integration, externalPayload, zohoCrmService);
   }
 
   const requestReference = crypto.randomUUID();

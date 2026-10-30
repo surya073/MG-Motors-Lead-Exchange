@@ -125,6 +125,7 @@ const CRM_TYPE_LABELS = {
   GENERIC_REST: "Generic REST",
   ZOHO_CRM: "Zoho CRM",
   FUSION_SD: "Fusion SD",
+  DEALER_STUDIO: "Dealer Studio",
 };
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
@@ -788,6 +789,18 @@ export default function DealerCRMConfig() {
           update_http_method: "PUT",
         };
       }
+      if (key === "crm_type" && value === "DEALER_STUDIO") {
+        // Dealer Studio: Bearer API key, POST /api/v1/leads, PUT /api/v1/leads/{id}.
+        return {
+          ...prev,
+          crm_type: value,
+          auth_type: "BEARER_TOKEN",
+          create_lead_endpoint: "/api/v1/leads",
+          update_lead_endpoint: "/api/v1/leads/{externalLeadId}",
+          http_method: "POST",
+          update_http_method: "PUT",
+        };
+      }
       return { ...prev, [key]: value };
     });
   };
@@ -925,6 +938,7 @@ export default function DealerCRMConfig() {
         fusion_access_key: fusionAccessKey || undefined,
         fusion_secret_key: fusionSecretKey || undefined,
         fusion_webhook_signing_secret: fusionSigningSecret.trim() || undefined,
+        webhook_signing_secret: fusionSigningSecret.trim() || undefined,
       });
 
       showAlert("success", `Saved connection settings for ${selectedDealer.dealer_name}.`, {
@@ -939,7 +953,7 @@ export default function DealerCRMConfig() {
       clearSaveSuccessSoon();
     } catch (err) {
       const response = err?.response?.data;
-      const fieldLabels = { base_url: "Base URL", fusion_webhook_signing_secret: "Webhook signing secret" };
+      const fieldLabels = { base_url: "Base URL", fusion_webhook_signing_secret: "Webhook signing secret", webhook_signing_secret: "Webhook signing secret" };
       const message = fieldLabels[response?.field] && response?.message
         ? `${fieldLabels[response.field]}: ${response.message}`
         : response?.error || "Couldn't save the configuration. Try again.";
@@ -1148,6 +1162,7 @@ export default function DealerCRMConfig() {
   const isExternalCrm = config.integration_type === "EXTERNAL_CRM";
   const isZohoCrm = config.crm_type === "ZOHO_CRM";
   const isFusionSd = config.crm_type === "FUSION_SD";
+  const isDealerStudio = config.crm_type === "DEALER_STUDIO";
   const isConnectionVerified = isExternalCrm && CONNECTED_STATUSES.includes(config.status);
   const mappingsLocked = isExternalCrm && !isConnectionVerified;
   const isTopConnected = CONNECTED_STATUSES.includes(config.status);
@@ -1170,7 +1185,7 @@ export default function DealerCRMConfig() {
       case "API_KEY":
         return "API Key";
       case "BEARER_TOKEN":
-        return "Bearer Token";
+        return isDealerStudio ? "API Key" : "Bearer Token";
       case "BASIC_AUTH":
         return "Password";
       case "OAUTH2":
@@ -1547,6 +1562,7 @@ export default function DealerCRMConfig() {
                                 { value: "GENERIC_REST", label: "Generic REST API" },
                                 { value: "ZOHO_CRM", label: "Zoho CRM (dealer's own account)" },
                                 { value: "FUSION_SD", label: "Fusion SD" },
+                                { value: "DEALER_STUDIO", label: "Dealer Studio" },
                               ]}
                             />
                           </div>
@@ -1570,11 +1586,13 @@ export default function DealerCRMConfig() {
                             <span className="dealer-crm-config__field-hint">
                               {isFusionSd
                                 ? "Fusion SD's QA environment base URL shown above — replace with their production URL when Fusion provides one."
+                                : isDealerStudio
+                                ? "Dealer Studio's API base URL — Dealer Studio support (support@dealerstudio.com.au) provides it with the API key and test dealership."
                                 : "The web address of the dealer's CRM's API — they can provide this, or it's shown in their CRM's developer/API settings."}
                             </span>
                           </div>
 
-                          {!isZohoCrm && !isFusionSd && (
+                          {!isZohoCrm && !isFusionSd && !isDealerStudio && (
                             <div className="dealer-crm-config__field-row">
                               <label>Authentication method</label>
                               <Dropdown
@@ -1797,6 +1815,27 @@ export default function DealerCRMConfig() {
                             </div>
                           )}
 
+                          {isDealerStudio && (
+                            // Dealer Studio signs its Lead Cluster Webhook (X-Signature) with a secret it issues on request.
+                            <div className="dealer-crm-config__field-row">
+                              <label>Webhook Signing Secret</label>
+                              <input
+                                type="password"
+                                value={fusionSigningSecret}
+                                onChange={(e) => setFusionSigningSecret(e.target.value)}
+                                placeholder={hasWebhookSigningSecret ? MASKED_CREDENTIAL_PLACEHOLDER : "Secret from Dealer Studio"}
+                                autoComplete="new-password"
+                                disabled={isViewUser}
+                                title={viewOnlyTitle}
+                              />
+                              <span className="dealer-crm-config__field-hint">
+                                {hasWebhookSigningSecret
+                                  ? "A signing secret is saved and encrypted. Enter a new one only to replace it."
+                                  : "The secret Dealer Studio signs this dealer's webhooks with (ask support@dealerstudio.com.au). Needed for status updates from Dealer Studio."}
+                              </span>
+                            </div>
+                          )}
+
                           <div className="dealer-crm-config__section-title">Lead endpoints</div>
 
                           <div className="dealer-crm-config__field-row-inline">
@@ -1805,7 +1844,7 @@ export default function DealerCRMConfig() {
                               <input
                                 value={config.create_lead_endpoint}
                                 onChange={(e) => handleConfigChange("create_lead_endpoint", e.target.value)}
-                                placeholder={isZohoCrm ? "/crm/v8/Leads" : isFusionSd ? "/v1/leads" : "/api/leads"}
+                                placeholder={isZohoCrm ? "/crm/v8/Leads" : isFusionSd ? "/v1/leads" : isDealerStudio ? "/api/v1/leads" : "/api/leads"}
                               />
                             </div>
                             <div>

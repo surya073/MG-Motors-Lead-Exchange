@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const integrationAuthService = require('./integrationAuthService');
 const { signingSecretFingerprint } = require('./fusionReturnChannelProof');
-const { getSharedWebhookConfig, isFusionInboundV2Enabled } = require('../../config/env');
+const { getSharedWebhookConfig, getDealerStudioWebhookSecret, isFusionInboundV2Enabled } = require('../../config/env');
 
 /**
  * webhookVerificationService.js
@@ -300,6 +300,86 @@ async function verifyStandardWebhook(catalystApp, integration, rawBody, headers)
 }
 
 /**
+ * Dealer Studio's Lead Cluster Webhook (https://dev.dealerstudio.com.au/guides/
+ * lms/lead-cluster-webhook/). `X-Signature` is the Base64 HMAC-SHA256 of the raw
+ * body keyed with the shared secret Dealer Studio issues (stored as the dealer's
+ * WEBHOOK_SIGNING_SECRET); it is present only when a secret is configured on their
+ * side. The secret's string encoding is not stated, so the forms signingKeys()
+ * lists are all tried. The optional token arrives as `X-Authorization: <token>`
+ * (an `Authorization: Bearer` header never reaches this function: Catalyst's
+ * gateway rejects it first) and is compared with the dealer's WEBHOOK_SECRET.
+ *
+ * Rules: a signature that is present must verify. Once a signing secret is
+ * stored an unsigned request is refused, so a request cannot skip the check by
+ * leaving the header out. Without a stored signing secret a valid token is
+ * accepted. There is no timestamp, so a replay still verifies; the caller's
+ * idempotent processing is what makes a replay harmless.
+ */
+async function verifyDealerStudioWebhook(catalystApp, integration, rawBody, headers) {
+  let signingSecret = null;
+  try {
+    signingSecret = await integrationAuthService.getDecryptedCredential(
+      catalystApp,
+      integration.ROWID,
+      'WEBHOOK_SIGNING_SECRET'
+    );
+  } catch (err) {
+    logger.error(
+      'webhookVerificationService',
+      `Webhook signing secret for integration ${integration.ROWID} could not be decrypted — re-save it so it is encrypted with the current INTEGRATION_CREDENTIALS_KEY`,
+      err
+    );
+    return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
+  }
+
+  const { secrets: stored, unreadable } = await loadTokenSecrets(catalystApp, integration);
+  // DEALER_STUDIO_WEBHOOK_SECRET: one env-var token for every Dealer Studio
+  // dealer, accepted alongside a dealer's own stored token.
+  const tokenSecrets = [...stored, getDealerStudioWebhookSecret()].filter(Boolean);
+  const tokenHeader = String(headers['x-authorization'] || headers['x-webhook-token'] || headers['x-api-key'] || '')
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+  const tokenMatches = () => tokenSecrets.some((secret) => timingSafeEqual(tokenHeader, secret));
+
+  const signature = String(headers['x-signature'] || '').trim();
+  if (signature) {
+    const keys = signingKeys(signingSecret);
+    if (keys.length === 0) {
+      logger.error('webhookVerificationService', `Signed webhook for integration ${integration.ROWID} but no signing secret is stored`);
+      return { ok: false, reason: 'WEBHOOK_SIGNING_SECRET_MISSING' };
+    }
+    const matched = keys.find(({ key }) => timingSafeEqualBase64(
+      signature.replace(/^sha256=/, ''),
+      crypto.createHmac('sha256', key).update(rawBody).digest('base64')
+    ));
+    if (!matched) {
+      const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
+      // Safe to log: shapes and sizes only, never the secret, signature or body.
+      logger.error('webhookVerificationService', `Dealer Studio signature mismatch for integration ${integration.ROWID}: ${JSON.stringify({
+        bodySha256: crypto.createHash('sha256').update(bodyBuffer).digest('hex').slice(0, 16),
+        bodyBytes: bodyBuffer.length,
+        signatureLength: signature.length,
+        keyForms: keys.map(({ form }) => form),
+      })}`);
+      return { ok: false, reason: 'INVALID_SIGNATURE' };
+    }
+    // A token sent alongside must match as well, when one is stored.
+    if (tokenHeader && tokenSecrets.length > 0 && !tokenMatches()) return { ok: false, reason: 'INVALID_TOKEN' };
+    logger.info('webhookVerificationService', `Dealer Studio signature verified for integration ${integration.ROWID} (key form ${matched.form})`);
+    return { ok: true, method: 'DEALER_STUDIO_HMAC', signingSecretFingerprint: signingSecretFingerprint(signingSecret) };
+  }
+
+  if (signingSecret) return { ok: false, reason: 'MISSING_SIGNATURE' };
+  if (tokenSecrets.length === 0) {
+    if (unreadable) return { ok: false, reason: 'WEBHOOK_SECRET_UNREADABLE' };
+    logger.error('webhookVerificationService', `No webhook signing secret or token configured for integration ${integration.ROWID}`);
+    return { ok: false, reason: 'WEBHOOK_AUTH_NOT_CONFIGURED' };
+  }
+  if (!tokenHeader) return { ok: false, reason: 'MISSING_AUTH' };
+  return tokenMatches() ? { ok: true, method: 'DEALER_STUDIO_TOKEN' } : { ok: false, reason: 'INVALID_TOKEN' };
+}
+
+/**
  * @param {object} integration - dealer_integrations row
  * @param {Buffer|string} rawBody - the raw, unparsed request body (must be
  *   captured before JSON parsing — HMAC verification requires exact bytes)
@@ -321,6 +401,10 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
       `ALLOW_INSECURE_WEBHOOKS is enabled for integration ${integration.ROWID}; use only in a local test environment.`
     );
     return { ok: true };
+  }
+
+  if (integration.crm_type === 'DEALER_STUDIO') {
+    return verifyDealerStudioWebhook(catalystApp, integration, rawBody, headers);
   }
 
   // Fusion SD signs its webhooks the Standard Webhooks way (Batch 5). Only
@@ -381,6 +465,7 @@ async function verifyWebhook(catalystApp, integration, rawBody, headers) {
 
 module.exports = {
   verifyWebhook,
+  verifyDealerStudioWebhook,
   signStandardWebhook,
   signingSecretProblem,
   computeHmac,

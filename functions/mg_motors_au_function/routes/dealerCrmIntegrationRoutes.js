@@ -118,7 +118,7 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
     }
     // Fusion signs its webhooks with a secret the dealer issues (Standard
     // Webhooks). Only whether one is stored is reported, never the value.
-    const extra = integration.crm_type === 'FUSION_SD'
+    const extra = ['FUSION_SD', 'DEALER_STUDIO'].includes(integration.crm_type)
       ? { hasWebhookSigningSecret: await integrationAuthService.hasCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET') }
       : {};
     res.json({ integration: safeConfig(integration), hasCredential, ...extra });
@@ -129,7 +129,7 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
 });
 
 function deriveInboundEnabled(crmType, webhookEnabled) {
-  return crmType === 'FUSION_SD' ? Boolean(webhookEnabled) : true;
+  return ['FUSION_SD', 'DEALER_STUDIO'].includes(crmType) ? Boolean(webhookEnabled) : true;
 }
 
 /**
@@ -159,6 +159,7 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
     }
     const isZohoCrm = body.crm_type === 'ZOHO_CRM';
     const isFusionSd = body.crm_type === 'FUSION_SD';
+    const isDealerStudio = body.crm_type === 'DEALER_STUDIO';
     if (isZohoCrm && body.integration_type === 'EXTERNAL_CRM' && !body.oauth_accounts_domain) {
       return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION' });
     }
@@ -184,6 +185,9 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
           error: 'INVALID_CRM_CONFIGURATION', field: 'fusion_webhook_signing_secret', message: secretProblem,
         });
       }
+    }
+    if (isDealerStudio && String(body.webhook_signing_secret || '').trim().length > 512) {
+      return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'webhook_signing_secret', message: 'Webhook signing secret is too long' });
     }
     const table = catalystApp.datastore().table('dealer_integrations');
     let integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
@@ -220,8 +224,8 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       // Zoho and Fusion SD both authenticate via their own crm_type-specific
       // OAuth flow (see genericRestAdapter.js / fusionSdAdapter.js), not the
       // generic single-credential auth_type system every other CRM uses.
-      auth_type: (isZohoCrm || isFusionSd) ? null : (body.auth_type || null),
-      create_lead_endpoint: body.create_lead_endpoint || null,
+      auth_type: (isZohoCrm || isFusionSd) ? null : isDealerStudio ? 'BEARER_TOKEN' : (body.auth_type || null), // Dealer Studio: Bearer API key
+      create_lead_endpoint: body.create_lead_endpoint || (isDealerStudio ? '/api/v1/leads' : null),
       update_lead_endpoint: body.update_lead_endpoint || null,
       http_method: body.http_method || 'POST',
       update_http_method: body.update_http_method || 'PUT',
@@ -271,10 +275,18 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       if (signingSecret) {
         await integrationAuthService.saveCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET', signingSecret);
       }
-    } else if (body.credential && body.auth_type) {
-      const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[body.auth_type];
+    } else if (body.credential && fields.auth_type) {
+      const credType = integrationAuthService.AUTH_TYPE_TO_CREDENTIAL_TYPE[fields.auth_type];
       if (credType) {
         await integrationAuthService.saveCredential(catalystApp, integration.ROWID, credType, body.credential);
+      }
+    }
+    // The secret Dealer Studio signs its Cluster Webhook with (X-Signature). Blank
+    // leaves the stored one alone.
+    if (isDealerStudio) {
+      const signingSecret = String(body.webhook_signing_secret || '').trim();
+      if (signingSecret) {
+        await integrationAuthService.saveCredential(catalystApp, integration.ROWID, 'WEBHOOK_SIGNING_SECRET', signingSecret);
       }
     }
     // A Fusion token cached for this integration may belong to the old keys

@@ -95,6 +95,10 @@ function getAiAssistantConfig() {
  * dealer codes listed in FUSION_WEBHOOK_DEALER_CODES (comma-separated), and is
  * accepted in addition to the dealer's own secret. Unset = feature off.
  */
+function getDealerStudioWebhookSecret() {
+  return (process.env.DEALER_STUDIO_WEBHOOK_SECRET || '').trim();
+}
+
 function getSharedWebhookConfig() {
   const secret = (process.env.FUSION_WEBHOOK_SECRET || '').trim();
   const dealerCodes = new Set(
@@ -385,6 +389,7 @@ module.exports = {
   getAiAssistantConfig,
   getLeadSyncSince,
   getSharedWebhookConfig,
+  getDealerStudioWebhookSecret,
   getOutboundRetryConfig,
   isLeadNamePartsEnabled,
   isFusionInboundV2Enabled,
