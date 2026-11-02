@@ -5,6 +5,7 @@ const logger = require('../../../utils/logger');
 const usageContext = require('../../usageContext');
 const integrationAuthService = require('../integrationAuthService');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
+const { nestDottedKeys } = require('./nestDottedKeys');
 
 /**
  * dealerStudioAdapter.js
@@ -27,10 +28,14 @@ const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
  *   - A 422 means a category/source (or other) value did not match exactly.
  *
  * Field names are not hardcoded: the object inside `lead` is whatever
- * crmIntegrationService builds from the dealer's Field Mappings, sent flat.
- * Dealer Studio requires email, phone, category, source and one dealership
- * identifier (dealership_id, dealership_slug or dealer_code) on create, and
- * the dealership identifier again on every update.
+ * crmIntegrationService builds from the dealer's Field Mappings and
+ * dealerStudioPayload.js (category, provider, source, consent, transcript),
+ * with dotted targets ("address_attributes.postcode", "fields.make") nested
+ * here. See dealerStudioMappings.js for the confirmed default mapping.
+ * Dealer Studio requires email, a phone number, category, source and one
+ * dealership identifier (dealership_id, dealership_slug or dealer_code) on
+ * create, and the dealership identifier again on every update. No lead_state
+ * and no subsource are ever sent.
  *
  * Not documented, so not guessed at: any idempotency support (the
  * Idempotency-Key header below is sent but Dealer Studio does not say it
@@ -161,7 +166,8 @@ function extractExternalLeadId(response) {
 async function request(catalystApp, integration, { method, path, payload, idempotencyKey }) {
   const url = await assertSafeUrl(`${integration.base_url}${path}`);
   // Dealer Studio wants { "lead": { ... } } on both create and update.
-  const data = payload === undefined ? undefined : serializeBody({ lead: payload });
+  // Mapped targets such as "address_attributes.postcode" and "fields.make" become nested objects.
+  const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(payload, 'dealerStudioAdapter') });
   const apiKey = await getApiKey(catalystApp, integration);
   return usageContext.trackApiCall(integration.dealer_code, () => axios.request({
     method,

@@ -439,7 +439,7 @@ router.put('/:dealerCode/integration/mappings', requireAdminRole, async (req, re
     // (fusionSdAdapter.nestDottedKeys); other CRM types send them as flat keys.
     const targetProblem = findTargetFieldProblem(
       validFieldMappings.map((mapping) => mapping.target_field),
-      { nested: integration.crm_type === 'FUSION_SD' }
+      { nested: ['FUSION_SD', 'DEALER_STUDIO'].includes(integration.crm_type) }
     );
     if (targetProblem) {
       return res.status(400).json({ error: 'FIELD_MAPPING_INVALID', ...targetProblem });

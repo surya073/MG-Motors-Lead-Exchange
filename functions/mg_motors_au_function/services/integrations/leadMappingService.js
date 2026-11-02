@@ -71,12 +71,21 @@ const FUSION_NOT_REQUIRED_FIELDS = Object.freeze(['dealer_code']);
 
 /**
  * The mandatory MG fields (pathPolicy.REQUIRED_DELIVERY_MAPPING_FIELDS) that
- * a dealer's field mapping leaves out. For Fusion SD only, the dealer code
+ * a dealer's field mapping leaves out. For Dealer Studio, name and model parts
+ * count and lead_source is not needed. For Fusion SD only, the dealer code
  * is not needed and a derived source counts as mapping the field it is
  * computed from; every other CRM type is checked exactly as before.
  */
 function missingDeliveryMappingFields(sourceFields, crmType) {
   const covered = new Set(sourceFields);
+  if (crmType === 'DEALER_STUDIO') {
+    // Dealer Studio takes the name as first_name / last_name and the model as
+    // fields.model; its `source` is fixed ("Manufacturer"), so lead_source is
+    // not mapped.
+    if (covered.has('first_name') || covered.has('last_name')) covered.add('customer_name');
+    if (covered.has('enquiry_model')) covered.add('vehicle_model');
+    covered.add('lead_source');
+  }
   if (crmType === 'FUSION_SD') {
     sourceFields.forEach((field) => {
       if (DERIVED_SOURCE_FIELDS[field]) covered.add(DERIVED_SOURCE_FIELDS[field]);

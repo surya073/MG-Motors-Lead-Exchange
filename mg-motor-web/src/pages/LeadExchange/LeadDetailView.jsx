@@ -723,24 +723,54 @@ function MoreDetailsCard({ val, lead }) {
   // an operator can tell "delivered" apart from "dealer never got this".
   const dealerCrmRecordId = lead.dealer_crm_record_id;
 
-  const items = [
-    { label: "CRM Record ID", value: val("crm_record_id"), icon: ClipboardIcon },
+  const [copiedKey, setCopiedKey] = useState(null);
+  const copyValue = (key, value) => {
+    if (!value) return;
+    navigator.clipboard?.writeText(String(value));
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 1500);
+  };
+
+  // Grouped so the long record IDs sit together, apart from the lead facts and
+  // the consent flags. `mono` = identifier styling, `copy` = copy button.
+  const sections = [
     {
-      label: "Dealer CRM Record ID",
-      value: dealerCrmRecordId || "Not yet confirmed by dealer",
-      valueClass: dealerCrmRecordId
-        ? "lead-detail__more-details-value--confirmed"
-        : "lead-detail__more-details-value--pending",
-      icon: ClipboardIcon,
+      title: "Record IDs",
+      className: "lead-detail__more-details-grid--ids",
+      items: [
+        { key: "crm", label: "CRM Record ID", value: val("crm_record_id"), icon: ClipboardIcon, mono: true, copy: true },
+        {
+          key: "dealer",
+          label: "Dealer CRM Record ID",
+          value: dealerCrmRecordId || "Not yet confirmed by dealer",
+          valueClass: dealerCrmRecordId
+            ? "lead-detail__more-details-value--confirmed"
+            : "lead-detail__more-details-value--pending",
+          icon: ClipboardIcon,
+          mono: Boolean(dealerCrmRecordId),
+          copy: Boolean(dealerCrmRecordId),
+          rawValue: dealerCrmRecordId,
+        },
+        { key: "enquiry", label: "Enquiry ID", value: val("enquiry_id"), icon: ClipboardIcon, mono: true, copy: true },
+      ],
     },
-    { label: "Enquiry ID", value: val("enquiry_id"), icon: ClipboardIcon },
-    { label: "Lead Source", value: val("lead_source"), icon: MegaphoneIcon },
-    { label: "Postcode", value: val("postcode"), icon: BuildingIcon },
-    { label: "Assigned Date", value: val("assigned_date"), icon: ClockIcon },
-    { label: "Last Status Update", value: val("last_status_update"), icon: ClockIcon },
-    { label: "Next Follow-up", value: val("next_followup_date"), icon: ClockIcon },
-    { label: "Privacy Policy Accepted", value: formatBoolean(lead.accept_privacy_policy), icon: UserIcon },
-    { label: "Marketing Opt-in", value: formatBoolean(lead.receive_marketing_updates), icon: MegaphoneIcon },
+    {
+      title: "Lead Info",
+      items: [
+        { key: "source", label: "Lead Source", value: val("lead_source"), icon: MegaphoneIcon },
+        { key: "postcode", label: "Postcode", value: val("postcode"), icon: BuildingIcon },
+        { key: "assigned", label: "Assigned Date", value: val("assigned_date"), icon: ClockIcon },
+        { key: "status", label: "Last Status Update", value: val("last_status_update"), icon: ClockIcon },
+        { key: "followup", label: "Next Follow-up", value: val("next_followup_date"), icon: ClockIcon },
+      ],
+    },
+    {
+      title: "Consent",
+      items: [
+        { key: "privacy", label: "Privacy Policy Accepted", value: formatBoolean(lead.accept_privacy_policy), icon: UserIcon, pill: true },
+        { key: "marketing", label: "Marketing Opt-in", value: formatBoolean(lead.receive_marketing_updates), icon: MegaphoneIcon, pill: true },
+      ],
+    },
   ];
 
   return (
@@ -751,19 +781,52 @@ function MoreDetailsCard({ val, lead }) {
         </span>
         More Details
       </h3>
-      <div className="lead-detail__more-details-grid">
-        {items.map(({ label, value, valueClass, icon: Icon }) => (
-          <div className="lead-detail__more-details-item" key={label}>
-            <span className="lead-detail__more-details-icon">
-              <Icon size={15} />
-            </span>
-            <div>
-              <span className="lead-detail__more-details-label">{label}</span>
-              <span className={`lead-detail__more-details-value ${valueClass || ""}`}>{value}</span>
-            </div>
+      {sections.map((section) => (
+        <div className="lead-detail__more-details-section" key={section.title}>
+          <h4 className="lead-detail__more-details-section-title">{section.title}</h4>
+          <div className={`lead-detail__more-details-grid ${section.className || ""}`}>
+            {section.items.map(({ key, label, value, valueClass, icon: Icon, mono, copy, pill, rawValue }) => (
+              <div className="lead-detail__more-details-item" key={key}>
+                <span className="lead-detail__more-details-icon">
+                  <Icon size={15} />
+                </span>
+                <div>
+                  <span className="lead-detail__more-details-label">{label}</span>
+                  <span className="lead-detail__more-details-valuewrap">
+                    {pill ? (
+                      <span
+                        className={`lead-detail__more-details-pill ${
+                          value === "Yes" ? "lead-detail__more-details-pill--yes" : "lead-detail__more-details-pill--no"
+                        }`}
+                      >
+                        {value}
+                      </span>
+                    ) : (
+                      <span
+                        className={`lead-detail__more-details-value ${mono ? "lead-detail__more-details-value--mono" : ""} ${valueClass || ""}`}
+                        title={typeof value === "string" ? value : undefined}
+                      >
+                        {value}
+                      </span>
+                    )}
+                    {copy && (rawValue ?? value) && (rawValue ?? value) !== "—" && (
+                      <button
+                        type="button"
+                        className="lead-detail__copy-btn"
+                        onClick={() => copyValue(key, rawValue ?? value)}
+                        aria-label={`Copy ${label}`}
+                      >
+                        <CopyIcon />
+                      </button>
+                    )}
+                    {copiedKey === key && <span className="lead-detail__copied-tag">Copied</span>}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </section>
   );
 }

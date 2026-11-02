@@ -219,9 +219,13 @@ function isOemOnlyStatus(value) {
 // keep needing a mapping for it, as before.
 const FUSION_MG_ONLY_STATUSES = new Set(['pma unassigned']);
 
-/** MG-only for this dealer's CRM type: never sent as a dealer status. */
+/**
+ * MG-only for this dealer's CRM type: never sent as a dealer status. Dealer
+ * Studio owns the enquiry status (no lead_state on create; it comes back
+ * through the webhook), so for it every MG status is MG-only.
+ */
 function isMgOnlyStatusFor(value, crmType) {
-  return isOemOnlyStatus(value) || (crmType === 'FUSION_SD' && FUSION_MG_ONLY_STATUSES.has(normalizeStatus(value)));
+  return crmType === 'DEALER_STUDIO' || isOemOnlyStatus(value) || (crmType === 'FUSION_SD' && FUSION_MG_ONLY_STATUSES.has(normalizeStatus(value)));
 }
 
 function getMgLeadStatusSet() {

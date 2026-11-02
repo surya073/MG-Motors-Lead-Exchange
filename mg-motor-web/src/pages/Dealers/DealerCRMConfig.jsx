@@ -89,6 +89,8 @@ const OUR_FIELDS = [
   "enquiry_variant",
   "enquiry_powertrain",
   "chat_transcript",
+  "chat_url",
+  "vehicle_make",
   "lead_owner_email",
   "dealer_rejected_reason",
   // Computed when a lead is sent, not stored (backend leadMappingService
@@ -239,6 +241,45 @@ const FUSION_DEFAULT_STATUS_MAPPINGS = [
   // Inbound only: Fusion Lost comes back as MG "Lost", whose stored value
   // is Lost Lead (MG's picklist, 9 Oct 2026; Q26).
   { source_status: "Lost Lead", target_status: "Lost", inbound_only: true },
+];
+
+// Dealer Studio, confirmed mapping (API mapping update, 2 Nov 2026). Dotted
+// targets become nested objects when the lead is sent. The department is sent
+// as fields.lead_department and also decides `category` together with Nature of
+// Enquiry; `provider`, `source` and the consent booleans are set by the backend.
+// Make and Chat URL have no MG source field yet, so they are left out until one
+// exists. The status row is read for what Dealer Studio sends back and is never
+// sent. Mirrored in the backend's dealerStudioMappings.js.
+const DEALER_STUDIO_DEFAULT_FIELD_MAPPINGS = [
+  { source_field: "first_name", target_field: "first_name", data_type: "string", required: false },
+  { source_field: "last_name", target_field: "last_name", data_type: "string", required: false },
+  { source_field: "email_address", target_field: "email", data_type: "string", required: true },
+  { source_field: "mobile_number", target_field: "mobile", data_type: "string", required: true },
+  { source_field: "customer_message", target_field: "message", data_type: "string", required: false },
+  { source_field: "nature_of_enquiry", target_field: "category", data_type: "string", required: true },
+  { source_field: "postcode", target_field: "address_attributes.postcode", data_type: "string", required: true },
+  { source_field: "receive_marketing_updates", target_field: "opt_in", data_type: "boolean", required: false },
+  { source_field: "accept_privacy_policy", target_field: "fields.privacy_policy_accepted", data_type: "boolean", required: true },
+  { source_field: "lead_department", target_field: "fields.lead_department", data_type: "string", required: true },
+  { source_field: "vehicle_make", target_field: "fields.make", data_type: "string", required: false },
+  { source_field: "enquiry_model", target_field: "fields.model", data_type: "string", required: false },
+  { source_field: "enquiry_variant", target_field: "fields.vehicle_badge", data_type: "string", required: false },
+  { source_field: "enquiry_powertrain", target_field: "fields.powertrain", data_type: "string", required: false },
+  { source_field: "chat_url", target_field: "fields.chat_url", data_type: "string", required: false },
+  { source_field: "chat_transcript", target_field: "chat_transcript", data_type: "array", required: false },
+  { source_field: "enquiry_id", target_field: "provider_id", data_type: "string", required: true },
+  { source_field: "dealer_code", target_field: "dealer_code", data_type: "string", required: true },
+  { source_field: "lead_status", target_field: "status", data_type: "string", required: true },
+];
+
+// Dealer Studio owns the enquiry status, so every row is inbound only: the
+// webhook's status type comes back as the MG status. converted and delivered
+// are left out until MG decides what they mean (they are held for review).
+const DEALER_STUDIO_DEFAULT_STATUS_MAPPINGS = [
+  { source_status: "Not Contacted", target_status: "new", inbound_only: true },
+  { source_status: "Contacted", target_status: "working", inbound_only: true },
+  { source_status: "Lost Lead", target_status: "lost", inbound_only: true },
+  { source_status: "Not Qualified", target_status: "invalid", inbound_only: true },
 ];
 
 const EMPTY_CONFIG = {
@@ -876,6 +917,18 @@ export default function DealerCRMConfig() {
   const applyFusionDefaultStatusMap = () => {
     setSaveSuccess(false);
     setStatusMappings(FUSION_DEFAULT_STATUS_MAPPINGS.map((mapping) => ({ ...mapping })));
+    setEditingStatusRows(new Set());
+  };
+
+  const applyDealerStudioDefaultFieldMap = () => {
+    setSaveSuccess(false);
+    setFieldMappings(DEALER_STUDIO_DEFAULT_FIELD_MAPPINGS.map((mapping) => ({ ...mapping })));
+    setEditingFieldRows(new Set());
+  };
+
+  const applyDealerStudioDefaultStatusMap = () => {
+    setSaveSuccess(false);
+    setStatusMappings(DEALER_STUDIO_DEFAULT_STATUS_MAPPINGS.map((mapping) => ({ ...mapping })));
     setEditingStatusRows(new Set());
   };
 
@@ -1969,6 +2022,18 @@ export default function DealerCRMConfig() {
                           Tell us which field in the dealer's CRM matches each of our fields, so lead details line up
                           correctly on both sides.
                         </p>
+                        {isDealerStudio && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={applyDealerStudioDefaultFieldMap}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
+                          >
+                            <ShieldCheck size={14} />
+                            Load Dealer Studio default map
+                          </button>
+                        )}
                         {isFusionSd && (
                           <button
                             type="button"
@@ -2133,6 +2198,18 @@ export default function DealerCRMConfig() {
                           </button>
                         )}
 
+                        {isDealerStudio && (
+                          <button
+                            type="button"
+                            className="dealer-crm-config__button--outline"
+                            onClick={applyDealerStudioDefaultStatusMap}
+                            disabled={saving || isViewUser}
+                            title={viewOnlyTitle}
+                          >
+                            <ShieldCheck size={14} />
+                            Load Dealer Studio default map
+                          </button>
+                        )}
                         {isFusionSd && (
                           <button
                             type="button"

@@ -21,7 +21,10 @@ const {
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
-const { translateDealerStudioWebhook } = require('./adapters/dealerStudioInbound');
+const {
+  translateDealerStudioWebhook, mayApplyTestDriveOutcome, isOurProvider,
+} = require('./adapters/dealerStudioInbound');
+const { applyDealerStudioPayloadRules } = require('./adapters/dealerStudioPayload');
 const { cachedForRun } = require('./mappingRunCache');
 const sentPayloadSnapshot = require('./sentPayloadSnapshot');
 
@@ -604,6 +607,7 @@ function buildOutboundPayload(leadRow, fieldMappings, statusMappings, { crmType,
   if (outcomeStatus && statusFieldMapping) payload[statusFieldMapping.target_field] = outcomeStatus;
 
   if (crmType === 'FUSION_SD') applyFusionPayloadRules(payload, fieldMappings, operation);
+  if (crmType === 'DEALER_STUDIO') return applyDealerStudioPayloadRules(payload, normalizedLead, fieldMappings);
   return payload;
 }
 
@@ -1572,13 +1576,18 @@ const FUSION_LOST_REASON_TO_MG = Object.freeze({
   'trade value': 'Trade-In',
 });
 
+// Shared by Fusion SD and Dealer Studio. Dealer Studio's translator supplies the
+// MG picklist value (`mgReason`), its own label (`dealerLabel`) and clean text
+// (`verbatim`, so a comment's hyphens are not turned into spaces).
 function fusionLostReasonFields(lost) {
   if (!lost || !lost.reason) return {};
-  const words = (value) => String(value).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = lost.verbatim
+    ? (value) => String(value).replace(/\s+/g, ' ').trim()
+    : (value) => String(value).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   const reason = words(lost.reason);
   const fields = {
-    Reason_for_Lost: FUSION_LOST_REASON_TO_MG[reason.toLowerCase()] || 'Other',
-    Reason_For_Loss_Other: `Dealer (Fusion): ${reason}${lost.subReason ? ` / ${words(lost.subReason)}` : ''}`.slice(0, 2000),
+    Reason_for_Lost: lost.mgReason || FUSION_LOST_REASON_TO_MG[reason.toLowerCase()] || 'Other',
+    Reason_For_Loss_Other: `Dealer (${lost.dealerLabel || 'Fusion'}): ${reason}${lost.subReason ? ` / ${words(lost.subReason)}` : ''}`.slice(0, 2000),
   };
   const at = lost.at ? new Date(lost.at) : null;
   if (at && !Number.isNaN(at.getTime())) {
@@ -1959,6 +1968,26 @@ async function mappedExternalLeadIds(catalystApp, integration, ids) {
  * alongside them). With no match at all, the first id goes through the shared
  * path, which reports the missing mapping as it does for any dealer.
  */
+/**
+ * Reconciliation by provider: Dealer Studio echoes the provider name and the
+ * provider_id MG sent (the MG Enquiry ID). When none of the cluster's lead ids
+ * is one MG stored, the enquiry id finds the MG lead, and so the Dealer Studio
+ * lead id it was mapped to. A provider that is not MG's exchange is ignored.
+ */
+async function leadIdsByProviderId(catalystApp, integration, provider) {
+  if (!provider?.providerId || !isOurProvider(provider)) return [];
+  const leadRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT crm_record_id FROM ${LEADS_TABLE} WHERE enquiry_id = '${safeQuoteForZcql(provider.providerId)}' AND dealer_code = '${safeQuoteForZcql(integration.dealer_code)}' LIMIT 1`
+  );
+  const zohoLeadId = leadRows[0]?.[LEADS_TABLE]?.crm_record_id;
+  if (!zohoLeadId) return [];
+  const mappingRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT external_crm_lead_id FROM ${LEAD_INTEGRATIONS_TABLE} WHERE integration_id = ${integration.ROWID} AND zoho_lead_id = '${safeQuoteForZcql(zohoLeadId)}' LIMIT 1`
+  );
+  const externalId = mappingRows[0]?.[LEAD_INTEGRATIONS_TABLE]?.external_crm_lead_id;
+  return externalId ? [String(externalId)] : [];
+}
+
 async function processInboundWebhookForDealerStudio(catalystApp, integration, externalPayload, zohoCrmService) {
   const requestReference = crypto.randomUUID();
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
@@ -1980,10 +2009,18 @@ async function processInboundWebhookForDealerStudio(catalystApp, integration, ex
     err.code = 'FIELD_MAPPING_INVALID';
     throw err;
   }
-  if (!translated.hasStatus) {
+  if (translated.appointments.length > 0 || translated.testDrives.length > 0) {
+    // MG has no field for appointments or test-drive progress; only a Completed
+    // test drive comes back, as the enquiry outcome. Counts only: no customer data.
     logger.info(
       'crmIntegrationService',
-      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) has no status; nothing to apply to MG`
+      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}): ${translated.appointments.length} appointment(s), ${translated.testDrives.length} test drive(s)`
+    );
+  }
+  if (!translated.hasUpdate) {
+    logger.info(
+      'crmIntegrationService',
+      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) has no status or test-drive outcome; nothing to apply to MG`
     );
     return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
   }
@@ -1992,13 +2029,22 @@ async function processInboundWebhookForDealerStudio(catalystApp, integration, ex
   if (targets.length === 0 && translated.clusterId) {
     targets = await mappedExternalLeadIds(catalystApp, integration, [translated.clusterId]);
   }
+  if (targets.length === 0) targets = await leadIdsByProviderId(catalystApp, integration, translated.provider);
   if (targets.length === 0) targets = [candidates[0]];
+
+  // A completed test drive is an inbound enquiry outcome. It needs a mapping
+  // row to travel through the shared path; the dealer's own is used when it has
+  // one, else the default (the admin map keeps it off the outbound payload).
+  const inboundMappings = fieldMappings.some((m) => m.source_field === 'enquiry_outcome')
+    ? fieldMappings
+    : [...fieldMappings, { source_field: 'enquiry_outcome', target_field: translated.outcomeTarget, data_type: 'string', required: false }];
+  const record = translated.lost ? { ...translated.record, [FUSION_LOST_DETAIL]: translated.lost } : translated.record;
 
   const results = [];
   for (const externalLeadId of targets) {
     results.push(await processResolvedInboundLead(
-      catalystApp, integration, externalLeadId, { ...translated.record },
-      fieldMappings, statusMappings, requestReference, zohoCrmService
+      catalystApp, integration, externalLeadId, { ...record },
+      inboundMappings, statusMappings, requestReference, zohoCrmService
     ));
   }
   if (results.length === 1) return results[0];
@@ -2547,6 +2593,17 @@ async function attemptInboundLeadUpdate(
     { excludeSourceFields: ['lead_status', 'accept_privacy_policy'] }
   );
 
+  // Dealer Studio re-posts the cluster on every change, so a Completed test
+  // drive reappears after the lead has become an order: it must not move the
+  // outcome backwards.
+  if (
+    integration.crm_type === 'DEALER_STUDIO' &&
+    mappedUpdate.enquiry_outcome === 'Test Drive' &&
+    !mayApplyTestDriveOutcome(existingLeadRow.enquiry_outcome)
+  ) {
+    delete mappedUpdate.enquiry_outcome;
+  }
+
   const statusFieldMapping = fieldMappings.find((m) => m.source_field === 'lead_status');
   const statusTargetField = statusFieldMapping ? statusFieldMapping.target_field : 'status';
   const incomingStatusValue = externalRecord[statusTargetField];
@@ -2681,6 +2738,10 @@ async function attemptInboundLeadUpdate(
     if (Object.keys(mappedUpdate).length === 0) {
       return { skipped: true, reason: 'SLA_BREACH_STILL_UNACTIONED' };
     }
+  }
+
+  if (Object.keys(mappedUpdate).length === 0 && integration.crm_type === 'DEALER_STUDIO' && !isStatusSync) {
+    return { skipped: true, reason: 'OUTCOME_NOT_MOVED_BACKWARDS' };
   }
 
   if (Object.keys(mappedUpdate).length === 0) {
