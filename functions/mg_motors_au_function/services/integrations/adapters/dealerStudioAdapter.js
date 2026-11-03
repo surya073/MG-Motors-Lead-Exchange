@@ -77,6 +77,19 @@ function classifyDealerStudioError(err) {
 }
 
 /**
+ * Dealer Studio answers 422 with { field: ["message", ...] }. Field names and
+ * their validation messages (e.g. "name: can't be blank") say what to fix and
+ * carry no lead data; only string messages are kept, and the text is capped.
+ */
+function validationDetail(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const parts = Object.entries(body)
+    .filter(([, messages]) => Array.isArray(messages) && messages.some((m) => typeof m === 'string'))
+    .map(([field, messages]) => `${String(field).slice(0, 40)}: ${messages.filter((m) => typeof m === 'string').join(', ').slice(0, 60)}`);
+  return parts.length ? parts.join('; ').slice(0, 200) : null;
+}
+
+/**
  * Never includes the request body, the API key or the response body in a
  * thrown message: lead data and secrets must not reach logs. Only the HTTP
  * status and a short top-level message/title from the error body.
@@ -84,12 +97,15 @@ function classifyDealerStudioError(err) {
 function wrapError(err, contextMessage) {
   const body = err.response?.data;
   const text = [body?.title, body?.message, body?.error].find((v) => typeof v === 'string' && v.trim());
-  const detail = text ? text.trim().slice(0, 120) : null;
+  const detail = text ? text.trim().slice(0, 120) : validationDetail(body);
   const wrapped = new Error(
     `${contextMessage} (HTTP ${err.response?.status || 'network error'}${detail ? `: ${detail}` : ''})`
   );
   wrapped.code = classifyDealerStudioError(err);
   wrapped.response = err.response ? { status: err.response.status } : undefined;
+  // Saved with the activity log row (field_changes) so the failing fields show
+  // there, not only in the function logs. Status and validation text only.
+  if (err.response?.status && detail) wrapped.vendor = { status: err.response.status, detail };
   return wrapped;
 }
 
@@ -163,11 +179,25 @@ function extractExternalLeadId(response) {
   return undefined;
 }
 
+/**
+ * When the dealer's config names a Dealer Studio dealership slug, that slug
+ * identifies the dealership instead of MG's dealer_code (which Dealer Studio
+ * answers with 401 "API key not authorised for this dealership" unless it
+ * has been set up on their side). Dealer Studio takes one identifier, so
+ * dealer_code is replaced, not sent alongside.
+ */
+function withDealershipSlug(integration, payload) {
+  const slug = typeof integration.dealership_slug === 'string' ? integration.dealership_slug.trim() : '';
+  if (!slug || payload === undefined) return payload;
+  const { dealer_code: _mgDealerCode, dealership_id: _id, ...rest } = payload;
+  return { ...rest, dealership_slug: slug };
+}
+
 async function request(catalystApp, integration, { method, path, payload, idempotencyKey }) {
   const url = await assertSafeUrl(`${integration.base_url}${path}`);
   // Dealer Studio wants { "lead": { ... } } on both create and update.
   // Mapped targets such as "address_attributes.postcode" and "fields.make" become nested objects.
-  const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(payload, 'dealerStudioAdapter') });
+  const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(withDealershipSlug(integration, payload), 'dealerStudioAdapter') });
   const apiKey = await getApiKey(catalystApp, integration);
   return usageContext.trackApiCall(integration.dealer_code, () => axios.request({
     method,
@@ -267,5 +297,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId },
+  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId, withDealershipSlug },
 };

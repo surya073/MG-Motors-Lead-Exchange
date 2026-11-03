@@ -51,11 +51,11 @@ function safeConfig(integration) {
   const { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
      oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
-    status, last_tested_at, last_sync_at } = integration;
+    dealership_slug, status, last_tested_at, last_sync_at } = integration;
   return { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
     oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
-    status, last_tested_at, last_sync_at };
+    dealership_slug, status, last_tested_at, last_sync_at };
 }
 
 const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
@@ -239,6 +239,15 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
       inbound_enabled: deriveInboundEnabled(body.crm_type, body.webhook_enabled),
       status: (integration?.status === 'ACTIVE' || integration?.status === 'CONNECTED') ? 'CONFIGURING' : 'NOT_CONFIGURED',
     };
+    // Dealer Studio only. Needs a `dealership_slug` text column on dealer_integrations
+    // (Catalyst Console); written for no other CRM so their saves are unaffected.
+    if (isDealerStudio) {
+      const slug = typeof body.dealership_slug === 'string' ? body.dealership_slug.trim() : '';
+      if (slug && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(slug)) {
+        return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'dealership_slug', message: 'Dealership slug may only contain letters, numbers, hyphens and underscores.' });
+      }
+      fields.dealership_slug = slug || null;
+    }
     if (integration) {
       await table.updateRow({ ROWID: integration.ROWID, ...fields });
     } else {

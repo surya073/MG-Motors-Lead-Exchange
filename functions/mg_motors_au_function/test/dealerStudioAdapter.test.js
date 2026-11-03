@@ -191,3 +191,28 @@ test('testConnection checks the key at GET /api/v1/apikeys/apikey_details.json; 
   assert.equal(down.ok, false);
   assert.equal(down.httpStatus, 0);
 });
+
+test('a configured dealership_slug replaces dealer_code in the lead body', () => {
+  const { withDealershipSlug } = dealerStudioAdapter._test;
+  const payload = { email: 'a@b.co', dealer_code: '654321' };
+  assert.deepEqual(withDealershipSlug({ dealership_slug: ' mg-test ' }, payload), { email: 'a@b.co', dealership_slug: 'mg-test' });
+  assert.deepEqual(withDealershipSlug({ dealership_slug: '' }, payload), payload); // blank: unchanged
+  assert.deepEqual(withDealershipSlug({}, payload), payload);
+  assert.equal(withDealershipSlug({ dealership_slug: 'mg-test' }, undefined), undefined);
+});
+
+test('a 422 { field: [messages] } body names the failing fields without echoing lead values', async (t) => {
+  withKey(t);
+  mockRequest(t, () => { throw httpError(422, { name: ["can't be blank"], category: ['is not included in the list'], email: 'jane@example.com' }); });
+
+  await assert.rejects(
+    () => dealerStudioAdapter.createLead({}, integration(), { email: 'jane@example.com' }),
+    (err) => {
+      assert.equal(err.code, 'FIELD_MAPPING_INVALID');
+      assert.match(err.message, /name: can't be blank; category: is not included in the list/);
+      assert.deepEqual(err.vendor, { status: 422, detail: "name: can't be blank; category: is not included in the list" });
+      assert.ok(!err.message.includes('jane@example.com'));
+      return true;
+    }
+  );
+});

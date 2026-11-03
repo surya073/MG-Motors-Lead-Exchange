@@ -1889,6 +1889,24 @@ export default function DealerCRMConfig() {
                             </div>
                           )}
 
+                          {isDealerStudio && (
+                            <div className="dealer-crm-config__field-row">
+                              <label>Dealership Slug</label>
+                              <input
+                                value={config.dealership_slug || ""}
+                                onChange={(e) => handleConfigChange("dealership_slug", e.target.value)}
+                                placeholder="e.g. mg-test"
+                                autoComplete="off"
+                                disabled={isViewUser}
+                                title={viewOnlyTitle}
+                              />
+                              <span className="dealer-crm-config__field-hint">
+                                Dealer Studio's slug for this dealership. When set, it is sent instead of MG's dealer code.
+                                Leave blank only if Dealer Studio has set this dealer's MG code up on their side.
+                              </span>
+                            </div>
+                          )}
+
                           <div className="dealer-crm-config__section-title">Lead endpoints</div>
 
                           <div className="dealer-crm-config__field-row-inline">

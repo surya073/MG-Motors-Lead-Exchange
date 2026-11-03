@@ -21,7 +21,8 @@
  *     not held.
  *
  * Schema v3 (v2 plus a `provider` object) fields read here:
- *   - status_type: new, working, converted, delivered, lost, invalid. The guide
+ *   - status_type: new, working, converted, delivered, lost, invalid. converted and
+ *     delivered set Enquiry Outcome = Retail Order instead of a status. The guide
  *     recommends mapping on the TYPE since dealers rename statuses. Read from
  *     `status_type` (or `lead_status_option.status_type`) and lowercased; the
  *     status name (`status`) is the fallback.
@@ -40,6 +41,12 @@ const { PROVIDER_NAME } = require('./dealerStudioPayload');
 const DEFAULT_STATUS_TARGET = 'status';
 const DEFAULT_OUTCOME_TARGET = 'enquiry_outcome';
 const TEST_DRIVE_OUTCOME = 'Test Drive';
+// Converted and Delivered (a sale agreed / the car handed over) both set MG
+// Enquiry Outcome = Retail Order and leave Enquiry Status alone (MG decision,
+// 3 Nov 2026). Zoho takes the picklist's stored value, which for the label
+// "Retail Order" is "Purchase" (see FUSION_OUTCOME_STATUS in crmIntegrationService).
+const RETAIL_ORDER_OUTCOME = 'Purchase';
+const SALE_STATUS_TYPES = new Set(['converted', 'delivered']);
 const MAX_CANDIDATE_IDS = 25;
 const MAX_LIST_ITEMS = 50;
 
@@ -61,6 +68,12 @@ const LOST_REASONS = Object.freeze({
   undesirable_item: { label: 'Undesirable item', mg: 'Other' },
   other: { label: 'Other', mg: 'Other' },
 });
+
+// Dealer Studio's default status NAMES (New, Contacted, Converted, Delivered, Lost,
+// Spam) onto their status types. Used only when the post carries no status_type,
+// so a name such as "Contacted" or "Spam" still reaches the type-keyed mapping rows.
+// A renamed or custom status is not guessed at: it stays as sent.
+const DEFAULT_NAME_TO_TYPE = Object.freeze({ contacted: 'working', spam: 'invalid' });
 
 // MG outcomes a completed test drive may not replace: the lead has moved on.
 const OUTCOMES_OPEN_TO_TEST_DRIVE = new Set(['', '-none-', 'outcome pending', 'no outcome', 'test drive']);
@@ -146,12 +159,16 @@ function translateDealerStudioWebhook(payload, fieldMappings = []) {
   const statusType = (text(body.status_type, 50) ?? text(option.status_type, 50))?.toLowerCase() ?? null;
   // v1 sends `status` as the name; allow an object { name } too.
   const statusName = text(typeof body.status === 'object' && body.status ? body.status.name : body.status) ?? text(option.name);
-  const status = statusType ?? statusName;
+  // The type decides; the default name only when the post has no type.
+  const isSale = SALE_STATUS_TYPES.has(statusType ?? statusName?.toLowerCase() ?? '');
+  const status = isSale ? null : statusType ?? (statusName ? (DEFAULT_NAME_TO_TYPE[statusName.toLowerCase()] ?? statusName) : null);
 
   const changedAt = text(body.updated_at) ?? text(body.modified);
   const appointments = parseAppointments(body.appointments);
   const testDrives = parseTestDrives(body.test_drives);
-  const outcome = testDrives.some((drive) => drive.status?.toLowerCase() === 'completed') ? TEST_DRIVE_OUTCOME : null;
+  const outcome = isSale
+    ? RETAIL_ORDER_OUTCOME
+    : (testDrives.some((drive) => drive.status?.toLowerCase() === 'completed') ? TEST_DRIVE_OUTCOME : null);
 
   const record = {};
   if (status !== null) record[statusTarget] = status;
@@ -194,5 +211,6 @@ module.exports = {
   DEFAULT_STATUS_TARGET,
   DEFAULT_OUTCOME_TARGET,
   TEST_DRIVE_OUTCOME,
+  RETAIL_ORDER_OUTCOME,
   LOST_REASONS,
 };

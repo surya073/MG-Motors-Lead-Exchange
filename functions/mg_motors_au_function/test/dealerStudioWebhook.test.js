@@ -39,7 +39,7 @@ test('translator: status type (lowercased) is preferred and the lead ids come fr
 
 test('translator: reads lead_status_option, then falls back to the status name', () => {
   assert.equal(translateDealerStudioWebhook({ id: 1, lead_status_option: { status_type: 'Lost', name: 'Gone' } }).record.status, 'lost');
-  assert.equal(translateDealerStudioWebhook({ id: 1, status: 'Contacted' }).record.status, 'Contacted');
+  assert.equal(translateDealerStudioWebhook({ id: 1, status: 'Contacted' }).record.status, 'working');
   assert.equal(translateDealerStudioWebhook({ id: 1, status: { id: 3, name: 'Test Drive Done' } }).record.status, 'Test Drive Done');
   assert.equal(translateDealerStudioWebhook({ id: 1, lead_status_option: { name: 'Hot' } }).record.status, 'Hot');
 });

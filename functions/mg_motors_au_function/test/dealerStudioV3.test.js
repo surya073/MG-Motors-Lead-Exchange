@@ -91,6 +91,7 @@ test('a full lead builds the confirmed Dealer Studio body, with nested targets',
     last_name: 'Citizen',
     email: 'jane@example.com',
     mobile: '0412345678',
+    phone: '0412345678', // Dealer Studio requires phone; copied from the mapped mobile
     message: 'Can I book a drive?',
     category: 'Test Drive Booking',
     address_attributes: { postcode: '3000' },
@@ -279,8 +280,14 @@ test('v3: appointments, test drives, status type and provider are all read', () 
 });
 
 test('v3: every status type is read case-insensitively', () => {
-  ['New', 'Working', 'Converted', 'Delivered', 'Lost', 'Invalid'].forEach((type) => {
+  ['New', 'Working', 'Lost', 'Invalid'].forEach((type) => {
     assert.equal(translateDealerStudioWebhook({ id: 1, status_type: type }).record.status, type.toLowerCase());
+  });
+  // Converted and Delivered are an outcome (Retail Order), not a status.
+  ['Converted', 'Delivered'].forEach((type) => {
+    const out = translateDealerStudioWebhook({ id: 1, status_type: type });
+    assert.equal(out.record.status, undefined);
+    assert.equal(out.statusType, type.toLowerCase());
   });
 });
 
@@ -335,7 +342,7 @@ test('outcome guard: a Completed test drive never replaces an outcome the lead h
   for (const open of ['', undefined, null, '-None-', 'Outcome Pending', 'No Outcome', 'Test Drive']) {
     assert.equal(mayApplyTestDriveOutcome(open), true, String(open));
   }
-  for (const closed of ['Retail Order', 'Fleet Order', 'On-Sold Demo', 'Lost']) {
+  for (const closed of ['Retail Order', 'Purchase', 'Fleet Order', 'On-Sold Demo', 'Lost']) {
     assert.equal(mayApplyTestDriveOutcome(closed), false, closed);
   }
 });
@@ -410,12 +417,15 @@ test('status mapping: new, working, lost and invalid reach MG; converted and del
     await receive(harness, { id: 200001, status_type: type, leads: [{ id: DS_LEAD_ID }] });
     assert.equal(harness.db.tables.leads[0].lead_status, mg, type);
   }
+  // converted and delivered set Enquiry Outcome = Retail Order (stored as
+  // "Purchase") and leave Enquiry Status alone.
   for (const type of ['converted', 'delivered']) {
     const harness = harnessFor(t);
     const result = await receive(harness, { id: 200001, status_type: type, leads: [{ id: DS_LEAD_ID }] });
-    assert.equal(result.held, true, type);
-    assert.equal(result.reason, 'STATUS_MAPPING_NOT_FOUND');
-    assert.deepEqual(harness.oemWrites, []);
+    assert.equal(result.held, undefined, type);
+    assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Outcome: 'Purchase' } }], type);
+    assert.equal(harness.db.tables.leads[0].enquiry_outcome, 'Purchase', type);
+    assert.equal(harness.db.tables.leads[0].lead_status, 'Not Contacted', type);
   }
 });
 
@@ -516,4 +526,52 @@ test('the admin UI default map mirrors dealerStudioMappings.js (the two deployab
   const uiStatuses = [...statuses.matchAll(/source_status: "([^"]+)", target_status: "([^"]+)", inbound_only: true/g)]
     .map(([, mg_status, dealer_status]) => ({ dealer_status, mg_status }));
   assert.deepEqual(uiStatuses, INBOUND_STATUS_PRESET.map(({ dealer_status, mg_status }) => ({ dealer_status, mg_status })));
+});
+
+test('a mapped mobile number is also sent as phone, which Dealer Studio requires', () => {
+  const out = applyDealerStudioPayloadRules({ email: 'a@b.co', mobile: '0400000000' }, SALES_LEAD, MAPPINGS);
+  assert.equal(out.phone, '0400000000');
+  assert.equal(out.mobile, '0400000000');
+  const kept = applyDealerStudioPayloadRules({ email: 'a@b.co', phone: '0411111111', mobile: '0400000000' }, SALES_LEAD, MAPPINGS);
+  assert.equal(kept.phone, '0411111111'); // an explicit phone is never overwritten
+  const none = applyDealerStudioPayloadRules({ email: 'a@b.co' }, SALES_LEAD, MAPPINGS);
+  assert.ok(!('phone' in none));
+});
+
+test('a post with no status_type maps Dealer Studio default names (Contacted, Spam) onto their types', () => {
+  const { translateDealerStudioWebhook } = require('../services/integrations/adapters/dealerStudioInbound');
+  const of = (status) => translateDealerStudioWebhook({ id: 1, status, leads: [{ id: 2 }] }, []).record.status;
+  assert.equal(of('Contacted'), 'working');
+  assert.equal(of('Spam'), 'invalid');
+  assert.equal(of('New'), 'New');
+  assert.equal(translateDealerStudioWebhook({ id: 1, status_type: 'Lost', status: 'Contacted' }, []).record.status, 'lost');
+});
+
+test('converted then delivered: the second post is a no-op, and a re-posted test drive does not undo the order', async (t) => {
+  const harness = harnessFor(t);
+  await receive(harness, { id: 200001, status_type: 'converted', leads: [{ id: DS_LEAD_ID }] });
+  const again = await receive(harness, { id: 200001, status_type: 'delivered', leads: [{ id: DS_LEAD_ID }], test_drives: [{ status: 'Completed' }] });
+  assert.equal(again.skipped, true);
+  assert.equal(harness.oemWrites.length, 1);
+  assert.equal(harness.db.tables.leads[0].enquiry_outcome, 'Purchase');
+});
+
+test('translator: converted/delivered (by type, or by default name when no type) give the Retail Order outcome and no status', () => {
+  const { translateDealerStudioWebhook: tr, RETAIL_ORDER_OUTCOME } = require('../services/integrations/adapters/dealerStudioInbound');
+  for (const body of [{ status_type: 'Converted' }, { status_type: 'delivered', status: 'Handed over' }, { status: 'Converted' }, { lead_status_option: { status_type: 'delivered' } }]) {
+    const out = tr({ id: 1, leads: [{ id: 2 }], ...body }, []);
+    assert.equal(out.outcome, RETAIL_ORDER_OUTCOME);
+    assert.equal(out.hasStatus, false);
+    assert.equal(out.hasUpdate, true);
+    assert.deepEqual(out.record, { enquiry_outcome: 'Purchase' });
+  }
+  // a renamed status that still has a non-sale type is not a sale
+  assert.equal(tr({ id: 1, status_type: 'working', status: 'Converted' }, []).outcome, null);
+});
+
+test('first name and last name are sent as first_name and last_name (Dealer Studio, 3 Nov 2026), never as name', () => {
+  const out = applyDealerStudioPayloadRules({ first_name: 'Jane', last_name: 'Citizen', email: 'a@b.co', mobile: '0400000000' }, SALES_LEAD, MAPPINGS);
+  assert.equal(out.first_name, 'Jane');
+  assert.equal(out.last_name, 'Citizen');
+  assert.equal('name' in out, false);
 });

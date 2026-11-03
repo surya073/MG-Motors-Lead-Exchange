@@ -176,6 +176,11 @@ function applyDealerStudioPayloadRules(payload, leadRow, fieldMappings = []) {
   if (natureTarget && natureTarget !== 'category') delete out[natureTarget];
   out.category = resolveCategory(leadRow?.lead_department, leadRow?.nature_of_enquiry);
 
+  // Dealer Studio's create endpoint requires `phone` (422 "phone: can't be
+  // blank" otherwise). The confirmed default mapping names the target `mobile`,
+  // so the number is also sent as `phone`; `mobile` is left as mapped.
+  if (isBlank(out.phone) && !isBlank(out.mobile)) out.phone = out.mobile;
+
   // Fixed values: this exchange is the provider, MG is a manufacturer source.
   out.provider = PROVIDER_NAME;
   out.source = SOURCE_NAME;
