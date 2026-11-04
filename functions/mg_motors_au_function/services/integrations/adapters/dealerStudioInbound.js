@@ -75,6 +75,20 @@ const LOST_REASONS = Object.freeze({
 // A renamed or custom status is not guessed at: it stays as sent.
 const DEFAULT_NAME_TO_TYPE = Object.freeze({ contacted: 'working', spam: 'invalid' });
 
+// MG's agreed pick-list values (Dealer Studio Integration Requirements.xlsx, Field Mapping
+// tab). MG's Enquiry Model / Variant are Zoho pick-lists, so a value outside the list makes
+// Zoho reject the WHOLE write, a status change in the same post included. Only an exact
+// (case-insensitive) match is applied, written in MG's own spelling. The workbook's
+// Powertrain list is a copy of the model list (a known error), so powertrain is not applied.
+const MG_MODELS = ['MG3', 'MG4', 'New MG4 EV', 'New MG4 XPOWER', 'MG4 EV Urban', 'MG5', 'MG7', 'MGS5 EV', 'MGS6 EV',
+  'MG ZS', 'MG ZST', 'MG HS', 'MG HS +EV', 'MG QS', 'MGU9', 'MGU9 EV', 'MGU9 Black Edition', 'Cyberster', 'IM5', 'IM6'];
+const MG_VARIANTS = ['Core', 'Core +Nav', 'Vibe', 'Vibe Turbo', 'Excite', 'Excite X', 'Essence', 'Essence X', 'Essence Anfield',
+  'Long Range', 'Short Range', 'XPOWER', 'HYBRID+ sup', 'SUPER HYBRID', 'HYBRID+', 'Petrol', 'Electric', 'Diesel', 'Premium',
+  'Platinum', 'Performance', 'Explore', 'Explore X', 'Explore Pro', 'Excite 49', 'Excite 62', 'Essence 49', 'Essence 62', 'Black Edition'];
+const canonical = (list) => new Map(list.map((value) => [value.toLowerCase(), value]));
+const MODEL_BY_LOWER = canonical(MG_MODELS);
+const VARIANT_BY_LOWER = canonical(MG_VARIANTS);
+
 // MG outcomes a completed test drive may not replace: the lead has moved on.
 const OUTCOMES_OPEN_TO_TEST_DRIVE = new Set(['', '-none-', 'outcome pending', 'no outcome', 'test drive']);
 
@@ -130,6 +144,87 @@ function parseLost(body, changedAt) {
   };
 }
 
+/**
+ * Dealer edits that come back to MG (Dealer Studio permissions tab: first and last name,
+ * email, mobile, postcode, marketing opt-in, model, variant). Read from the cluster:
+ *   contact.first_name / last_name / email / mobile_phone (or mobile, phone) / postcode
+ *     (the contact block as the guide documents it for v1; confirm against a v3 payload)
+ *   leads[].opt_in            (Dealer Studio email, 3 Nov 2026)
+ *   cars[0].model / badge     (Dealer Studio email, 3 Nov 2026)
+ * Each is { source, value } keyed by MG's internal field. A missing value is never an edit
+ * (nothing is cleared), and a model or variant outside MG's lists is skipped and reported.
+ * Whether a value actually differs from MG's is decided later, against MG's own record.
+ */
+function parseFieldEdits(body) {
+  const edits = [];
+  const skipped = [];
+  const contact = body.contact && typeof body.contact === 'object' && !Array.isArray(body.contact) ? body.contact : {};
+  const first = text(contact.first_name, 100);
+  const last = text(contact.last_name, 100);
+  if (first || last) edits.push({ source: 'customer_name', value: [first, last].filter(Boolean).join(' ') });
+  const email = text(contact.email, 254);
+  if (email) edits.push({ source: 'email_address', value: email });
+  const mobile = text(contact.mobile_phone, 40) ?? text(contact.mobile, 40) ?? text(contact.phone, 40);
+  if (mobile) edits.push({ source: 'mobile_number', value: mobile });
+  const postcode = text(contact.postcode, 20) ?? text(contact.address && contact.address.postcode, 20);
+  if (postcode) edits.push({ source: 'postcode', value: postcode });
+
+  const lead = objects(body.leads).find((item) => typeof item.opt_in === 'boolean');
+  if (lead) edits.push({ source: 'receive_marketing_updates', value: lead.opt_in });
+
+  const car = objects(body.cars)[0];
+  if (car) {
+    const model = text(car.model, 100);
+    if (model) {
+      const mg = MODEL_BY_LOWER.get(model.toLowerCase());
+      if (mg) edits.push({ source: 'enquiry_model', value: mg }); else skipped.push('model');
+    }
+    const badge = text(car.badge, 100);
+    if (badge) {
+      const mg = VARIANT_BY_LOWER.get(badge.toLowerCase());
+      if (mg) edits.push({ source: 'enquiry_variant', value: mg }); else skipped.push('variant');
+    }
+  }
+  return { edits, skipped };
+}
+
+// Whole phone as digits in Australian national form, so +61 400 000 000 equals 0400000000.
+function phoneDigits(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('61') ? `0${digits.slice(2)}` : digits;
+}
+
+const asBoolean = (value) => ['true', '1', 'yes', 'y'].includes(String(value ?? '').trim().toLowerCase());
+const squash = (value) => String(value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const SAME_VALUE = Object.freeze({
+  customer_name: (a, b) => squash(a) === squash(b),
+  email_address: (a, b) => squash(a) === squash(b),
+  mobile_number: (a, b) => phoneDigits(a) !== '' && phoneDigits(a) === phoneDigits(b),
+  postcode: (a, b) => squash(a) === squash(b),
+  receive_marketing_updates: (a, b) => asBoolean(a) === asBoolean(b),
+  enquiry_model: (a, b) => squash(a) === squash(b),
+  enquiry_variant: (a, b) => squash(a) === squash(b),
+});
+
+/**
+ * Dealer Studio posts the whole cluster on every change, and writes names, phone numbers and
+ * flags in its own formatting. A value that only differs in formatting (spacing, case, +61 vs
+ * 0) is not an edit: leaving it in would write to MG on every post, or raise a false
+ * ownership conflict on a phone number. Removes those from `update` in place.
+ * @returns {number} how many were dropped
+ */
+function dropFormattingOnlyChanges(update, existingLead) {
+  let dropped = 0;
+  Object.keys(SAME_VALUE).forEach((field) => {
+    if (update[field] !== undefined && existingLead && SAME_VALUE[field](update[field], existingLead[field])) {
+      delete update[field];
+      dropped += 1;
+    }
+  });
+  return dropped;
+}
+
 function parseProvider(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const name = text(value.name, 100);
@@ -170,10 +265,23 @@ function translateDealerStudioWebhook(payload, fieldMappings = []) {
     ? RETAIL_ORDER_OUTCOME
     : (testDrives.some((drive) => drive.status?.toLowerCase() === 'completed') ? TEST_DRIVE_OUTCOME : null);
 
+  const { edits: fieldEdits, skipped: skippedVehicle } = parseFieldEdits(body);
+
   const record = {};
   if (status !== null) record[statusTarget] = status;
   if (changedAt !== null && status !== null) record.modified_at = changedAt;
   if (outcome !== null) record[outcomeTarget] = outcome;
+
+  // Each edit travels under the target of the dealer's own mapping row for that MG field. With
+  // no such row (a name, which the default map splits into first and last) it gets a private
+  // key and a synthetic row, as the outcome does, so the shared path maps it to the MG field.
+  const syntheticMappings = [];
+  fieldEdits.forEach(({ source, value }) => {
+    const mapped = fieldMappings.find((m) => m.source_field === source)?.target_field;
+    const target = mapped || `__ds_${source}`;
+    if (!mapped) syntheticMappings.push({ source_field: source, target_field: target, data_type: 'string', required: false });
+    record[target] = value;
+  });
 
   const leads = Array.isArray(body.leads) ? body.leads : [];
   return {
@@ -190,7 +298,10 @@ function translateDealerStudioWebhook(payload, fieldMappings = []) {
     appointments,
     testDrives,
     provider: parseProvider(body.provider),
-    hasUpdate: status !== null || outcome !== null,
+    fieldEdits,
+    skippedVehicle,
+    syntheticMappings,
+    hasUpdate: status !== null || outcome !== null || fieldEdits.length > 0,
   };
 }
 
@@ -207,6 +318,7 @@ function mayApplyTestDriveOutcome(existingOutcome) {
 module.exports = {
   translateDealerStudioWebhook,
   mayApplyTestDriveOutcome,
+  dropFormattingOnlyChanges,
   isOurProvider,
   DEFAULT_STATUS_TARGET,
   DEFAULT_OUTCOME_TARGET,

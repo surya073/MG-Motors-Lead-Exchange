@@ -575,3 +575,124 @@ test('first name and last name are sent as first_name and last_name (Dealer Stud
   assert.equal(out.last_name, 'Citizen');
   assert.equal('name' in out, false);
 });
+
+// ------------------------------------------- lock contention and the create notice
+
+const outboundSyncClaimService = require('../services/integrations/outboundSyncClaimService');
+
+// The lead's lock reads as busy for the first `busyCalls` attempts (Infinity = never freed),
+// then the real lock is used. Returns how many attempts were made.
+function lockBusyFor(t, busyCalls) {
+  const real = outboundSyncClaimService.withOutboundSyncClaim;
+  const state = { attempts: 0 };
+  outboundSyncClaimService.withOutboundSyncClaim = async (...args) => {
+    state.attempts += 1;
+    if (state.attempts <= busyCalls) return { skipped: true, reason: 'CONCURRENT_SYNC_IN_PROGRESS' };
+    return real(...args);
+  };
+  t.after(() => { outboundSyncClaimService.withOutboundSyncClaim = real; });
+  return state;
+}
+
+test('a Dealer Studio post that lands while the lead is locked waits and is applied, not held', async (t) => {
+  const harness = harnessFor(t);
+  crmIntegrationService._test.setDealerStudioClaimRetryDelays([5, 5, 5]);
+  t.after(() => crmIntegrationService._test.setDealerStudioClaimRetryDelays([700, 1200, 1500]));
+  const lock = lockBusyFor(t, 2); // busy twice, free on the third attempt
+  const result = await receive(harness, { id: 200001, status_type: 'working', leads: [{ id: DS_LEAD_ID }] });
+  assert.equal(result.held, undefined, JSON.stringify(result));
+  assert.equal(lock.attempts, 3);
+  assert.equal(harness.db.tables.leads[0].lead_status, 'Contacted');
+  assert.equal(harness.db.tables.integration_logs.filter((row) => row.error_message === 'CONCURRENT_UPDATE_IN_PROGRESS').length, 0);
+});
+
+test('a lock that is never freed still ends as a held post once the waits run out', async (t) => {
+  const harness = harnessFor(t);
+  crmIntegrationService._test.setDealerStudioClaimRetryDelays([5, 5]);
+  t.after(() => crmIntegrationService._test.setDealerStudioClaimRetryDelays([700, 1200, 1500]));
+  const lock = lockBusyFor(t, Infinity);
+  const result = await receive(harness, { id: 200001, status_type: 'working', leads: [{ id: DS_LEAD_ID }] });
+  assert.equal(result.held, true);
+  assert.equal(result.reason, 'CONCURRENT_SYNC_IN_PROGRESS');
+  assert.equal(lock.attempts, 3); // the first try plus the two waits
+  assert.equal(harness.db.tables.leads[0].lead_status, 'Not Contacted');
+  assert.equal(harness.db.tables.integration_logs.filter((row) => row.error_message === 'CONCURRENT_UPDATE_IN_PROGRESS').length, 1);
+});
+
+test('the create log names the fields sent and never their values', () => {
+  const { describeLeadFields } = dealerStudioAdapter._test;
+  const names = describeLeadFields({ first_name: 'Jane', email: 'jane@example.com', fields: { model: 'MG4', make: 'MG' }, address_attributes: { postcode: '3000' }, category: 'General Enquiry' });
+  assert.deepEqual(names, ['address_attributes.postcode', 'category', 'email', 'fields.make', 'fields.model', 'first_name']);
+  assert.equal(JSON.stringify(names).includes('Jane'), false);
+  assert.equal(JSON.stringify(names).includes('3000'), false);
+});
+
+// ------------------------------------------- dealer edits that come back to MG (field level)
+
+const edited = (body) => ({ id: 200001, leads: [{ id: DS_LEAD_ID }], ...body });
+const holds = (harness, code) => harness.db.tables.integration_logs.filter((row) => row.error_message === code).length;
+
+test('a name edit is applied to MG (Happy 5) as First_Name and Last_Name', async (t) => {
+  const harness = harnessFor(t);
+  const result = await receive(harness, edited({ contact: { first_name: 'Janet', last_name: 'Citizen-Smith' } }));
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { First_Name: 'Janet', Last_Name: 'Citizen-Smith' } }]);
+  assert.equal(harness.db.tables.leads[0].customer_name, 'Janet Citizen-Smith');
+  assert.equal(harness.db.tables.leads[0].lead_status, 'Not Contacted');
+});
+
+test('the same name in other spacing or case is not an edit', async (t) => {
+  const harness = harnessFor(t);
+  const result = await receive(harness, edited({ contact: { first_name: ' jane ', last_name: 'CITIZEN' } }));
+  assert.deepEqual(result, { skipped: true, reason: 'NO_CHANGES' });
+  assert.deepEqual(harness.oemWrites, []);
+});
+
+test('postcode and marketing opt-in edits are applied', async (t) => {
+  const harness = harnessFor(t, { lead: { receive_marketing_updates: 'false' } });
+  await receive(harness, edited({ contact: { postcode: '3100' }, leads: [{ id: DS_LEAD_ID, opt_in: true }] }));
+  assert.equal(harness.oemWrites.length, 1);
+  assert.equal(harness.oemWrites[0].fields.Postcode, '3100');
+  assert.equal(harness.oemWrites[0].fields.Receive_Offers_Updates, true);
+});
+
+test('a dealer mobile in another format is the same number, not a conflict', async (t) => {
+  const harness = harnessFor(t);
+  const result = await receive(harness, edited({ contact: { mobile_phone: '+61 412 345 678' } }));
+  assert.deepEqual(result, { skipped: true, reason: 'NO_CHANGES' });
+  assert.deepEqual(harness.oemWrites, []);
+  assert.equal(holds(harness, 'OWNERSHIP_CONFLICT'), 0);
+});
+
+test('a genuinely different mobile or email stays held by MG ownership policy (Unhappy 6), never written', async (t) => {
+  const harness = harnessFor(t);
+  const result = await receive(harness, edited({ contact: { mobile_phone: '0499999999', email: 'new@example.com' } }));
+  assert.equal(result.reason, 'OWNERSHIP_CONFLICT');
+  assert.deepEqual(harness.oemWrites, []);
+  assert.equal(holds(harness, 'OWNERSHIP_CONFLICT'), 1);
+});
+
+test('model and variant are applied only when they are in MG\'s lists, in MG\'s spelling', async (t) => {
+  const ok = harnessFor(t);
+  await receive(ok, edited({ cars: [{ make: 'MG', model: 'mg hs', badge: 'excite x' }] }));
+  assert.deepEqual(ok.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Model: 'MG HS', Variant: 'Excite X' } }]);
+
+  const unknown = harnessFor(t);
+  const result = await receive(unknown, edited({ cars: [{ make: 'MG', model: 'Atlantis', badge: 'Deluxe' }] }));
+  assert.deepEqual(unknown.oemWrites, []);
+  assert.deepEqual(result, { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' });
+});
+
+test('a status change and a field edit in one post are written together', async (t) => {
+  const harness = harnessFor(t);
+  await receive(harness, edited({ status_type: 'working', contact: { postcode: '3200' } }));
+  assert.equal(harness.oemWrites.length, 1);
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Contacted', Postcode: '3200' });
+});
+
+test('missing contact values never clear anything in MG', async (t) => {
+  const harness = harnessFor(t);
+  const result = await receive(harness, edited({ contact: { first_name: '', last_name: '', email: '', postcode: null } }));
+  assert.deepEqual(result, { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' });
+  assert.deepEqual(harness.oemWrites, []);
+});

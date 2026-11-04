@@ -193,12 +193,35 @@ function withDealershipSlug(integration, payload) {
   return { ...rest, dealership_slug: slug };
 }
 
+/**
+ * The names (never the values) of the fields in the lead body, so what MG sent
+ * can be shown to Dealer Studio without logging customer data: top-level keys,
+ * plus the keys inside the nested `fields` and `address_attributes` objects.
+ */
+function describeLeadFields(lead) {
+  if (!lead || typeof lead !== 'object' || Array.isArray(lead)) return [];
+  const names = [];
+  Object.keys(lead).forEach((key) => {
+    const value = lead[key];
+    if (['fields', 'address_attributes'].includes(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.keys(value).forEach((inner) => names.push(`${key}.${inner}`));
+    } else {
+      names.push(key);
+    }
+  });
+  return names.sort();
+}
+
 async function request(catalystApp, integration, { method, path, payload, idempotencyKey }) {
   const url = await assertSafeUrl(`${integration.base_url}${path}`);
   // Dealer Studio wants { "lead": { ... } } on both create and update.
   // Mapped targets such as "address_attributes.postcode" and "fields.make" become nested objects.
   const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(withDealershipSlug(integration, payload), 'dealerStudioAdapter') });
   const apiKey = await getApiKey(catalystApp, integration);
+  if (payload !== undefined) {
+    const sent = describeLeadFields(nestDottedKeys(withDealershipSlug(integration, payload), 'dealerStudioAdapter'));
+    logger.info('dealerStudioAdapter', `${method} lead for dealer ${integration.dealer_code} sends fields: ${sent.join(', ')}${sent.includes('lead_state') || sent.includes('status') ? ' (STATUS FIELD PRESENT)' : ' (no status field)'}`);
+  }
   return usageContext.trackApiCall(integration.dealer_code, () => axios.request({
     method,
     url: url.toString(),
@@ -297,5 +320,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId, withDealershipSlug },
+  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId, withDealershipSlug, describeLeadFields },
 };

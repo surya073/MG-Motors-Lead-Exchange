@@ -45,7 +45,7 @@ test('translator: reads lead_status_option, then falls back to the status name',
 });
 
 test('translator: no status means no record; the status key follows the dealer mapping, default "status"', () => {
-  const none = translateDealerStudioWebhook({ id: 1, contact: { email: 'a@b.c' }, leads: [{ id: 9 }] }, MAPPINGS);
+  const none = translateDealerStudioWebhook({ id: 1, lead_events: [{ id: 5 }], leads: [{ id: 9 }] }, MAPPINGS);
   assert.equal(none.hasStatus, false);
   assert.deepEqual(none.record, {});
   assert.deepEqual(translateDealerStudioWebhook({ id: 1, status_type: 'new' }, []).record, { status: 'new' });
@@ -205,9 +205,9 @@ test('a Lost cluster moves the MG lead to Lost Lead', async (t) => {
   assert.equal(harness.db.tables.leads[0].lead_status, 'Lost Lead');
 });
 
-test('a cluster post with no status (a contact edit, an event) is acknowledged and changes nothing', async (t) => {
+test('a cluster post with no status and no editable field (an event, an assignee) is acknowledged and changes nothing', async (t) => {
   const harness = dealerStudioHarness(t);
-  const result = await receive(harness, { id: 200001, contact: { first_name: 'Sam' }, leads: [{ id: DS_LEAD_ID }] });
+  const result = await receive(harness, { id: 200001, lead_events: [{ id: 5 }], assigned_salesperson: { name: 'Sam' }, leads: [{ id: DS_LEAD_ID }] });
   assert.deepEqual(result, { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' });
   assert.deepEqual(harness.oemWrites, []);
   assert.equal(harness.db.tables.leads[0].lead_status, 'Not Contacted');

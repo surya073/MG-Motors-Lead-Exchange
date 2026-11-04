@@ -22,7 +22,7 @@ const {
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
 const {
-  translateDealerStudioWebhook, mayApplyTestDriveOutcome, isOurProvider,
+  translateDealerStudioWebhook, mayApplyTestDriveOutcome, dropFormattingOnlyChanges, isOurProvider,
 } = require('./adapters/dealerStudioInbound');
 const { applyDealerStudioPayloadRules } = require('./adapters/dealerStudioPayload');
 const { cachedForRun } = require('./mappingRunCache');
@@ -2017,10 +2017,16 @@ async function processInboundWebhookForDealerStudio(catalystApp, integration, ex
       `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}): ${translated.appointments.length} appointment(s), ${translated.testDrives.length} test drive(s)`
     );
   }
+  if (translated.skippedVehicle.length > 0) {
+    logger.info(
+      'crmIntegrationService',
+      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}): ${translated.skippedVehicle.join(' and ')} not in MG's list, not applied`
+    );
+  }
   if (!translated.hasUpdate) {
     logger.info(
       'crmIntegrationService',
-      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) has no status or test-drive outcome; nothing to apply to MG`
+      `Dealer Studio webhook for cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) has no status, outcome or editable field; nothing to apply to MG`
     );
     return { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' };
   }
@@ -2035,9 +2041,13 @@ async function processInboundWebhookForDealerStudio(catalystApp, integration, ex
   // A completed test drive is an inbound enquiry outcome. It needs a mapping
   // row to travel through the shared path; the dealer's own is used when it has
   // one, else the default (the admin map keeps it off the outbound payload).
-  const inboundMappings = fieldMappings.some((m) => m.source_field === 'enquiry_outcome')
-    ? fieldMappings
-    : [...fieldMappings, { source_field: 'enquiry_outcome', target_field: translated.outcomeTarget, data_type: 'string', required: false }];
+  const inboundMappings = [
+    ...fieldMappings,
+    ...(fieldMappings.some((m) => m.source_field === 'enquiry_outcome')
+      ? [] : [{ source_field: 'enquiry_outcome', target_field: translated.outcomeTarget, data_type: 'string', required: false }]),
+    // Dealer edits (name, contact, opt-in, model, variant) that have no row in the dealer's own map.
+    ...translated.syntheticMappings,
+  ];
   const record = translated.lost ? { ...translated.record, [FUSION_LOST_DETAIL]: translated.lost } : translated.record;
 
   const results = [];
@@ -2291,6 +2301,10 @@ function canReplayFromStoredEvents(integration) {
 
 const STORED_EVENTS_TO_SCAN = 10;
 
+// How long a Dealer Studio webhook waits for the lead's lock before it is held
+// (about 3.4 s in all, inside Dealer Studio's push timeout). A test may shorten it.
+let DEALER_STUDIO_CLAIM_RETRY_DELAYS_MS = [700, 1200, 1500];
+
 /**
  * Replays a held dealer update from the newest stored webhook event for that
  * dealer lead that carries a status (newer events may hold only notes). The
@@ -2393,7 +2407,7 @@ async function processResolvedInboundLead(
   // the SAME lead, including a new dealer after reassignment, coordinate on one lock — not two separate
   // locks that could still race each other. See outboundSyncClaimService.js;
   // nothing about that file changes for this.
-  const claimResult = await outboundSyncClaimService.withOutboundSyncClaim(
+  const runClaimed = () => outboundSyncClaimService.withOutboundSyncClaim(
     catalystApp,
     integration.ROWID,
     mapping.zoho_lead_id,
@@ -2404,6 +2418,18 @@ async function processResolvedInboundLead(
       affectedFields, replay, mapping
     )
   );
+  let claimResult = await runClaimed();
+  // Dealer Studio posts the cluster the moment MG creates or updates a lead, while
+  // that push still holds the lead's lock, and it neither retries nor can be
+  // replayed from stored events. So wait out a busy lock for a few seconds
+  // instead of holding the post, or a status change in that window is lost.
+  if (integration.crm_type === 'DEALER_STUDIO' && !replay) {
+    for (const waitMs of DEALER_STUDIO_CLAIM_RETRY_DELAYS_MS) {
+      if (!(claimResult?.skipped && claimResult.reason === 'CONCURRENT_SYNC_IN_PROGRESS')) break;
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      claimResult = await runClaimed();
+    }
+  }
 
   if (claimResult?.skipped && ['CONCURRENT_SYNC_IN_PROGRESS', 'CLAIM_UNAVAILABLE'].includes(claimResult.reason)) {
     // CLAIM_UNAVAILABLE: the claim could not be stored (SYNC_CLAIM_FAIL_CLOSED,
@@ -2604,6 +2630,11 @@ async function attemptInboundLeadUpdate(
     delete mappedUpdate.enquiry_outcome;
   }
 
+  // Dealer Studio re-posts every field on every change, in its own formatting: only a real
+  // difference from MG's value is an edit (see dropFormattingOnlyChanges).
+  const formattingOnlyDropped = integration.crm_type === 'DEALER_STUDIO'
+    ? dropFormattingOnlyChanges(mappedUpdate, existingLeadRow) : 0;
+
   const statusFieldMapping = fieldMappings.find((m) => m.source_field === 'lead_status');
   const statusTargetField = statusFieldMapping ? statusFieldMapping.target_field : 'status';
   const incomingStatusValue = externalRecord[statusTargetField];
@@ -2741,7 +2772,9 @@ async function attemptInboundLeadUpdate(
   }
 
   if (Object.keys(mappedUpdate).length === 0 && integration.crm_type === 'DEALER_STUDIO' && !isStatusSync) {
-    return { skipped: true, reason: 'OUTCOME_NOT_MOVED_BACKWARDS' };
+    return formattingOnlyDropped > 0
+      ? { skipped: true, reason: 'NO_CHANGES' }
+      : { skipped: true, reason: 'OUTCOME_NOT_MOVED_BACKWARDS' };
   }
 
   if (Object.keys(mappedUpdate).length === 0) {
@@ -3313,5 +3346,6 @@ module.exports = {
     extractAffectedFieldNames,
     processResolvedInboundLead,
     summarizeResponseShape,
+    setDealerStudioClaimRetryDelays: (delays) => { DEALER_STUDIO_CLAIM_RETRY_DELAYS_MS = delays; },
   },
 };
