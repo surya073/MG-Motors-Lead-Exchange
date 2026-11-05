@@ -539,7 +539,10 @@
   /* At most 4 columns, so the 12 / 24 / 48 page sizes always fill whole rows */
   grid-template-columns: repeat(auto-fill, minmax(max(250px, calc((100% - 3 * var(--space-3)) / 4)), 1fr));
   gap: var(--space-3);
-  align-items: start;
+  /* Every card stretches to the tallest card in the grid (all rows share one
+     height); the footer is pinned to the bottom via margin-top: auto. */
+  align-items: stretch;
+  grid-auto-rows: 1fr;
 }
 
 .lead-exchange__grid-loading {
