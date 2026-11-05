@@ -12,56 +12,64 @@ const assert = require('node:assert/strict');
 
 const { setupOutbound, fakeAdapter, withEnv } = require('./helpers/outboundHarness');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
-const { getDealerStudioPushFrom } = require('../config/env');
+const { isDealerStudioNewLeadsOnly } = require('../config/env');
 
-// Dealer Studio only receives leads created on or after DEALER_STUDIO_PUSH_FROM.
-// 5 Nov 2026 00:00 AEDT = 4 Nov 2026 13:00 UTC; assigned_date is stored in UTC.
+// A Dealer Studio dealer only receives leads created at MG on or after the moment
+// that dealer was connected (its dealer_integrations row's CREATEDTIME, project time
+// Asia/Kolkata = UTC+05:30). A lead's creation time is assigned_date (UTC).
+// Connected 5 Nov 2026 07:55 IST = 5 Nov 02:25 UTC.
 
-const CUTOFF = '2026-11-05T00:00:00+11:00';
+const CONNECTED_5_NOV = '2026-11-05 07:55:00:000';
+const CONNECTED_3_NOV = '2026-11-03 06:47:00:000';
 const OLD = '2026-10-20 05:00:00';
-const NEW = '2026-11-04 13:00:00'; // exactly at the cutoff
-const DS = { crm_type: 'DEALER_STUDIO', base_url: 'https://8.8.8.8', create_lead_endpoint: '/api/v1/leads' };
+const AFTER_CONNECT = '2026-11-05 03:00:00';
+const DS = { crm_type: 'DEALER_STUDIO', base_url: 'https://8.8.8.8', create_lead_endpoint: '/api/v1/leads', CREATEDTIME: CONNECTED_5_NOV };
 
-test('getDealerStudioPushFrom: default, explicit value, off switch, unreadable value', (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: undefined });
-  assert.equal(getDealerStudioPushFrom().toISOString(), '2026-11-04T13:00:00.000Z');
-  process.env.DEALER_STUDIO_PUSH_FROM = '2026-12-01T00:00:00+11:00';
-  assert.equal(getDealerStudioPushFrom().toISOString(), '2026-11-30T13:00:00.000Z');
-  for (const off of ['off', 'OFF', 'none', 'false', '0']) {
-    process.env.DEALER_STUDIO_PUSH_FROM = off;
-    assert.equal(getDealerStudioPushFrom(), null, off);
+const before = (integration, lead, enabled) => crmIntegrationService.isBeforeDealerStudioCutoff(integration, lead, enabled);
+
+test('DEALER_STUDIO_NEW_LEADS_ONLY is on by default and turned off by false/off/no/0', (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
+  assert.equal(isDealerStudioNewLeadsOnly(), true);
+  for (const off of ['false', 'FALSE', 'off', 'no', '0', ' Off ']) {
+    process.env.DEALER_STUDIO_NEW_LEADS_ONLY = off;
+    assert.equal(isDealerStudioNewLeadsOnly(), false, off);
   }
-  process.env.DEALER_STUDIO_PUSH_FROM = 'not a date';
-  assert.equal(getDealerStudioPushFrom().toISOString(), '2026-11-04T13:00:00.000Z', 'falls back to the default, never to "push everything"');
+  for (const on of ['true', '1', 'yes', 'garbage', '']) {
+    process.env.DEALER_STUDIO_NEW_LEADS_ONLY = on;
+    assert.equal(isDealerStudioNewLeadsOnly(), true, `"${on}" stays on`);
+  }
 });
 
-test('isBeforeDealerStudioCutoff only blocks Dealer Studio leads created before the cutoff', () => {
-  const cutoff = new Date(CUTOFF);
-  const before = crmIntegrationService.isBeforeDealerStudioCutoff;
-  assert.equal(before(DS, { assigned_date: OLD }, cutoff), true);
-  assert.equal(before(DS, { assigned_date: '2026-11-04 12:59:59' }, cutoff), true);
-  assert.equal(before(DS, { assigned_date: NEW }, cutoff), false, 'the cutoff moment itself is allowed');
-  assert.equal(before(DS, { assigned_date: '2026-11-06 01:00:00' }, cutoff), false);
-  // Other CRMs are never affected.
-  assert.equal(before({ crm_type: 'FUSION_SD' }, { assigned_date: OLD }, cutoff), false);
-  assert.equal(before({ crm_type: 'ZOHO_CRM' }, { assigned_date: OLD }, cutoff), false);
-  // No cutoff: nothing is blocked.
-  assert.equal(before(DS, { assigned_date: OLD }, null), false);
+test('a lead created before the dealer was connected is blocked; one created at or after is not', () => {
+  assert.equal(before(DS, { assigned_date: OLD }, true), true);
+  assert.equal(before(DS, { assigned_date: '2026-11-05 02:24:59' }, true), true, 'one second before connecting');
+  assert.equal(before(DS, { assigned_date: '2026-11-05 02:25:00' }, true), false, 'the connect moment itself is allowed');
+  assert.equal(before(DS, { assigned_date: AFTER_CONNECT }, true), false);
 });
 
-test('a lead without assigned_date falls back to the row CREATEDTIME (project time, UTC+05:30)', () => {
-  const cutoff = new Date(CUTOFF); // 2026-11-04 13:00 UTC = 18:30 IST
-  const before = crmIntegrationService.isBeforeDealerStudioCutoff;
-  assert.equal(before(DS, { CREATEDTIME: '2026-11-04 18:29:59:869' }, cutoff), true);
-  assert.equal(before(DS, { CREATEDTIME: '2026-11-04 18:30:00:000' }, cutoff), false);
-  assert.equal(before(DS, { assigned_date: '', CREATEDTIME: '2026-09-01 10:00:00:000' }, cutoff), true);
-  // Nothing readable: not blocked (cannot prove it is old).
-  assert.equal(before(DS, {}, cutoff), false);
-  assert.equal(before(DS, { assigned_date: 'garbage' }, cutoff), false);
+test('the cutoff is per dealer: the same lead is blocked for a later-connected dealer and allowed for an earlier one', () => {
+  const lead = { assigned_date: '2026-11-04 10:00:00' };
+  assert.equal(before({ ...DS, CREATEDTIME: CONNECTED_5_NOV }, lead, true), true, 'connected 5 Nov: a 4 Nov lead is an existing lead');
+  assert.equal(before({ ...DS, CREATEDTIME: CONNECTED_3_NOV }, lead, true), false, 'connected 3 Nov: a 4 Nov lead is new');
 });
 
-test('an existing (pre-cutoff) lead is not created in Dealer Studio: no create, no alert, no hold, no claim', async (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: CUTOFF });
+test('a lead without assigned_date falls back to the lead row CREATEDTIME (project time)', () => {
+  assert.equal(before(DS, { CREATEDTIME: '2026-11-05 07:54:59:869' }, true), true);
+  assert.equal(before(DS, { CREATEDTIME: '2026-11-05 07:55:00:000' }, true), false);
+  assert.equal(before(DS, { assigned_date: '', CREATEDTIME: '2026-09-01 10:00:00:000' }, true), true);
+});
+
+test('nothing is blocked when a date cannot be read, for other CRMs, or when the switch is off', () => {
+  assert.equal(before(DS, {}, true), false, 'lead with no readable date');
+  assert.equal(before(DS, { assigned_date: 'garbage' }, true), false);
+  assert.equal(before({ ...DS, CREATEDTIME: undefined }, { assigned_date: OLD }, true), false, 'dealer with no readable date');
+  assert.equal(before({ ...DS, crm_type: 'FUSION_SD' }, { assigned_date: OLD }, true), false);
+  assert.equal(before({ ...DS, crm_type: 'ZOHO_CRM' }, { assigned_date: OLD }, true), false);
+  assert.equal(before(DS, { assigned_date: OLD }, false), false, 'switch off');
+});
+
+test('an existing lead (created before the dealer connected) is not created in Dealer Studio: no create, alert, hold or claim', async (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
   const harness = setupOutbound(t, { integration: DS, mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } });
   const calls = fakeAdapter(t, {}); // any adapter call fails the test
 
@@ -77,8 +85,8 @@ test('an existing (pre-cutoff) lead is not created in Dealer Studio: no create, 
   assert.equal(harness.db.tables.leads[0].sync_status, 'PENDING', 'the lead row is left alone');
 });
 
-test('a pre-cutoff lead that is already in Dealer Studio keeps syncing its updates', async (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: CUTOFF });
+test('an existing lead that is already in Dealer Studio keeps syncing its updates', async (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
   const harness = setupOutbound(t, {
     integration: DS,
     mapping: { external_crm_lead_id: '555', sync_status: 'SYNCED' },
@@ -92,9 +100,9 @@ test('a pre-cutoff lead that is already in Dealer Studio keeps syncing its updat
   assert.equal(calls.create.length, 0, 'never created again');
 });
 
-test('a lead created at or after the cutoff is pushed as before', async (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: CUTOFF });
-  const harness = setupOutbound(t, { integration: DS, mapping: null, lead: { assigned_date: NEW, lead_department: 'Sales', sync_status: 'PENDING' } });
+test('a lead created after the dealer connected is pushed as before', async (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
+  const harness = setupOutbound(t, { integration: DS, mapping: null, lead: { assigned_date: AFTER_CONNECT, lead_department: 'Sales', sync_status: 'PENDING' } });
   const calls = fakeAdapter(t, { createLead: async () => ({ externalLeadId: '777', httpStatus: 201, raw: { id: 777 } }) });
 
   const result = await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());
@@ -103,8 +111,8 @@ test('a lead created at or after the cutoff is pushed as before', async (t) => {
   assert.equal(calls.create.length, 1, 'the new lead is created in Dealer Studio');
 });
 
-test('DEALER_STUDIO_PUSH_FROM=off pushes old leads too', async (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: 'off' });
+test('DEALER_STUDIO_NEW_LEADS_ONLY=false pushes the dealer\'s earlier leads too', async (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: 'false' });
   const harness = setupOutbound(t, { integration: DS, mapping: null, lead: { assigned_date: OLD, lead_department: 'Sales', sync_status: 'PENDING' } });
   const calls = fakeAdapter(t, { createLead: async () => ({ externalLeadId: '778', httpStatus: 201, raw: { id: 778 } }) });
 
@@ -114,9 +122,9 @@ test('DEALER_STUDIO_PUSH_FROM=off pushes old leads too', async (t) => {
   assert.equal(calls.create.length, 1);
 });
 
-test('other CRM types are not affected by the cutoff', async (t) => {
-  withEnv(t, { DEALER_STUDIO_PUSH_FROM: CUTOFF });
-  const harness = setupOutbound(t, { mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } }); // Fusion SD dealer
+test('other CRM types are not affected', async (t) => {
+  withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
+  const harness = setupOutbound(t, { integration: { CREATEDTIME: CONNECTED_5_NOV }, mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } }); // Fusion SD dealer
   const calls = fakeAdapter(t, { createLead: async () => ({ externalLeadId: '779', httpStatus: 201, raw: { id: 779 } }) });
 
   const result = await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());

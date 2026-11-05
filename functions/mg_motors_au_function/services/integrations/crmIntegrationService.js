@@ -17,7 +17,7 @@ const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
 const {
   getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
-  isKeepOutboundRetryOnInboundEnabled, getDealerStudioPushFrom,
+  isKeepOutboundRetryOnInboundEnabled, isDealerStudioNewLeadsOnly,
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
@@ -774,22 +774,37 @@ function leadCreatedAt(leadRow) {
 }
 
 /**
- * Dealer Studio only (DEALER_STUDIO_PUSH_FROM): true for a lead created before the
- * cutoff. A lead with no readable creation date is not blocked.
+ * When this dealer was connected, as a Date: the integration row's own
+ * CREATEDTIME (project time, Asia/Kolkata, with a trailing :ms), or null if
+ * unreadable.
  */
-function isBeforeDealerStudioCutoff(integration, leadRow, cutoff = getDealerStudioPushFrom()) {
-  if (integration?.crm_type !== 'DEALER_STUDIO' || !cutoff) return false;
+function dealerConnectedAt(integration) {
+  const created = String(integration?.CREATEDTIME || '').trim();
+  if (!created) return null;
+  const parsed = new Date(`${created.replace(' ', 'T').slice(0, 19)}+05:30`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Dealer Studio only (DEALER_STUDIO_NEW_LEADS_ONLY, on by default): true for a lead
+ * created before this dealer was connected, so a dealer's earlier leads are never
+ * pushed, whichever day it is connected. A lead or dealer with no readable date is
+ * not blocked.
+ */
+function isBeforeDealerStudioCutoff(integration, leadRow, enabled = isDealerStudioNewLeadsOnly()) {
+  if (integration?.crm_type !== 'DEALER_STUDIO' || !enabled) return false;
+  const connectedAt = dealerConnectedAt(integration);
   const created = leadCreatedAt(leadRow);
-  return created !== null && created < cutoff;
+  return connectedAt !== null && created !== null && created < connectedAt;
 }
 
 async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   const zohoLeadId = leadRow.crm_record_id;
   // Every push (new-lead webhook, edits, retry sweep, reconciliation, replay) comes
-  // through here. A lead created before the Dealer Studio cutoff is never created in
-  // Dealer Studio: no hold, alert or retry. One already pushed (it has a dealer lead
-  // id) keeps syncing its updates. A failed lookup also skips: the lead is
-  // looked at again on its next event, and nothing is created by mistake.
+  // through here. A lead created before this Dealer Studio dealer was connected is
+  // never created in Dealer Studio: no hold, alert or retry. One already pushed (it
+  // has a dealer lead id) keeps syncing its updates. A failed lookup also skips: the
+  // lead is looked at again on its next event, and nothing is created by mistake.
   if (isBeforeDealerStudioCutoff(integration, leadRow)) {
     let alreadyPushed = false;
     try {
@@ -799,7 +814,7 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       logger.error('crmIntegrationService', `Could not check whether lead ${zohoLeadId} is already in Dealer Studio; not pushed`, err);
     }
     if (!alreadyPushed) {
-      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) was created before the Dealer Studio cutoff; not pushed.`);
+      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) was created before dealer connected to Dealer Studio; not pushed.`);
       return { skipped: true, reason: 'DEALER_STUDIO_BEFORE_CUTOFF' };
     }
   }
