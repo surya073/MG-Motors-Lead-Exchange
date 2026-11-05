@@ -745,14 +745,12 @@
 .lead-card__subline {
   display: flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: wrap; /* let the date wrap to a second line rather than be cut off */
+  gap: 0 5px;
   margin-top: 2px;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
   font-family: var(--font-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .lead-card__header .badge {
@@ -764,16 +762,11 @@
 .lead-card__chips {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  flex-wrap: wrap; /* wrap instead of hiding chips (e.g. lead source) off-screen */
+  gap: var(--space-1) var(--space-2);
   padding: 6px var(--space-3);
   min-height: 0;
   box-sizing: border-box;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.lead-card__chips::-webkit-scrollbar {
-  display: none;
 }
 
 .lead-card__chip {
@@ -781,6 +774,7 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  max-width: 100%;
   padding: 2px 9px;
   border-radius: var(--radius-full);
   border: 1px solid transparent;
@@ -920,9 +914,7 @@
   gap: 6px;
   font-size: var(--fs-xs);
   color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex-wrap: wrap; /* show the full date instead of truncating it */
   min-width: 0;
 }
 
