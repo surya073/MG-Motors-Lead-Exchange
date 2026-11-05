@@ -383,7 +383,31 @@ function getCostDashboardKey() {
   return String(process.env.COST_DASHBOARD_KEY || '').trim() || null;
 }
 
+// Dealer Studio only receives leads created on or after this moment (Australia
+// started pushing on 5 Nov 2026; 00:00 AEDT). Earlier OEM leads are never created
+// in Dealer Studio.
+const DEFAULT_DEALER_STUDIO_PUSH_FROM = '2026-11-05T00:00:00+11:00';
+
+/**
+ * DEALER_STUDIO_PUSH_FROM: only leads CREATED at MG on or after this moment are
+ * first-pushed (created) in Dealer Studio. Leads created earlier are skipped, with
+ * no alert and no retry; a lead already pushed keeps syncing its updates.
+ *   - unset / blank: the default above;
+ *   - an ISO 8601 date-time WITH an offset, e.g. 2026-11-05T00:00:00+11:00 (a bare
+ *     date is read as UTC midnight);
+ *   - off | none | false | 0: no cutoff, every lead is pushed.
+ * An unreadable value falls back to the default rather than pushing old leads.
+ * Returns a Date, or null for no cutoff. Read on every call.
+ */
+function getDealerStudioPushFrom() {
+  const raw = String(process.env.DEALER_STUDIO_PUSH_FROM || '').trim();
+  if (['off', 'none', 'false', '0'].includes(raw.toLowerCase())) return null;
+  const parsed = new Date(raw || DEFAULT_DEALER_STUDIO_PUSH_FROM);
+  return Number.isNaN(parsed.getTime()) ? new Date(DEFAULT_DEALER_STUDIO_PUSH_FROM) : parsed;
+}
+
 module.exports = {
+  getDealerStudioPushFrom,
   getZohoConfig,
   getIntegrationCredentialsKey,
   getAiAssistantConfig,
