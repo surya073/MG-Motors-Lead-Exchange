@@ -51,11 +51,11 @@ function safeConfig(integration) {
   const { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
      oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
-    dealership_slug, status, last_tested_at, last_sync_at } = integration;
+    dealership_slug, dealership_location_id, status, last_tested_at, last_sync_at } = integration;
   return { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
     oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
-    dealership_slug, status, last_tested_at, last_sync_at };
+    dealership_slug, dealership_location_id, status, last_tested_at, last_sync_at };
 }
 
 const { registerDealerWatchChannel } = require('../services/zohoWebhookService');
@@ -247,6 +247,20 @@ router.put('/:dealerCode/integration', requireAdminRole, async (req, res) => {
         return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'dealership_slug', message: 'Dealership slug may only contain letters, numbers, hyphens and underscores.' });
       }
       fields.dealership_slug = slug || null;
+
+      // Dealer Studio location id: several MG dealers can share one dealership
+      // slug, each with its own location. Needs a `dealership_location_id` text
+      // column on dealer_integrations (Catalyst Console). Only written when a value
+      // is supplied, or when the column already exists on this dealer's row (so it
+      // can be cleared) -- a save without it never touches a missing column.
+      const rawLocationId = body.dealership_location_id;
+      const locationId = rawLocationId === undefined || rawLocationId === null ? '' : String(rawLocationId).trim();
+      if (locationId && !/^\d{1,15}$/.test(locationId)) {
+        return res.status(400).json({ error: 'INVALID_CRM_CONFIGURATION', field: 'dealership_location_id', message: 'Dealership location ID must be a number (the numeric id Dealer Studio gives for the location).' });
+      }
+      if (locationId || (integration && 'dealership_location_id' in integration)) {
+        fields.dealership_location_id = locationId || null;
+      }
     }
     if (integration) {
       await table.updateRow({ ROWID: integration.ROWID, ...fields });

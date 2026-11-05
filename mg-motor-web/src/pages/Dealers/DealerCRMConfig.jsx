@@ -1907,6 +1907,25 @@ export default function DealerCRMConfig() {
                             </div>
                           )}
 
+                          {isDealerStudio && (
+                            <div className="dealer-crm-config__field-row">
+                              <label>Dealership Location ID</label>
+                              <input
+                                value={config.dealership_location_id || ""}
+                                onChange={(e) => handleConfigChange("dealership_location_id", e.target.value.replace(/\D/g, ""))}
+                                placeholder="e.g. 4821"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                disabled={isViewUser}
+                                title={viewOnlyTitle}
+                              />
+                              <span className="dealer-crm-config__field-hint">
+                                Dealer Studio's numeric location id for this dealer, sent as <code>location_id</code> with every lead.
+                                Needed when several dealers share one dealership slug. Leave blank if this dealer has its own slug.
+                              </span>
+                            </div>
+                          )}
+
                           <div className="dealer-crm-config__section-title">Lead endpoints</div>
 
                           <div className="dealer-crm-config__field-row-inline">

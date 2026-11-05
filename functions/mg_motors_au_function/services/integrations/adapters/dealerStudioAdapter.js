@@ -194,6 +194,27 @@ function withDealershipSlug(integration, payload) {
 }
 
 /**
+ * Several MG dealers can share one Dealer Studio dealership (same slug) while
+ * each trading from its own location. When the dealer's config carries a
+ * Dealer Studio location id, it is sent as the integer `location_id` so the lead
+ * lands on that location. Dealer Studio answers 422 if the id does not belong to
+ * the dealership ("must belong to dealership") or does not exist.
+ * Blank / non-numeric config sends nothing.
+ */
+function withDealershipLocation(integration, payload) {
+  if (payload === undefined) return payload;
+  const raw = integration.dealership_location_id;
+  const text = raw === undefined || raw === null ? '' : String(raw).trim();
+  if (!/^\d{1,15}$/.test(text)) return payload;
+  return { ...payload, location_id: Number(text) };
+}
+
+/** Dealership slug + location id, applied to every outgoing lead body. */
+function withDealershipTarget(integration, payload) {
+  return withDealershipLocation(integration, withDealershipSlug(integration, payload));
+}
+
+/**
  * The names (never the values) of the fields in the lead body, so what MG sent
  * can be shown to Dealer Studio without logging customer data: top-level keys,
  * plus the keys inside the nested `fields` and `address_attributes` objects.
@@ -216,10 +237,10 @@ async function request(catalystApp, integration, { method, path, payload, idempo
   const url = await assertSafeUrl(`${integration.base_url}${path}`);
   // Dealer Studio wants { "lead": { ... } } on both create and update.
   // Mapped targets such as "address_attributes.postcode" and "fields.make" become nested objects.
-  const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(withDealershipSlug(integration, payload), 'dealerStudioAdapter') });
+  const data = payload === undefined ? undefined : serializeBody({ lead: nestDottedKeys(withDealershipTarget(integration, payload), 'dealerStudioAdapter') });
   const apiKey = await getApiKey(catalystApp, integration);
   if (payload !== undefined) {
-    const sent = describeLeadFields(nestDottedKeys(withDealershipSlug(integration, payload), 'dealerStudioAdapter'));
+    const sent = describeLeadFields(nestDottedKeys(withDealershipTarget(integration, payload), 'dealerStudioAdapter'));
     logger.info('dealerStudioAdapter', `${method} lead for dealer ${integration.dealer_code} sends fields: ${sent.join(', ')}${sent.includes('lead_state') || sent.includes('status') ? ' (STATUS FIELD PRESENT)' : ' (no status field)'}`);
   }
   return usageContext.trackApiCall(integration.dealer_code, () => axios.request({
@@ -320,5 +341,5 @@ module.exports = {
   getLead,
   testConnection,
   capabilities,
-  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId, withDealershipSlug, describeLeadFields },
+  _test: { classifyDealerStudioError, updatePath, extractExternalLeadId, withDealershipSlug, withDealershipLocation, withDealershipTarget, describeLeadFields },
 };

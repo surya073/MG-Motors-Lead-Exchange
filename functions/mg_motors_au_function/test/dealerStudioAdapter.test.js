@@ -201,6 +201,35 @@ test('a configured dealership_slug replaces dealer_code in the lead body', () =>
   assert.equal(withDealershipSlug({ dealership_slug: 'mg-test' }, undefined), undefined);
 });
 
+test('a configured dealership_location_id is sent as the integer location_id', () => {
+  const { withDealershipLocation, withDealershipTarget } = dealerStudioAdapter._test;
+  const payload = { email: 'a@b.co' };
+  assert.deepEqual(withDealershipLocation({ dealership_location_id: ' 4821 ' }, payload), { email: 'a@b.co', location_id: 4821 });
+  assert.deepEqual(withDealershipLocation({ dealership_location_id: 4821 }, payload), { email: 'a@b.co', location_id: 4821 });
+  // blank, missing or non-numeric: nothing is sent
+  assert.deepEqual(withDealershipLocation({ dealership_location_id: '' }, payload), payload);
+  assert.deepEqual(withDealershipLocation({ dealership_location_id: null }, payload), payload);
+  assert.deepEqual(withDealershipLocation({}, payload), payload);
+  assert.deepEqual(withDealershipLocation({ dealership_location_id: 'abc' }, payload), payload);
+  assert.equal(withDealershipLocation({ dealership_location_id: '4821' }, undefined), undefined);
+  // slug and location are both applied, and dealer_code is still replaced by the slug
+  assert.deepEqual(
+    withDealershipTarget({ dealership_slug: 'mg-test', dealership_location_id: '4821' }, { email: 'a@b.co', dealer_code: '654321' }),
+    { email: 'a@b.co', dealership_slug: 'mg-test', location_id: 4821 },
+  );
+  // location alone (no slug) still applies
+  assert.deepEqual(withDealershipTarget({ dealership_location_id: '4821' }, { email: 'a@b.co', dealer_code: '654321' }), { email: 'a@b.co', dealer_code: '654321', location_id: 4821 });
+});
+
+test('createLead puts location_id inside the lead wrapper', async (t) => {
+  withKey(t);
+  const calls = mockRequest(t, () => ({ status: 201, data: { id: 9, lead_cluster_id: 1 }, headers: {} }));
+  await dealerStudioAdapter.createLead({}, integration({ dealership_slug: 'mg-test', dealership_location_id: '4821' }), { email: 'a@b.co' });
+  const body = typeof calls[0].data === 'string' ? JSON.parse(calls[0].data) : calls[0].data;
+  assert.equal(body.lead.location_id, 4821);
+  assert.equal(body.lead.dealership_slug, 'mg-test');
+});
+
 test('a 422 { field: [messages] } body names the failing fields without echoing lead values', async (t) => {
   withKey(t);
   mockRequest(t, () => { throw httpError(422, { name: ["can't be blank"], category: ['is not included in the list'], email: 'jane@example.com' }); });
