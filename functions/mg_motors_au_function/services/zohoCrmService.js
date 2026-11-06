@@ -113,6 +113,9 @@ const OEM_LEADS_FIELDS = [
   'Nature_of_enquiry',
   'Purchase_Classification',
   'Enquiry_Outcome',
+  // Leads Exchange Activity dates: read so they are only ever stamped once.
+  'First_Action_Date',
+  'Test_Drive_Date',
   'Lead_Department',
   'Franchise',
   'Enq_ID',

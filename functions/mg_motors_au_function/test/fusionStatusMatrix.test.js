@@ -198,7 +198,7 @@ test('a lead the dealer accepts is marked Lead Exchanged in MG, with the acknowl
   harness.db.tables.integration_status_mappings.splice(0, Infinity, ...STATUS_PRESET);
   fakeAdapter(t, { createLead: async () => ({ externalLeadId: 'lead_new', httpStatus: 201, raw: {} }) });
   await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted', Lead_Exchanged: true } }]);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted', Lead_Exchanged: true, Connected_CRM: 'Fusion SD' } }]);
 });
 
 test('a lead the dealer refuses is not marked Lead Exchanged', async (t) => {

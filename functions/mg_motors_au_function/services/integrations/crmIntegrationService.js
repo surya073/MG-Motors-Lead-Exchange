@@ -1092,7 +1092,52 @@ async function recordUnresolvedAcknowledgement(catalystApp, integration, leadRow
 
 // What MG records when a dealer has accepted the lead (Happy 1): the dealer
 // acknowledgement, and MG's "Lead Exchanged" checkbox (MG, 28 Oct 2026).
-const DELIVERY_ACKNOWLEDGEMENT_FIELDS = Object.freeze({ Lead_Status: 'Not Contacted', Lead_Exchanged: true });
+// Connected_CRM (MG Leads Exchange Activity) names the dealer's CRM provider.
+const CONNECTED_CRM_LABELS = Object.freeze({
+  FUSION_SD: 'Fusion SD',
+  DEALER_STUDIO: 'Dealer Studio',
+  ZOHO_CRM: 'Zoho CRM',
+});
+
+function connectedCrmLabel(integration) {
+  return CONNECTED_CRM_LABELS[integration?.crm_type] || String(integration?.crm_name || integration?.crm_type || '').trim();
+}
+
+function deliveryAcknowledgementFields(integration) {
+  const connectedCrm = connectedCrmLabel(integration);
+  return { Lead_Status: 'Not Contacted', Lead_Exchanged: true, ...(connectedCrm ? { Connected_CRM: connectedCrm } : {}) };
+}
+
+// MG's date fields are plain dates; the dealers and MG operate on Australian time.
+function mgToday(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(now);
+}
+
+/**
+ * Leads Exchange Activity dates, stamped when a dealer's update is applied to MG:
+ *  - First_Action_Date: the first real dealer update (a move back to the initial
+ *    "Not Contacted" is not an action);
+ *  - Test_Drive_Date: when the Enquiry Outcome becomes Test Drive.
+ * Each is written once: skipped if MG already holds a value. Best effort: if MG's
+ * record cannot be read, nothing is stamped and the dealer update still applies.
+ */
+async function leadActivityDateFields(crmService, zohoLeadId, internalUpdate, now = new Date()) {
+  const firstAction = Object.keys(internalUpdate || {}).some((key) => !(key === 'lead_status' && internalUpdate[key] === 'Not Contacted'));
+  const testDrive = String(internalUpdate?.enquiry_outcome || '').trim().toLowerCase() === 'test drive';
+  if (!firstAction && !testDrive) return {};
+  try {
+    const [record] = await crmService.fetchOemLeadsByIds([zohoLeadId]);
+    if (!record) return {};
+    const today = mgToday(now);
+    return {
+      ...(firstAction && !record.First_Action_Date ? { First_Action_Date: today } : {}),
+      ...(testDrive && !record.Test_Drive_Date ? { Test_Drive_Date: today } : {}),
+    };
+  } catch (err) {
+    logger.error('crmIntegrationService', `Could not read activity dates for lead ${zohoLeadId}; not stamped`, err);
+    return {};
+  }
+}
 
 /**
  * Links an ACK_UNRESOLVED lead to the dealer lead id an admin looked up, and
@@ -1125,7 +1170,7 @@ async function linkUnresolvedLead(catalystApp, integration, leadRow, externalLea
 
   let acknowledged = true;
   try {
-    await oemCrmService.updateOemLead(zohoLeadId, DELIVERY_ACKNOWLEDGEMENT_FIELDS);
+    await oemCrmService.updateOemLead(zohoLeadId, deliveryAcknowledgementFields(integration));
   } catch (err) {
     acknowledged = false;
     logger.error('crmIntegrationService', `Acknowledgement write-back failed for linked lead ${zohoLeadId}`, err);
@@ -1339,7 +1384,7 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       operation === 'CREATE_LEAD' || existingMapping?.last_error === 'ZOHO_ACK_UPDATE_FAILED';
     if (needsAcknowledgementWriteback) {
       try {
-        await oemCrmService.updateOemLead(zohoLeadId, DELIVERY_ACKNOWLEDGEMENT_FIELDS);
+        await oemCrmService.updateOemLead(zohoLeadId, deliveryAcknowledgementFields(integration));
         if (leadRow.ROWID) {
           await catalystApp.datastore().table(LEADS_TABLE).updateRow({
             ROWID: leadRow.ROWID,
@@ -2981,6 +3026,7 @@ async function attemptInboundLeadUpdate(
 
   const zohoApiFields = {
     ...toZohoApiFields(internalUpdate),
+    ...(await leadActivityDateFields(zohoCrmService, mapping.zoho_lead_id, internalUpdate)),
     ...(internalUpdate.lead_status === 'Lost Lead' ? fusionLostReasonFields(externalRecord?.[FUSION_LOST_DETAIL]) : {}),
   };
   if (zohoApiFields.Reason_for_Lost) fieldChanges.push(lostReasonChange(externalRecord[FUSION_LOST_DETAIL], zohoApiFields));
@@ -3395,6 +3441,8 @@ module.exports = {
   getStatusMappings,
   syncLeadToExternalCrm,
   isBeforeDealerStudioCutoff,
+  deliveryAcknowledgementFields,
+  leadActivityDateFields,
   linkUnresolvedLead,
   replayStoppedLead,
   processInboundWebhook,
