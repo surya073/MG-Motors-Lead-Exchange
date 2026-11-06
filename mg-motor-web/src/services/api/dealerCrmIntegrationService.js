@@ -25,6 +25,18 @@ export const dealerCrmIntegrationService = {
     return data;
   },
 
+  // Leads queued while this dealer's lead push was off.
+  async getPushQueue(dealerCode) {
+    const { data } = await axiosInstance.get(`${BASE}/${encodeURIComponent(dealerCode)}/integration/push-queue`);
+    return data;
+  },
+
+  // { enabled: false } pauses; { enabled: true, queued: "push" | "skip" } resumes.
+  async setPush(dealerCode, payload) {
+    const { data } = await axiosInstance.put(`${BASE}/${encodeURIComponent(dealerCode)}/integration/push`, payload);
+    return data;
+  },
+
   async testConnection(dealerCode) {
     const { data } = await axiosInstance.post(`${BASE}/${encodeURIComponent(dealerCode)}/integration/test`);
     return data;

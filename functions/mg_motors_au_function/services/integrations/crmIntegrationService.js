@@ -803,6 +803,49 @@ function isBeforeDealerStudioCutoff(integration, leadRow, enabled) {
   return connectedAt !== null && created !== null && created < connectedAt;
 }
 
+/**
+ * The per-dealer "push leads" switch (dealer_integrations.push_enabled). A row with
+ * no value is ON, so a dealer that was never switched off behaves as before.
+ */
+function isDealerPushPaused(integration) {
+  return !isEnabled(integration?.push_enabled);
+}
+
+/**
+ * When the push was last resumed with "skip the queued leads"
+ * (dealer_integrations.push_from_at, UTC): leads created before it are not sent.
+ */
+function dealerPushFrom(integration) {
+  const value = String(integration?.push_from_at || '').trim();
+  if (!value) return null;
+  const parsed = new Date(`${value.replace(' ', 'T').slice(0, 19)}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * The earliest creation time of a lead that may still be waiting for this dealer:
+ * the later of the dealer's connect time and its last "skip the queued leads".
+ */
+function dealerPushFloor(integration) {
+  const times = [dealerConnectedAt(integration), dealerPushFrom(integration)].filter(Boolean);
+  return times.length ? new Date(Math.max(...times.map((d) => d.getTime()))) : null;
+}
+
+/**
+ * Why a lead that is not yet in the dealer CRM must not be created there now, or
+ * null. DEALER_PUSH_PAUSED: the dealer's switch is off. Before-cutoff reasons: it
+ * was created before the dealer connected, or before the last resume that skipped
+ * the queue.
+ */
+function newLeadSkipReason(integration, leadRow) {
+  if (isDealerPushPaused(integration)) return 'DEALER_PUSH_PAUSED';
+  if (isBeforeDealerStudioCutoff(integration, leadRow)) return 'DEALER_STUDIO_BEFORE_CUTOFF';
+  const from = dealerPushFrom(integration);
+  const created = leadCreatedAt(leadRow);
+  if (from && created && created < from) return 'BEFORE_PUSH_RESUME';
+  return null;
+}
+
 async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   const zohoLeadId = leadRow.crm_record_id;
   // Every push (new-lead webhook, edits, retry sweep, reconciliation, replay) comes
@@ -810,7 +853,8 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
   // never created in Dealer Studio: no hold, alert or retry. One already pushed (it
   // has a dealer lead id) keeps syncing its updates. A failed lookup also skips: the
   // lead is looked at again on its next event, and nothing is created by mistake.
-  if (isBeforeDealerStudioCutoff(integration, leadRow)) {
+  const skipReason = newLeadSkipReason(integration, leadRow);
+  if (skipReason) {
     let alreadyPushed = false;
     try {
       const mapping = await findLeadMappingForIntegration(catalystApp, integration, zohoLeadId);
@@ -819,8 +863,8 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       logger.error('crmIntegrationService', `Could not check whether lead ${zohoLeadId} is already in ${integration.crm_type}; not pushed`, err);
     }
     if (!alreadyPushed) {
-      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) was created before dealer connected to ${integration.crm_type}; not pushed.`);
-      return { skipped: true, reason: 'DEALER_STUDIO_BEFORE_CUTOFF' };
+      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) not pushed to ${integration.crm_type}: ${skipReason}.`);
+      return { skipped: true, reason: skipReason };
     }
   }
   const requestReference = crypto.randomUUID();
@@ -3449,6 +3493,9 @@ module.exports = {
   getStatusMappings,
   syncLeadToExternalCrm,
   isBeforeDealerStudioCutoff,
+  isDealerPushPaused,
+  dealerPushFloor,
+  newLeadSkipReason,
   deliveryAcknowledgementFields,
   leadActivityDateFields,
   linkUnresolvedLead,

@@ -34,6 +34,7 @@ import Skeleton from "../../ui/Skeleton/Skeleton";
 import Pagination from "../../ui/Pagination/Pagination";
 import { useAlerts } from "../../ui/Alerts/Alerts";
 import CloseButton from "../../ui/CloseButton/CloseButton";
+import Modal from "../../ui/Modal/Modal";
 import { useAuth } from "../../contexts/AuthContext";
 import { APP_ROLES } from "../../constants/auth.constants";
 import mgLogo from "../../assets/images/mg-logo-single.png";
@@ -469,6 +470,20 @@ function logStatusBadge(status) {
   return <Badge tone="neutral" fixed>{status || "—"}</Badge>;
 }
 
+// push_enabled comes back from the Data Store as a boolean or a "true"/"false"
+// string; a dealer that was never switched off has no value and is on.
+function isPushOn(value) {
+  return !(value === false || value === 0 || String(value).toLowerCase() === "false" || String(value) === "0");
+}
+
+function formatQueuedDate(value) {
+  if (!value) return "";
+  const parsed = new Date(`${String(value).replace(" ", "T").slice(0, 19)}Z`);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleString("en-AU", { dateStyle: "medium", timeStyle: "short", timeZone: "Australia/Sydney" });
+}
+
 function isDealerConnected(dealer) {
   const rawStatus = dealer.integration_status || dealer.crm_status || dealer.status;
   return CONNECTED_STATUSES.includes(rawStatus);
@@ -608,6 +623,9 @@ export default function DealerCRMConfig() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [webhookRegistering, setWebhookRegistering] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushDialog, setPushDialog] = useState(null);
+  const [pushChoice, setPushChoice] = useState("push");
 
   const [tab, setTab] = useState("connection");
 
@@ -758,6 +776,61 @@ export default function DealerCRMConfig() {
     setFusionSigningSecret("");
     setEditingCredentials(false);
   };
+
+
+  // The "Push leads" switch. Off: new leads for this dealer stop going out and queue
+  // in MG. On: if leads queued meanwhile, ask whether to push them or carry on from now.
+  const sendPushChange = async (payload, successMessage) => {
+    setPushBusy(true);
+    try {
+      const result = await dealerCrmIntegrationService.setPush(selectedDealer.dealer_code, payload);
+      setConfig((prev) => ({ ...prev, push_enabled: result.push_enabled }));
+      setPushDialog(null);
+      const failed = result.failed ? ` ${result.failed} could not be sent; they will be retried.` : "";
+      const more = result.remaining ? ` ${result.remaining} more are still queued; turn the switch off and on again to send them.` : "";
+      showAlert("success", `${successMessage(result)}${failed}${more}`, { title: "Lead push" });
+    } catch (err) {
+      showAlert("error", err?.response?.data?.error || "Couldn't change lead push. Try again.", { title: "Lead push failed" });
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const handlePushToggle = async () => {
+    if (!selectedDealer || pushBusy) return;
+    if (isPushOn(config.push_enabled)) {
+      await sendPushChange(
+        { enabled: false },
+        () => `Lead push is off for ${selectedDealer.dealer_name}. New leads will wait here until you turn it on.`
+      );
+      return;
+    }
+    setPushBusy(true);
+    try {
+      const queue = await dealerCrmIntegrationService.getPushQueue(selectedDealer.dealer_code);
+      setPushBusy(false);
+      if (queue?.count > 0) {
+        setPushChoice("push");
+        setPushDialog(queue);
+        return;
+      }
+    } catch (err) {
+      setPushBusy(false);
+      showAlert("error", err?.response?.data?.error || "Couldn't check queued leads. Try again.", { title: "Lead push failed" });
+      return;
+    }
+    await sendPushChange(
+      { enabled: true },
+      () => `Lead push is on for ${selectedDealer.dealer_name}. New leads are sent as they arrive.`
+    );
+  };
+
+  const confirmPushOn = () => sendPushChange(
+    { enabled: true, queued: pushChoice },
+    (result) => (pushChoice === "push"
+      ? `Lead push is on for ${selectedDealer.dealer_name}. ${result.pushed} queued lead(s) sent.`
+      : `Lead push is on for ${selectedDealer.dealer_name}. ${result.skipped} queued lead(s) skipped; only leads from now on are sent.`)
+  );
 
   const loadIntegration = async (dealer) => {
     setConfigLoading(true);
@@ -1292,6 +1365,43 @@ export default function DealerCRMConfig() {
 
   return (
     <div className="dealer-crm-config">
+      {pushDialog && selectedDealer && (
+        <Modal title={`Turn on lead push for ${selectedDealer.dealer_name}`} onClose={() => !pushBusy && setPushDialog(null)} width={520}>
+          <p className="dealer-crm-config__push-intro">
+            <strong>{pushDialog.count}</strong> new {pushDialog.count === 1 ? "lead" : "leads"} came in while push was off
+            {formatQueuedDate(pushDialog.oldest_created_at) ? ` (the oldest on ${formatQueuedDate(pushDialog.oldest_created_at)})` : ""}.
+            What should happen to {pushDialog.count === 1 ? "it" : "them"}?
+          </p>
+          <label className={`dealer-crm-config__push-option ${pushChoice === "push" ? "dealer-crm-config__push-option--on" : ""}`}>
+            <input type="radio" name="push-choice" checked={pushChoice === "push"} onChange={() => setPushChoice("push")} />
+            <span>
+              <strong>Push {pushDialog.count === 1 ? "this lead" : `these ${pushDialog.count} leads`} now</strong>
+              <small>Send the queued leads to the dealer's CRM, then continue with new leads.</small>
+            </span>
+          </label>
+          <label className={`dealer-crm-config__push-option ${pushChoice === "skip" ? "dealer-crm-config__push-option--on" : ""}`}>
+            <input type="radio" name="push-choice" checked={pushChoice === "skip"} onChange={() => setPushChoice("skip")} />
+            <span>
+              <strong>Don't push {pushDialog.count === 1 ? "it" : "them"}, start from now</strong>
+              <small>The queued leads are never sent. Only leads created from this moment onward go out.</small>
+            </span>
+          </label>
+          {pushDialog.sample?.length > 0 && (
+            <p className="dealer-crm-config__push-sample">
+              Queued: {pushDialog.sample.map((lead) => lead.customer_name || lead.crm_record_id).join(", ")}
+              {pushDialog.count > pushDialog.sample.length ? `, and ${pushDialog.count - pushDialog.sample.length} more` : ""}
+            </p>
+          )}
+          <div className="dealer-crm-config__push-actions">
+            <button type="button" className="dealer-crm-config__button--outline" disabled={pushBusy} onClick={() => setPushDialog(null)}>
+              Cancel
+            </button>
+            <button type="button" className="dealer-crm-config__button--primary" disabled={pushBusy} onClick={confirmPushOn}>
+              {pushBusy ? "Working..." : "Turn on"}
+            </button>
+          </div>
+        </Modal>
+      )}
       <button type="button" className="dealer-crm-config__back" onClick={() => navigate(ROUTES.SETTINGS)}>
         <ArrowLeft size={15} />
         Back to Settings
@@ -1536,6 +1646,31 @@ export default function DealerCRMConfig() {
                   </div>
                 )}
                 <div className="dealer-crm-config__detail-status">
+                  {isExternalCrm && (
+                    <label
+                      className={`dealer-crm-config__push ${!isTopConnected ? "dealer-crm-config__push--disabled" : ""}`}
+                      title={
+                        isViewUser
+                          ? viewOnlyTitle
+                          : !isTopConnected
+                            ? "Connect the dealer's CRM to use this switch"
+                            : "Off: new leads for this dealer are not pushed until you turn it back on"
+                      }
+                    >
+                      <span className="dealer-crm-config__push-label">Push leads</span>
+                      <span className="dealer-crm-config__toggle-switch">
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          aria-label="Push leads to this dealer"
+                          checked={isTopConnected && isPushOn(config.push_enabled)}
+                          disabled={!isTopConnected || isViewUser || pushBusy || configLoading}
+                          onChange={handlePushToggle}
+                        />
+                        <span className="dealer-crm-config__toggle-slider" />
+                      </span>
+                    </label>
+                  )}
                   {selectedDealer.region && <Badge tone="info">{selectedDealer.region}</Badge>}
                   {isExternalCrm && <Badge tone="neutral">{CRM_TYPE_LABELS[config.crm_type] || "External CRM"}</Badge>}
                   <Badge tone={isTopConnected ? "active" : "neutral"} fixed>

@@ -17,6 +17,8 @@ const oemPicklistService = require('../services/oemPicklistService');
 const pathPolicy = require('../services/integrations/pathPolicyService');
 const { signingSecretProblem } = require('../services/integrations/webhookVerificationService');
 
+const dealerPushQueueService = require('../services/integrations/dealerPushQueueService');
+
 const crypto = require('crypto');
 
 const router = express.Router();
@@ -50,11 +52,11 @@ function safeConfig(integration) {
   if (!integration) return null;
   const { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
-     oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
+     oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled, push_enabled, push_from_at,
     dealership_slug, dealership_location_id, status, last_tested_at, last_sync_at } = integration;
   return { ROWID, dealer_code, integration_type, crm_type, crm_name, base_url, auth_type,
     create_lead_endpoint, update_lead_endpoint, http_method, update_http_method,
-    oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled,
+    oauth_accounts_domain, webhook_enabled, webhook_id_field, outbound_enabled, inbound_enabled, push_enabled, push_from_at,
     dealership_slug, dealership_location_id, status, last_tested_at, last_sync_at };
 }
 
@@ -124,6 +126,45 @@ router.get('/:dealerCode/integration', requireAdminOrViewRole, async (req, res) 
     res.json({ integration: safeConfig(integration), hasCredential, ...extra });
   } catch (err) {
     logger.error('dealerCrmIntegrationRoutes', `GET integration failed for ${dealerCode}`, err);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+// The "push leads" switch on the dealer config page. GET reports how many leads are
+// queued (created while the switch was off and never sent); PUT turns it off, or on
+// with a decision about the queue: { enabled: true, queued: 'push' | 'skip' }.
+router.get('/:dealerCode/integration/push-queue', requireAdminOrViewRole, async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { dealerCode } = req.params;
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+    const leads = await dealerPushQueueService.listQueuedLeads(catalystApp, integration);
+    res.json({ push_enabled: !crmIntegrationService.isDealerPushPaused(integration), ...dealerPushQueueService.queuedSummary(leads) });
+  } catch (err) {
+    logger.error('dealerCrmIntegrationRoutes', `GET push-queue failed for ${dealerCode}`, err);
+    res.status(500).json({ error: 'INTERNAL_ERROR' });
+  }
+});
+
+router.put('/:dealerCode/integration/push', requireAdminRole, async (req, res) => {
+  const catalystApp = catalyst.initialize(req);
+  const { dealerCode } = req.params;
+  const { enabled, queued } = req.body || {};
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'INVALID_REQUEST' });
+  try {
+    const integration = await crmIntegrationService.getIntegrationByDealerCode(catalystApp, dealerCode);
+    if (!integration) return res.status(404).json({ error: 'INTEGRATION_NOT_CONFIGURED' });
+    if (integration.status !== 'CONNECTED' && integration.status !== 'ACTIVE') {
+      return res.status(400).json({ error: 'INTEGRATION_NOT_CONNECTED' });
+    }
+    const result = enabled
+      ? await dealerPushQueueService.resumePush(catalystApp, integration, { queued })
+      : await dealerPushQueueService.pausePush(catalystApp, integration);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    if (err.code === 'QUEUE_DECISION_REQUIRED') return res.status(409).json({ error: err.code, ...err.queued });
+    logger.error('dealerCrmIntegrationRoutes', `PUT push failed for ${dealerCode}`, err);
     res.status(500).json({ error: 'INTERNAL_ERROR' });
   }
 });
