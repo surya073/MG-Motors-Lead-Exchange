@@ -17,7 +17,7 @@ const { withCrmApiLimit } = require('./crmApiConcurrencyLimiter');
 const { classifyDealerError, isRetryableClass } = require('./dealerErrorClassifier');
 const {
   getOutboundRetryConfig, isFusionInboundV2Enabled, isInboundEventStoreEnabled, isSlaDealerActionClockEnabled,
-  isKeepOutboundRetryOnInboundEnabled, isDealerStudioNewLeadsOnly,
+  isKeepOutboundRetryOnInboundEnabled, isDealerStudioNewLeadsOnly, isFusionSdNewLeadsOnly,
 } = require('../../config/env');
 const integrationAuthService = require('./integrationAuthService');
 const { translateFusionWebhook } = require('./adapters/fusionSdInbound');
@@ -786,13 +786,18 @@ function dealerConnectedAt(integration) {
 }
 
 /**
- * Dealer Studio only (DEALER_STUDIO_NEW_LEADS_ONLY, on by default): true for a lead
+ * Dealer Studio (DEALER_STUDIO_NEW_LEADS_ONLY) and Fusion SD (FUSION_SD_NEW_LEADS_ONLY), both on by default: true for a lead
  * created before this dealer was connected, so a dealer's earlier leads are never
  * pushed, whichever day it is connected. A lead or dealer with no readable date is
  * not blocked.
  */
-function isBeforeDealerStudioCutoff(integration, leadRow, enabled = isDealerStudioNewLeadsOnly()) {
-  if (integration?.crm_type !== 'DEALER_STUDIO' || !enabled) return false;
+function isBeforeDealerStudioCutoff(integration, leadRow, enabled) {
+  const type = integration?.crm_type;
+  if (type !== 'DEALER_STUDIO' && type !== 'FUSION_SD') return false;
+  const on = enabled === undefined
+    ? (type === 'DEALER_STUDIO' ? isDealerStudioNewLeadsOnly() : isFusionSdNewLeadsOnly())
+    : enabled;
+  if (!on) return false;
   const connectedAt = dealerConnectedAt(integration);
   const created = leadCreatedAt(leadRow);
   return connectedAt !== null && created !== null && created < connectedAt;
@@ -811,10 +816,10 @@ async function syncLeadToExternalCrm(catalystApp, integration, leadRow) {
       const mapping = await findLeadMappingForIntegration(catalystApp, integration, zohoLeadId);
       alreadyPushed = Boolean(mapping?.external_crm_lead_id);
     } catch (err) {
-      logger.error('crmIntegrationService', `Could not check whether lead ${zohoLeadId} is already in Dealer Studio; not pushed`, err);
+      logger.error('crmIntegrationService', `Could not check whether lead ${zohoLeadId} is already in ${integration.crm_type}; not pushed`, err);
     }
     if (!alreadyPushed) {
-      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) was created before dealer connected to Dealer Studio; not pushed.`);
+      logger.info('crmIntegrationService', `Lead ${zohoLeadId} (dealer ${integration.dealer_code}) was created before dealer connected to ${integration.crm_type}; not pushed.`);
       return { skipped: true, reason: 'DEALER_STUDIO_BEFORE_CUTOFF' };
     }
   }

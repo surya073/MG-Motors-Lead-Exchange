@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 
 const { setupOutbound, fakeAdapter, withEnv } = require('./helpers/outboundHarness');
 const crmIntegrationService = require('../services/integrations/crmIntegrationService');
-const { isDealerStudioNewLeadsOnly } = require('../config/env');
+const { isDealerStudioNewLeadsOnly, isFusionSdNewLeadsOnly } = require('../config/env');
 
 // A Dealer Studio dealer only receives leads created at MG on or after the moment
 // that dealer was connected (its dealer_integrations row's CREATEDTIME, project time
@@ -63,7 +63,6 @@ test('nothing is blocked when a date cannot be read, for other CRMs, or when the
   assert.equal(before(DS, {}, true), false, 'lead with no readable date');
   assert.equal(before(DS, { assigned_date: 'garbage' }, true), false);
   assert.equal(before({ ...DS, CREATEDTIME: undefined }, { assigned_date: OLD }, true), false, 'dealer with no readable date');
-  assert.equal(before({ ...DS, crm_type: 'FUSION_SD' }, { assigned_date: OLD }, true), false);
   assert.equal(before({ ...DS, crm_type: 'ZOHO_CRM' }, { assigned_date: OLD }, true), false);
   assert.equal(before(DS, { assigned_date: OLD }, false), false, 'switch off');
 });
@@ -122,9 +121,25 @@ test('DEALER_STUDIO_NEW_LEADS_ONLY=false pushes the dealer\'s earlier leads too'
   assert.equal(calls.create.length, 1);
 });
 
+test('Fusion SD: same per-dealer cutoff, own switch FUSION_SD_NEW_LEADS_ONLY', async (t) => {
+  withEnv(t, { FUSION_SD_NEW_LEADS_ONLY: undefined });
+  const FS = { crm_type: 'FUSION_SD', CREATEDTIME: CONNECTED_5_NOV };
+  assert.equal(isFusionSdNewLeadsOnly(), true);
+  assert.equal(before(FS, { assigned_date: OLD }), true);
+  assert.equal(before(FS, { assigned_date: AFTER_CONNECT }), false);
+  const harness = setupOutbound(t, { integration: FS, mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } });
+  const calls = fakeAdapter(t, {});
+  const result = await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());
+  assert.deepEqual(result, { skipped: true, reason: 'DEALER_STUDIO_BEFORE_CUTOFF' });
+  assert.equal(calls.create.length, 0);
+  process.env.FUSION_SD_NEW_LEADS_ONLY = 'false';
+  assert.equal(before(FS, { assigned_date: OLD }), false, 'switch off');
+  assert.equal(before({ ...FS, crm_type: 'ZOHO_CRM' }, { assigned_date: OLD }), false);
+});
+
 test('other CRM types are not affected', async (t) => {
   withEnv(t, { DEALER_STUDIO_NEW_LEADS_ONLY: undefined });
-  const harness = setupOutbound(t, { integration: { CREATEDTIME: CONNECTED_5_NOV }, mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } }); // Fusion SD dealer
+  const harness = setupOutbound(t, { integration: { crm_type: 'GENERIC_REST', update_lead_endpoint: '/leads', CREATEDTIME: CONNECTED_5_NOV }, mapping: null, lead: { assigned_date: OLD, sync_status: 'PENDING' } }); // generic REST dealer
   const calls = fakeAdapter(t, { createLead: async () => ({ externalLeadId: '779', httpStatus: 201, raw: { id: 779 } }) });
 
   const result = await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());

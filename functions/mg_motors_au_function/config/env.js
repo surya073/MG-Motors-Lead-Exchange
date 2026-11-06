@@ -395,8 +395,19 @@ function isDealerStudioNewLeadsOnly() {
   return !['false', 'off', 'no', '0'].includes(String(process.env.DEALER_STUDIO_NEW_LEADS_ONLY || '').trim().toLowerCase());
 }
 
+/**
+ * FUSION_SD_NEW_LEADS_ONLY (default on): same rule as Dealer Studio for Fusion SD
+ * dealers. A dealer only receives leads created at MG on or after the moment its
+ * integration was connected; earlier leads are skipped with no alert and no retry,
+ * and a lead already pushed keeps syncing updates. false | off | no | 0 pushes all.
+ */
+function isFusionSdNewLeadsOnly() {
+  return !['false', 'off', 'no', '0'].includes(String(process.env.FUSION_SD_NEW_LEADS_ONLY || '').trim().toLowerCase());
+}
+
 module.exports = {
   isDealerStudioNewLeadsOnly,
+  isFusionSdNewLeadsOnly,
   getZohoConfig,
   getIntegrationCredentialsKey,
   getAiAssistantConfig,
