@@ -33,10 +33,21 @@ test('a move back to Not Contacted is not an action', async () => {
 test('Test Drive Date is stamped once when the outcome becomes Test Drive', async () => {
   assert.deepEqual(await svc.leadActivityDateFields(crm({}), 'L1', { enquiry_outcome: 'Test Drive' }, NOW), { First_Action_Date: '2026-11-07', Test_Drive_Date: '2026-11-07' });
   assert.deepEqual(await svc.leadActivityDateFields(crm({ First_Action_Date: '2026-11-01', Test_Drive_Date: '2026-11-02' }), 'L1', { enquiry_outcome: 'Test Drive' }, NOW), {});
-  assert.deepEqual(await svc.leadActivityDateFields(crm({ First_Action_Date: '2026-11-01' }), 'L1', { enquiry_outcome: 'Purchase' }, NOW), {});
+  assert.deepEqual(await svc.leadActivityDateFields(crm({ First_Action_Date: '2026-11-01' }), 'L1', { enquiry_outcome: 'Purchase' }, NOW), { Sold_Date: '2026-11-07' });
 });
 
 test('nothing is stamped when the MG record cannot be read; the dealer update is not blocked', async () => {
   assert.deepEqual(await svc.leadActivityDateFields(crm(undefined), 'L1', { lead_status: 'Contacted' }, NOW), {});
   assert.deepEqual(await svc.leadActivityDateFields({ fetchOemLeadsByIds: async () => { throw new Error('down'); } }, 'L1', { lead_status: 'Contacted' }, NOW), {});
+});
+
+test('Closed Date is stamped once when the outcome closes the lead (Dealer Studio delivered = Purchase)', async () => {
+  const done = { First_Action_Date: '2026-11-01' };
+  assert.deepEqual(await svc.leadActivityDateFields(crm(done), 'L1', { enquiry_outcome: 'Purchase' }, NOW), { Sold_Date: '2026-11-07' });
+  for (const o of ['Fleet Order', 'On-Sold', 'Lost', 'Outcome Not Required']) {
+    assert.deepEqual(await svc.leadActivityDateFields(crm(done), 'L1', { enquiry_outcome: o }, NOW), { Sold_Date: '2026-11-07' }, o);
+  }
+  assert.deepEqual(await svc.leadActivityDateFields(crm(done), 'L1', { lead_status: 'Lost Lead' }, NOW), { Sold_Date: '2026-11-07' });
+  assert.deepEqual(await svc.leadActivityDateFields(crm({ ...done, Sold_Date: '2026-11-03' }), 'L1', { enquiry_outcome: 'Purchase' }, NOW), {}, 'never overwritten');
+  assert.deepEqual(await svc.leadActivityDateFields(crm(done), 'L1', { enquiry_outcome: 'Test Drive' }, NOW), { Test_Drive_Date: '2026-11-07' }, 'a test drive does not close');
 });

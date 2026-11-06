@@ -1117,14 +1117,21 @@ function mgToday(now = new Date()) {
  * Leads Exchange Activity dates, stamped when a dealer's update is applied to MG:
  *  - First_Action_Date: the first real dealer update (a move back to the initial
  *    "Not Contacted" is not an action);
- *  - Test_Drive_Date: when the Enquiry Outcome becomes Test Drive.
+ *  - Test_Drive_Date: when the Enquiry Outcome becomes Test Drive;
+ *  - Sold_Date (Closed Date): when the outcome becomes a closing one (see CLOSED_OUTCOMES).
  * Each is written once: skipped if MG already holds a value. Best effort: if MG's
  * record cannot be read, nothing is stamped and the dealer update still applies.
  */
+// Closed Date (Sold_Date): the outcome becomes retail (Purchase), on-sold demo, fleet,
+// lost or outcome not required; a Lost Lead status closes the lead too.
+const CLOSED_OUTCOMES = new Set(['purchase', 'retail order', 'on-sold', 'on-sold demo', 'fleet order', 'lost', 'outcome not required']);
+
 async function leadActivityDateFields(crmService, zohoLeadId, internalUpdate, now = new Date()) {
   const firstAction = Object.keys(internalUpdate || {}).some((key) => !(key === 'lead_status' && internalUpdate[key] === 'Not Contacted'));
-  const testDrive = String(internalUpdate?.enquiry_outcome || '').trim().toLowerCase() === 'test drive';
-  if (!firstAction && !testDrive) return {};
+  const outcome = String(internalUpdate?.enquiry_outcome || '').trim().toLowerCase();
+  const testDrive = outcome === 'test drive';
+  const closed = CLOSED_OUTCOMES.has(outcome) || internalUpdate?.lead_status === 'Lost Lead';
+  if (!firstAction && !testDrive && !closed) return {};
   try {
     const [record] = await crmService.fetchOemLeadsByIds([zohoLeadId]);
     if (!record) return {};
@@ -1132,6 +1139,7 @@ async function leadActivityDateFields(crmService, zohoLeadId, internalUpdate, no
     return {
       ...(firstAction && !record.First_Action_Date ? { First_Action_Date: today } : {}),
       ...(testDrive && !record.Test_Drive_Date ? { Test_Drive_Date: today } : {}),
+      ...(closed && !record.Sold_Date ? { Sold_Date: today } : {}),
     };
   } catch (err) {
     logger.error('crmIntegrationService', `Could not read activity dates for lead ${zohoLeadId}; not stamped`, err);
