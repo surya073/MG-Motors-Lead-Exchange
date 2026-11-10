@@ -25,6 +25,7 @@ import CloseButton from "../../ui/CloseButton/CloseButton";
 import PathBadge from "../../ui/PathBadge/PathBadge";
 import { CompactListSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import "./LeadDetailView.css";
+import "./LeadDetailPremium.css";
 
 /* ----------------------------------------------------------------
    Status -> visual tone
@@ -955,6 +956,41 @@ function DeliveryActions({ lead, onDone }) {
 /* ----------------------------------------------------------------
    Lead Detail
 ------------------------------------------------------------------ */
+/* ----------------------------------------------------------------
+   A contact line in the side card: label, value, copy, quick action
+------------------------------------------------------------------ */
+function ContactRow({ icon, label, value, copied, onCopy, href, actionLabel, actionIcon, warning }) {
+  const empty = value === "—";
+  return (
+    <div className="ld-contact">
+      <span className="ld-contact__icon">{icon}</span>
+      <div className="ld-contact__body">
+        <span className="ld-contact__label">{label}</span>
+        <span className="ld-contact__value">
+          {value}
+          {!empty && (
+            <button type="button" className="lead-detail__copy-btn" onClick={onCopy} aria-label={`Copy ${label.toLowerCase()}`}>
+              <CopyIcon />
+            </button>
+          )}
+          {copied && <span className="lead-detail__copied-tag">Copied</span>}
+        </span>
+        {warning && (
+          <span className="lead-detail__mobile-warning" title={warning}>
+            <AlertCircleIcon /> {warning}
+          </span>
+        )}
+      </div>
+      {!empty && href && (
+        <a href={href} className="ld-contact__action">
+          {actionIcon}
+          {actionLabel}
+        </a>
+      )}
+    </div>
+  );
+}
+
 export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   const [copied, setCopied] = useState(null);
   const [timeline, setTimeline] = useState([]);
@@ -1055,22 +1091,24 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   };
 
   return (
-    <div className={`lead-detail${refreshing ? " lead-detail--refreshing" : ""}`}>
-      <div className="lead-detail__toolbar">
-        <button type="button" className="lead-detail__back" onClick={onBack}>
+    <div className={`ld${refreshing ? " ld--refreshing" : ""}`}>
+      <div className="ld-topbar">
+        <button type="button" className="ld-back" onClick={onBack}>
           <ChevronLeftIcon size={16} />
-          Back to Leads
+          <span className="ld-back__crumb">Lead Exchange</span>
+          <span className="ld-back__sep">/</span>
+          <span className="ld-back__here">{lead.customer_name || "Lead"}</span>
         </button>
 
-        <div className="lead-detail__toolbar-end">
-          <span className="lead-detail__updated" aria-live="polite">
+        <div className="ld-topbar__end">
+          <span className="ld-updated" aria-live="polite">
             {refreshing
               ? "Refreshing..."
               : `Updated ${updatedAt.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`}
           </span>
           <button
             type="button"
-            className={`lead-detail__refresh${refreshing ? " lead-detail__refresh--spinning" : ""}`}
+            className={`ld-refresh${refreshing ? " ld-refresh--spinning" : ""}`}
             onClick={handleRefresh}
             disabled={refreshing}
             aria-label="Refresh this lead"
@@ -1080,41 +1118,32 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
             Refresh
           </button>
         </div>
-        <div className="lead-detail__loadbar" aria-hidden="true" />
+        <div className="ld-loadbar" aria-hidden="true" />
       </div>
 
-      {/* ========================================================== HERO ========================================================== */}
-      <div className="lead-detail__hero">
-        <div className="lead-detail__hero-decor" aria-hidden="true">
-          <img src={mgLogo} alt="" className="lead-detail__hero-logo" />
-        </div>
+      {/* ====================================================== HEADER ====================================================== */}
+      <header className="ld-header">
+        <img src={mgLogo} alt="" className="ld-header__logo" aria-hidden="true" />
 
-        <span className="lead-detail__avatar">{initials(lead.customer_name)}</span>
+        <span className="ld-avatar">{initials(lead.customer_name)}</span>
 
-        <div className="lead-detail__hero-main">
-          <div className="lead-detail__hero-top">
+        <div className="ld-header__main">
+          <div className="ld-header__title">
             <h1>{lead.customer_name || "Unnamed Customer"}</h1>
             {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
           </div>
 
-          {/* All distinct scenarios this lead has been through, not just the current one */}
-          <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />
-
-          <div className="lead-detail__hero-meta">
-            <span className="lead-detail__meta-item">
-              <BuildingIcon size={15} />
+          <div className="ld-header__meta">
+            <span className="ld-header__meta-item">
+              <BuildingIcon size={14} />
               {val("dealer_name")}
             </span>
-            <span className="lead-detail__meta-divider" />
-            <span className="lead-detail__meta-item">
-              <ArrowRightIcon size={14} />
-              <span className="lead-detail__meta-label">Dealer Code</span>
-              {val("dealer_code")}
-            </span>
+            <span className="ld-header__dot" />
+            <span className="ld-header__meta-item">Code {val("dealer_code")}</span>
             {lead.lead_source && (
               <>
-                <span className="lead-detail__meta-divider" />
-                <span className="lead-detail__source-badge">
+                <span className="ld-header__dot" />
+                <span className="ld-header__meta-item">
                   <MegaphoneIcon size={13} />
                   {lead.lead_source}
                 </span>
@@ -1122,157 +1151,118 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
             )}
           </div>
 
+          <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />
+        </div>
+
+        <div className="ld-header__facts">
+          <div className="ld-fact">
+            <span className="ld-fact__label">
+              <CarIcon size={13} /> Vehicle
+            </span>
+            <span className="ld-fact__value">{val("vehicle_model")}</span>
+          </div>
           {val("enquiry_id") !== "—" && (
-            <div className="lead-detail__idrow">
-              <span className="lead-detail__idchip">
-                <span className="lead-detail__idchip-label">Enquiry ID</span>
-                <span className="lead-detail__idchip-value">{val("enquiry_id")}</span>
-                <button
-                  type="button"
-                  className="lead-detail__copy-btn"
-                  onClick={() => handleCopy("enquiry", val("enquiry_id"))}
-                  aria-label="Copy enquiry ID"
-                >
+            <div className="ld-fact">
+              <span className="ld-fact__label">Enquiry ID</span>
+              <span className="ld-fact__value ld-fact__value--mono">
+                {val("enquiry_id")}
+                <button type="button" className="ld-fact__copy" onClick={() => handleCopy("enquiry", val("enquiry_id"))} aria-label="Copy enquiry ID">
                   <CopyIcon />
                 </button>
-                {copied === "enquiry" && <span className="lead-detail__copied-tag">Copied</span>}
+                {copied === "enquiry" && <span className="ld-fact__copied">Copied</span>}
               </span>
             </div>
           )}
         </div>
+      </header>
 
-        <div className="lead-detail__vehicle-highlight">
-          <span className="lead-detail__vehicle-icon">
-            <CarIcon size={21} />
-          </span>
-          <div className="lead-detail__vehicle-content">
-            <span className="lead-detail__vehicle-label">Vehicle</span>
-            <span className="lead-detail__vehicle-model">{val("vehicle_model")}</span>
-          </div>
-        </div>
-      </div>
+      {/* ====================================================== BODY ====================================================== */}
+      <div className="ld-grid">
+        <div className="ld-main">
+          <IntegrationPathCard path={path} journeyPaths={journeyPaths} failureDetail={latestFailureDetail} />
 
-      {/* ========================================================== CONTACT INFO ========================================================== */}
-      <div className="lead-detail__infobar">
-        <div className="lead-detail__infobar-item">
-          <span className="lead-detail__infobar-icon">
-            <PhoneIcon size={18} />
-          </span>
-          <div className="lead-detail__infobar-body">
-            <span className="lead-detail__infobar-label">Mobile</span>
-            <span className="lead-detail__infobar-value">
-              {mobile}
-              {mobile !== "—" && (
-                <button type="button" className="lead-detail__copy-btn" onClick={() => handleCopy("mobile", mobile)} aria-label="Copy mobile number">
-                  <CopyIcon />
-                </button>
-              )}
-              {copied === "mobile" && <span className="lead-detail__copied-tag">Copied</span>}
-              {mobileIsInvalid && (
-                <span className="lead-detail__mobile-warning" title="Invalid Australian mobile number">
-                  <AlertCircleIcon /> Invalid Australian Mobile
-                </span>
-              )}
-            </span>
-            {mobile !== "—" && (
-              <a href={`tel:${mobile}`} className="lead-detail__action-btn lead-detail__action-btn--call">
-                <PhoneIcon size={13} />
-                Call Now
-              </a>
+          <DeliveryActions lead={lead} onDone={onLeadChanged} />
+
+          <section className="lead-detail__group lead-detail__timeline-card">
+            <h3>
+              <span className="lead-detail__group-icon">
+                <ClockIcon size={15} />
+              </span>
+              Activity Timeline
+            </h3>
+
+            <div className="lead-detail__timeline-scroll">
+              <ul className="lead-detail__timeline">
+                <ActivityTimeline timeline={timeline.slice(-6)} loading={timelineLoading} />
+              </ul>
+            </div>
+
+            {timeline.length > 0 && (
+              <button type="button" className="lead-detail__timeline-viewfull-btn" onClick={() => setTimelineOffcanvasOpen(true)}>
+                View Full Timeline ({timeline.length})
+              </button>
             )}
-          </div>
+          </section>
+
+          <MoreDetailsCard val={val} lead={lead} />
         </div>
 
-        <span className="lead-detail__infobar-divider" />
+        <aside className="ld-side">
+          <section className="lead-detail__group ld-side__card">
+            <h3>
+              <span className="lead-detail__group-icon">
+                <UserIcon size={15} />
+              </span>
+              Contact
+            </h3>
+            <ContactRow
+              icon={<PhoneIcon size={16} />}
+              label="Mobile"
+              value={mobile}
+              copied={copied === "mobile"}
+              onCopy={() => handleCopy("mobile", mobile)}
+              href={`tel:${mobile}`}
+              actionLabel="Call"
+              actionIcon={<PhoneIcon size={13} />}
+              warning={mobileIsInvalid ? "Invalid Australian Mobile" : null}
+            />
+            <ContactRow
+              icon={<MailIcon size={16} />}
+              label="Email"
+              value={email}
+              copied={copied === "email"}
+              onCopy={() => handleCopy("email", email)}
+              href={`mailto:${email}`}
+              actionLabel="Email"
+              actionIcon={<MailIcon size={13} />}
+            />
+          </section>
 
-        <div className="lead-detail__infobar-item">
-          <span className="lead-detail__infobar-icon">
-            <MailIcon size={18} />
-          </span>
-          <div className="lead-detail__infobar-body">
-            <span className="lead-detail__infobar-label">Email</span>
-            <span className="lead-detail__infobar-value">
-              {email}
-              {email !== "—" && (
-                <button type="button" className="lead-detail__copy-btn" onClick={() => handleCopy("email", email)} aria-label="Copy email address">
-                  <CopyIcon />
-                </button>
-              )}
-              {copied === "email" && <span className="lead-detail__copied-tag">Copied</span>}
-            </span>
-            {email !== "—" && (
-              <a href={`mailto:${email}`} className="lead-detail__action-btn lead-detail__action-btn--mail">
-                <MailIcon size={13} />
-                Send Mail
-              </a>
-            )}
-          </div>
-        </div>
+          <section className="lead-detail__group ld-side__card">
+            <h3>
+              <span className="lead-detail__group-icon">
+                <NoteIcon size={15} />
+              </span>
+              Customer Message
+            </h3>
+            <p className="lead-detail__remarks-text">
+              {val("customer_message") !== "—" ? val("customer_message") : "No message from customer yet."}
+            </p>
+          </section>
+
+          <section className="lead-detail__group ld-side__card">
+            <h3>
+              <span className="lead-detail__group-icon">
+                <PencilIcon size={15} />
+              </span>
+              Dealer Remarks
+            </h3>
+            <p className="lead-detail__remarks-text">
+              {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
+            </p>
+          </section>
+        </aside>
       </div>
-
-      {/* ========================================================== INTEGRATION PATH ========================================================== */}
-      <IntegrationPathCard
-        path={path}
-        journeyPaths={journeyPaths}
-        failureDetail={latestFailureDetail}
-      />
-
-      <DeliveryActions lead={lead} onDone={onLeadChanged} />
-
-      <MoreDetailsCard val={val} lead={lead} />
-
-      {/* ========================================================== CUSTOMER MESSAGE + TIMELINE ========================================================== */}
-      <div className="lead-detail__footer-groups">
-        <section className="lead-detail__group lead-detail__remarks-card">
-          <h3>
-            <span className="lead-detail__group-icon">
-              <NoteIcon size={15} />
-            </span>
-            Customer Message
-          </h3>
-          <p className="lead-detail__remarks-text">
-            {val("customer_message") !== "—" ? val("customer_message") : "No message from customer yet."}
-          </p>
-        </section>
-
-        <section className="lead-detail__group lead-detail__timeline-card">
-          <h3>
-            <span className="lead-detail__group-icon">
-              <ClockIcon size={15} />
-            </span>
-            Activity Timeline
-          </h3>
-
-          <div className="lead-detail__timeline-scroll">
-            <ul className="lead-detail__timeline">
-              <ActivityTimeline timeline={timeline.slice(-6)} loading={timelineLoading} />
-            </ul>
-          </div>
-
-          {timeline.length > 0 && (
-            <button
-              type="button"
-              className="lead-detail__timeline-viewfull-btn"
-              onClick={() => setTimelineOffcanvasOpen(true)}
-            >
-              View Full Timeline ({timeline.length})
-            </button>
-          )}
-        </section>
-      </div>
-
-      {/* ========================================================== DEALER REMARKS ========================================================== */}
-      <section className="lead-detail__group lead-detail__remarks-card">
-        <h3>
-          <span className="lead-detail__group-icon">
-            <PencilIcon size={15} />
-          </span>
-          Dealer Remarks
-        </h3>
-        <p className="lead-detail__remarks-text">
-          {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
-        </p>
-      </section>
 
       <TimelineOffcanvas
         open={timelineOffcanvasOpen}
