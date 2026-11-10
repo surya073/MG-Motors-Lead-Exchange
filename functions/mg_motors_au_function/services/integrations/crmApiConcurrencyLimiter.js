@@ -63,8 +63,8 @@
  * wait by bounding how many requests can ever be waiting at once, rather
  * than touching the claim TTL or its ordering (neither of which this
  * file has any business changing). Sized at the default concurrency (10)
- * and the adapters' own worst-case timeout (10s): 60 queued requests ×
- * 10s ÷ 10 concurrent ≈ 60s worst-case wait, a comfortable fraction of
+ * and the adapters' own worst-case timeout (10s; Fusion SD 20s): 60 queued requests ×
+ * 20s ÷ 10 concurrent ≈ 120s worst-case wait, a comfortable fraction of
  * the ~300s claim TTL. A request beyond that depth is rejected
  * immediately with a CRM_API_QUEUE_FULL error instead of queueing — it
  * is never added to the queue, so this cannot leak a counter or leave a

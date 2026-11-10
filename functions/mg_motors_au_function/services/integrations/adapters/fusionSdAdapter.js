@@ -5,7 +5,7 @@ const logger = require('../../../utils/logger');
 const usageContext = require('../../usageContext');
 const { assertSafeUrl, safeRequestOptions } = require('./safeHttp');
 const { getAccessTokenForFusionSd, invalidateToken } = require('./fusionSdOAuthHelper');
-const { isFusionInboundV2Enabled } = require('../../../config/env');
+const { isFusionInboundV2Enabled, getFusionRequestTimeoutMs } = require('../../../config/env');
 const fusionRateBudget = require('../fusionRateBudget');
 
 /**
@@ -265,7 +265,7 @@ async function createLead(catalystApp, integration, payload, { idempotencyKey } 
     },
     data: body,
     maxBodyLength: MAX_BODY_BYTES,
-    timeout: 10000,
+    timeout: getFusionRequestTimeoutMs(),
   })));
   if (error) {
     logger.error(
@@ -390,7 +390,7 @@ async function updateLead(catalystApp, integration, externalLeadId, payload) {
     },
     data: body,
     maxBodyLength: MAX_BODY_BYTES,
-    timeout: 10000,
+    timeout: getFusionRequestTimeoutMs(),
   })));
   if (error) {
     if (isUpdatesNotEnabled(error)) {

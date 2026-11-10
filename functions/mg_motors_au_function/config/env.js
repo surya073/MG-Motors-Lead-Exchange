@@ -360,6 +360,19 @@ function getFusionTokenTimeoutMs() {
 }
 
 /**
+ * FUSION_REQUEST_TIMEOUT_MS: how long a lead create or update waits for Fusion SD's
+ * answer, in milliseconds. Unset, or not a positive whole number, means 20000
+ * (it was a fixed 10000 until 10 Nov 2026; Fusion is sometimes slow to answer, and
+ * a send that gets no answer is recorded as Unhappy 1 and retried). Read on every call.
+ */
+function getFusionRequestTimeoutMs() {
+  const text = String(process.env.FUSION_REQUEST_TIMEOUT_MS || '').trim();
+  if (!/^\d+$/.test(text)) return 20000;
+  const ms = Number(text);
+  return ms > 0 ? ms : 20000;
+}
+
+/**
  * USAGE_LOG: each request writes one `[usage]` log line with its Data Store
  * operation counts, CRM calls and token refreshes, and every log line carries
  * the request's id (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only, no
@@ -433,6 +446,7 @@ module.exports = {
   isKeepOutboundRetryOnInboundEnabled,
   isFusionTokenRetryEnabled,
   getFusionTokenTimeoutMs,
+  getFusionRequestTimeoutMs,
   isUsageLogEnabled,
   isUsageRollupEnabled,
   getCostDashboardKey,
