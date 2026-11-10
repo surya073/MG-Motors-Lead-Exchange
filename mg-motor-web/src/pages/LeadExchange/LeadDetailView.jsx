@@ -19,13 +19,11 @@ import {
   ClockIcon,
   PencilIcon,
 } from "../../ui/icons";
-import mgLogo from "../../assets/images/mg-logo-single.png";
 import { isValidAustralianMobile } from "../../utils/mobileValidation";
-import CloseButton from "../../ui/CloseButton/CloseButton";
 import PathBadge from "../../ui/PathBadge/PathBadge";
 import { CompactListSkeleton } from "../../ui/Skeleton/PageSkeletons";
 import "./LeadDetailView.css";
-import "./LeadDetailPremium.css";
+import "./LeadDetailTabs.css";
 
 /* ----------------------------------------------------------------
    Status -> visual tone
@@ -835,40 +833,6 @@ function MoreDetailsCard({ val, lead }) {
 }
 
 /* ----------------------------------------------------------------
-   Full Timeline Offcanvas
------------------------------------------------------------------- */
-function TimelineOffcanvas({ open, onClose, timeline, loading }) {
-  return (
-    <>
-      <div
-        className={`lead-detail__offcanvas-backdrop ${open ? "lead-detail__offcanvas-backdrop--open" : ""}`}
-        onClick={onClose}
-        aria-hidden={!open}
-      />
-      <aside
-        className={`lead-detail__offcanvas ${open ? "lead-detail__offcanvas--open" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Full activity timeline"
-      >
-        <div className="lead-detail__offcanvas-header">
-          <h3>
-            <ClockIcon size={16} />
-            Full Activity Timeline
-          </h3>
-          <CloseButton onClick={onClose} />
-        </div>
-        <div className="lead-detail__offcanvas-body">
-          <ul className="lead-detail__timeline">
-            <ActivityTimeline timeline={timeline} loading={loading} />
-          </ul>
-        </div>
-      </aside>
-    </>
-  );
-}
-
-/* ----------------------------------------------------------------
    Delivery actions (admins): a lead whose delivery stopped.
      ACK_UNRESOLVED   the dealer accepted it without returning its id, so it
                       is never sent again; link the id from the dealer's CRM.
@@ -956,6 +920,15 @@ function DeliveryActions({ lead, onDone }) {
 /* ----------------------------------------------------------------
    Lead Detail
 ------------------------------------------------------------------ */
+/* A Data Store UTC datetime ("2026-11-10 07:03:53") as Australian local time. */
+function formatAuDateTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return "—";
+  const parsed = new Date(`${text.replace(" ", "T").slice(0, 19)}Z`);
+  if (Number.isNaN(parsed.getTime())) return text;
+  return parsed.toLocaleString("en-AU", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Australia/Sydney" });
+}
+
 /* ----------------------------------------------------------------
    A contact line in the side card: label, value, copy, quick action
 ------------------------------------------------------------------ */
@@ -995,7 +968,7 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   const [copied, setCopied] = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
-  const [timelineOffcanvasOpen, setTimelineOffcanvasOpen] = useState(false);
+  const [tab, setTab] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(() => new Date());
   const { showAlert } = useAlerts();
@@ -1035,18 +1008,6 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
       setRefreshing(false);
     }
   };
-
-  // Lock background scroll while the offcanvas is open.
-  useEffect(() => {
-    if (timelineOffcanvasOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [timelineOffcanvasOpen]);
 
   const val = (key) => {
     const value = lead[key];
@@ -1090,25 +1051,33 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
     setTimeout(() => setCopied(null), 1500);
   };
 
+  // Opens on the Integration tab when the lead is on an unhappy path, so the thing that
+  // needs attention is the first thing seen.
+  const activeTab = tab || (path.type === "unhappy" ? "integration" : "overview");
+  const TABS = [
+    { id: "overview", label: "Overview" },
+    { id: "integration", label: "Integration", alert: path.type === "unhappy" },
+    { id: "timeline", label: "Timeline", count: timeline.length || null },
+    { id: "details", label: "Details" },
+  ];
+
   return (
-    <div className={`ld${refreshing ? " ld--refreshing" : ""}`}>
-      <div className="ld-topbar">
-        <button type="button" className="ld-back" onClick={onBack}>
+    <div className={`lx${refreshing ? " lx--refreshing" : ""}`}>
+      <div className="lx-topbar">
+        <button type="button" className="lx-back" onClick={onBack}>
           <ChevronLeftIcon size={16} />
-          <span className="ld-back__crumb">Lead Exchange</span>
-          <span className="ld-back__sep">/</span>
-          <span className="ld-back__here">{lead.customer_name || "Lead"}</span>
+          Leads
         </button>
 
-        <div className="ld-topbar__end">
-          <span className="ld-updated" aria-live="polite">
+        <div className="lx-topbar__end">
+          <span className="lx-updated" aria-live="polite">
             {refreshing
               ? "Refreshing..."
               : `Updated ${updatedAt.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`}
           </span>
           <button
             type="button"
-            className={`ld-refresh${refreshing ? " ld-refresh--spinning" : ""}`}
+            className={`lx-refresh${refreshing ? " lx-refresh--spinning" : ""}`}
             onClick={handleRefresh}
             disabled={refreshing}
             aria-label="Refresh this lead"
@@ -1118,158 +1087,193 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
             Refresh
           </button>
         </div>
-        <div className="ld-loadbar" aria-hidden="true" />
+        <div className="lx-loadbar" aria-hidden="true" />
       </div>
 
       {/* ====================================================== HEADER ====================================================== */}
-      <header className="ld-header">
-        <img src={mgLogo} alt="" className="ld-header__logo" aria-hidden="true" />
-
-        <span className="ld-avatar">{initials(lead.customer_name)}</span>
-
-        <div className="ld-header__main">
-          <div className="ld-header__title">
-            <h1>{lead.customer_name || "Unnamed Customer"}</h1>
-            {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
-          </div>
-
-          <div className="ld-header__meta">
-            <span className="ld-header__meta-item">
+      <header className="lx-header">
+        <div className="lx-header__top">
+          <span className="lx-avatar">{initials(lead.customer_name)}</span>
+          <div className="lx-header__id">
+            <div className="lx-header__title">
+              <h1>{lead.customer_name || "Unnamed Customer"}</h1>
+              {isRemoved ? <StatusPill status="Removed" /> : <StatusPill status={lead.lead_status} />}
+            </div>
+            <div className="lx-header__meta">
               <BuildingIcon size={14} />
-              {val("dealer_name")}
-            </span>
-            <span className="ld-header__dot" />
-            <span className="ld-header__meta-item">Code {val("dealer_code")}</span>
-            {lead.lead_source && (
-              <>
-                <span className="ld-header__dot" />
-                <span className="ld-header__meta-item">
+              <span>{val("dealer_name")}</span>
+              <span className="lx-dot" />
+              <span>Code {val("dealer_code")}</span>
+              {lead.lead_source && (
+                <>
+                  <span className="lx-dot" />
                   <MegaphoneIcon size={13} />
-                  {lead.lead_source}
-                </span>
-              </>
-            )}
+                  <span>{lead.lead_source}</span>
+                </>
+              )}
+            </div>
           </div>
-
           <PathChips paths={journeyPaths.length > 0 ? journeyPaths : [path]} currentId={path.id} />
         </div>
 
-        <div className="ld-header__facts">
-          <div className="ld-fact">
-            <span className="ld-fact__label">
-              <CarIcon size={13} /> Vehicle
-            </span>
-            <span className="ld-fact__value">{val("vehicle_model")}</span>
+        <dl className="lx-facts">
+          <div className="lx-facts__cell">
+            <dt>Vehicle</dt>
+            <dd>{val("vehicle_model")}</dd>
           </div>
-          {val("enquiry_id") !== "—" && (
-            <div className="ld-fact">
-              <span className="ld-fact__label">Enquiry ID</span>
-              <span className="ld-fact__value ld-fact__value--mono">
-                {val("enquiry_id")}
-                <button type="button" className="ld-fact__copy" onClick={() => handleCopy("enquiry", val("enquiry_id"))} aria-label="Copy enquiry ID">
+          <div className="lx-facts__cell">
+            <dt>Enquiry ID</dt>
+            <dd className="lx-mono">
+              {val("enquiry_id")}
+              {val("enquiry_id") !== "\u2014" && (
+                <button type="button" className="lx-copy" onClick={() => handleCopy("enquiry", val("enquiry_id"))} aria-label="Copy enquiry ID">
                   <CopyIcon />
                 </button>
-                {copied === "enquiry" && <span className="ld-fact__copied">Copied</span>}
-              </span>
-            </div>
-          )}
-        </div>
+              )}
+              {copied === "enquiry" && <span className="lx-copied">Copied</span>}
+            </dd>
+          </div>
+          <div className="lx-facts__cell">
+            <dt>Created</dt>
+            <dd>{formatAuDateTime(lead.assigned_date)}</dd>
+          </div>
+          <div className="lx-facts__cell">
+            <dt>Last status update</dt>
+            <dd>{formatAuDateTime(lead.last_status_update)}</dd>
+          </div>
+        </dl>
       </header>
 
-      {/* ====================================================== BODY ====================================================== */}
-      <div className="ld-grid">
-        <div className="ld-main">
-          <IntegrationPathCard path={path} journeyPaths={journeyPaths} failureDetail={latestFailureDetail} />
+      {/* ====================================================== TABS ====================================================== */}
+      <nav className="lx-tabs" role="tablist" aria-label="Lead sections">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            id={`lx-tab-${t.id}`}
+            aria-selected={activeTab === t.id}
+            aria-controls={`lx-panel-${t.id}`}
+            className={`lx-tab${activeTab === t.id ? " lx-tab--active" : ""}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.alert && <span className="lx-tab__alert" aria-label="needs attention" />}
+            {t.count ? <span className="lx-tab__count">{t.count}</span> : null}
+          </button>
+        ))}
+      </nav>
 
-          <DeliveryActions lead={lead} onDone={onLeadChanged} />
+      <div className="lx-panel" role="tabpanel" id={`lx-panel-${activeTab}`} aria-labelledby={`lx-tab-${activeTab}`}>
+        {activeTab === "overview" && (
+          <div className="lx-overview">
+            <button type="button" className={`lx-callout lx-callout--${path.type}`} onClick={() => setTab("integration")}>
+              <PathBadge name={path.id} size="md" />
+              <span className="lx-callout__text">
+                <strong>{path.title}</strong>
+                {latestFailureDetail && <span>{latestFailureDetail}</span>}
+              </span>
+              <span className="lx-callout__go">
+                View integration <ArrowRightIcon size={14} />
+              </span>
+            </button>
 
-          <section className="lead-detail__group lead-detail__timeline-card">
+            <div className="lx-cards">
+              <section className="lead-detail__group lx-card">
+                <h3>
+                  <span className="lead-detail__group-icon">
+                    <UserIcon size={15} />
+                  </span>
+                  Contact
+                </h3>
+                <ContactRow
+                  icon={<PhoneIcon size={16} />}
+                  label="Mobile"
+                  value={mobile}
+                  copied={copied === "mobile"}
+                  onCopy={() => handleCopy("mobile", mobile)}
+                  href={`tel:${mobile}`}
+                  actionLabel="Call"
+                  actionIcon={<PhoneIcon size={13} />}
+                  warning={mobileIsInvalid ? "Invalid Australian Mobile" : null}
+                />
+                <ContactRow
+                  icon={<MailIcon size={16} />}
+                  label="Email"
+                  value={email}
+                  copied={copied === "email"}
+                  onCopy={() => handleCopy("email", email)}
+                  href={`mailto:${email}`}
+                  actionLabel="Email"
+                  actionIcon={<MailIcon size={13} />}
+                />
+              </section>
+
+              <section className="lead-detail__group lx-card">
+                <h3>
+                  <span className="lead-detail__group-icon">
+                    <CarIcon size={15} />
+                  </span>
+                  Enquiry
+                </h3>
+                <dl className="lx-kv">
+                  <div><dt>Lead source</dt><dd>{val("lead_source")}</dd></div>
+                  <div><dt>Dealer</dt><dd>{val("dealer_name")}</dd></div>
+                  <div><dt>Dealer code</dt><dd>{val("dealer_code")}</dd></div>
+                  <div><dt>Postcode</dt><dd>{val("postcode")}</dd></div>
+                </dl>
+              </section>
+
+              <section className="lead-detail__group lx-card">
+                <h3>
+                  <span className="lead-detail__group-icon">
+                    <NoteIcon size={15} />
+                  </span>
+                  Customer Message
+                </h3>
+                <p className="lead-detail__remarks-text">
+                  {val("customer_message") !== "\u2014" ? val("customer_message") : "No message from customer yet."}
+                </p>
+              </section>
+
+              <section className="lead-detail__group lx-card">
+                <h3>
+                  <span className="lead-detail__group-icon">
+                    <PencilIcon size={15} />
+                  </span>
+                  Dealer Remarks
+                </h3>
+                <p className="lead-detail__remarks-text">
+                  {val("dealer_remarks") !== "\u2014" ? val("dealer_remarks") : "No remarks yet."}
+                </p>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "integration" && (
+          <div className="lx-stack">
+            <IntegrationPathCard path={path} journeyPaths={journeyPaths} failureDetail={latestFailureDetail} />
+            <DeliveryActions lead={lead} onDone={onLeadChanged} />
+          </div>
+        )}
+
+        {activeTab === "timeline" && (
+          <section className="lead-detail__group lx-card lx-timeline">
             <h3>
               <span className="lead-detail__group-icon">
                 <ClockIcon size={15} />
               </span>
               Activity Timeline
             </h3>
-
-            <div className="lead-detail__timeline-scroll">
-              <ul className="lead-detail__timeline">
-                <ActivityTimeline timeline={timeline.slice(-6)} loading={timelineLoading} />
-              </ul>
-            </div>
-
-            {timeline.length > 0 && (
-              <button type="button" className="lead-detail__timeline-viewfull-btn" onClick={() => setTimelineOffcanvasOpen(true)}>
-                View Full Timeline ({timeline.length})
-              </button>
-            )}
+            <ul className="lead-detail__timeline">
+              <ActivityTimeline timeline={timeline} loading={timelineLoading} />
+            </ul>
           </section>
+        )}
 
-          <MoreDetailsCard val={val} lead={lead} />
-        </div>
-
-        <aside className="ld-side">
-          <section className="lead-detail__group ld-side__card">
-            <h3>
-              <span className="lead-detail__group-icon">
-                <UserIcon size={15} />
-              </span>
-              Contact
-            </h3>
-            <ContactRow
-              icon={<PhoneIcon size={16} />}
-              label="Mobile"
-              value={mobile}
-              copied={copied === "mobile"}
-              onCopy={() => handleCopy("mobile", mobile)}
-              href={`tel:${mobile}`}
-              actionLabel="Call"
-              actionIcon={<PhoneIcon size={13} />}
-              warning={mobileIsInvalid ? "Invalid Australian Mobile" : null}
-            />
-            <ContactRow
-              icon={<MailIcon size={16} />}
-              label="Email"
-              value={email}
-              copied={copied === "email"}
-              onCopy={() => handleCopy("email", email)}
-              href={`mailto:${email}`}
-              actionLabel="Email"
-              actionIcon={<MailIcon size={13} />}
-            />
-          </section>
-
-          <section className="lead-detail__group ld-side__card">
-            <h3>
-              <span className="lead-detail__group-icon">
-                <NoteIcon size={15} />
-              </span>
-              Customer Message
-            </h3>
-            <p className="lead-detail__remarks-text">
-              {val("customer_message") !== "—" ? val("customer_message") : "No message from customer yet."}
-            </p>
-          </section>
-
-          <section className="lead-detail__group ld-side__card">
-            <h3>
-              <span className="lead-detail__group-icon">
-                <PencilIcon size={15} />
-              </span>
-              Dealer Remarks
-            </h3>
-            <p className="lead-detail__remarks-text">
-              {val("dealer_remarks") !== "—" ? val("dealer_remarks") : "No remarks yet."}
-            </p>
-          </section>
-        </aside>
+        {activeTab === "details" && <MoreDetailsCard val={val} lead={lead} />}
       </div>
-
-      <TimelineOffcanvas
-        open={timelineOffcanvasOpen}
-        onClose={() => setTimelineOffcanvasOpen(false)}
-        timeline={timeline}
-        loading={timelineLoading}
-      />
     </div>
   );
 }
