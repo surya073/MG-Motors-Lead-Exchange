@@ -17,7 +17,7 @@
  *       action: { label: "Retry", onClick: loadLeads },
  *     });
  *
- *   options: title, duration (ms, 0 = stays until dismissed), id, action
+ *   options: title (only shown when there is no message), duration (ms, 0 = stays until dismissed), id, action
  *
  * Inline banner (persistent, sits in the page):
  *     <Alert variant="error" title="Load failed" onClose={...}>message</Alert>
@@ -143,6 +143,8 @@ function AlertToast({ alert, onDismiss }) {
   const Icon = VARIANT_ICONS[alert.variant] || Info;
   const { duration, action } = alert;
   const sticky = duration === 0;
+  // Message-based: the message is the toast. A title is only used when there is no message.
+  const text = alert.message || alert.title;
 
   // Auto-dismiss that pauses while the pointer or keyboard focus is on the toast.
   const [paused, setPaused] = useState(false);
@@ -172,38 +174,23 @@ function AlertToast({ alert, onDismiss }) {
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
-      <span className="alert-toast__icon" aria-hidden="true">
-        <Icon size={18} strokeWidth={2.4} />
-      </span>
-
-      <div className="alert-toast__body">
-        {alert.title && <span className="alert-toast__title">{alert.title}</span>}
-        <span className="alert-toast__message">{alert.message}</span>
-        {action && (
-          <button
-            type="button"
-            className="alert-toast__action"
-            onClick={() => {
-              action.onClick?.();
-              onDismiss();
-            }}
-          >
-            {action.label}
-          </button>
-        )}
-      </div>
-
+      <Icon className="alert-toast__icon" size={16} strokeWidth={2.4} aria-hidden="true" />
+      <span className="alert-toast__message">{text}</span>
+      {action && (
+        <button
+          type="button"
+          className="alert-toast__action"
+          onClick={() => {
+            action.onClick?.();
+            onDismiss();
+          }}
+        >
+          {action.label}
+        </button>
+      )}
       <button type="button" className="alert-toast__close" onClick={onDismiss} aria-label="Dismiss notification">
         <X size={14} />
       </button>
-
-      {!sticky && (
-        <span
-          className="alert-toast__progress"
-          style={{ animationDuration: `${duration}ms`, animationPlayState: paused ? "paused" : "running" }}
-          aria-hidden="true"
-        />
-      )}
     </div>
   );
 }

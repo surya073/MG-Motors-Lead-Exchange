@@ -20,131 +20,84 @@
 .alert-toast--info,
 .alert-banner--info { --alert-tone: var(--color-info); }
 
-/* ---------- Toast stack ---------- */
+/* ---------- Toast stack: centred at the top ---------- */
 
 .alert-stack {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: calc(var(--z-modal, 1000) + 20); /* above drawers, modals and the search overlay */
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  width: min(400px, calc(100vw - 24px));
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
   pointer-events: none;
 }
 
-/* ---------- Toast ---------- */
+/* ---------- Toast: a solid green / red / amber / blue pill with the message ---------- */
 
 .alert-toast {
-  position: relative;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 14px 16px 14px;
-  background-color: var(--color-bg-elevated);
-  background-image: linear-gradient(
-    120deg,
-    color-mix(in srgb, var(--alert-tone) 14%, transparent) 0%,
-    transparent 62%
-  );
-  border: 1px solid color-mix(in srgb, var(--alert-tone) 28%, var(--color-border));
-  border-radius: 16px;
-  box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--alert-tone) 6%, transparent);
-  overflow: hidden;
+  align-items: center;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 9px 10px 9px 14px;
+  background-color: var(--alert-tone);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: #fff;
   pointer-events: auto;
-  color: var(--color-text-primary);
-  animation: alert-toast-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: alert-toast-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.alert-toast--warning {
+  background-color: color-mix(in srgb, var(--color-warning) 86%, #000);
 }
 
 .alert-toast--leaving {
-  animation: alert-toast-out 200ms ease-in forwards;
+  animation: alert-toast-out 160ms ease-in forwards;
   pointer-events: none;
 }
 
 @keyframes alert-toast-in {
   from {
     opacity: 0;
-    transform: translate3d(28px, 0, 0) scale(0.96);
+    transform: translate3d(0, -14px, 0);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes alert-toast-out {
   to {
     opacity: 0;
-    transform: translate3d(28px, 0, 0) scale(0.96);
+    transform: translate3d(0, -14px, 0);
   }
 }
 
-/* Solid, tone-coloured badge: the quickest way to read the severity. */
 .alert-toast__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
   flex-shrink: 0;
-  border-radius: 12px;
-  background-color: var(--alert-tone);
-  color: #fff;
-  box-shadow: 0 6px 14px color-mix(in srgb, var(--alert-tone) 38%, transparent);
-  animation: alert-icon-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) 80ms both;
-}
-
-@keyframes alert-icon-pop {
-  from {
-    transform: scale(0.4) rotate(-12deg);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1) rotate(0);
-    opacity: 1;
-  }
-}
-
-.alert-toast__body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: 1;
-  min-width: 0;
-  padding-top: 1px;
-}
-
-.alert-toast__title {
-  font-size: 13.5px;
-  font-weight: 650;
-  line-height: 18px;
-  letter-spacing: -0.01em;
-  color: var(--color-text-primary);
 }
 
 .alert-toast__message {
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
   line-height: 18px;
-  color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
 
-/* Only a message and no title: give it the stronger weight. */
-.alert-toast__body > .alert-toast__message:first-child {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-}
-
 .alert-toast__action {
-  align-self: flex-start;
-  margin-top: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  border: 1px solid color-mix(in srgb, var(--alert-tone) 40%, transparent);
-  background: color-mix(in srgb, var(--alert-tone) 10%, transparent);
-  color: var(--alert-tone);
+  flex-shrink: 0;
+  padding: 2px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -152,58 +105,38 @@
 }
 
 .alert-toast__action:hover {
-  background: color-mix(in srgb, var(--alert-tone) 20%, transparent);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .alert-toast__close {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
   border-radius: 50%;
-  color: var(--color-text-muted);
+  color: #fff;
+  opacity: 0.8;
   cursor: pointer;
-  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+  transition: background-color 150ms ease, opacity 150ms ease;
 }
 
 .alert-toast__close:hover {
-  background-color: var(--color-surface-alt);
-  color: var(--color-text-primary);
-  transform: rotate(90deg);
+  background-color: rgba(255, 255, 255, 0.2);
+  opacity: 1;
 }
 
 .alert-toast__action:focus-visible,
-.alert-toast__close:focus-visible,
+.alert-toast__close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .alert-banner__action:focus-visible,
 .alert-banner__close:focus-visible {
   outline: 2px solid var(--alert-tone);
   outline-offset: 2px;
-}
-
-/* Time-remaining bar along the bottom edge; pauses while hovered. */
-.alert-toast__progress {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  width: 100%;
-  background-color: var(--alert-tone);
-  opacity: 0.85;
-  transform-origin: left center;
-  animation-name: alert-progress;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-}
-
-@keyframes alert-progress {
-  from {
-    transform: scaleX(1);
-  }
-  to {
-    transform: scaleX(0);
-  }
 }
 
 /* ---------- Inline banner ---------- */
@@ -325,49 +258,10 @@
   color: var(--color-text-primary);
 }
 
-/* ---------- Small screens: toasts become a full-width strip at the top ---------- */
-
-@media (max-width: 640px) {
-  .alert-stack {
-    top: 10px;
-    right: 12px;
-    left: 12px;
-    width: auto;
-  }
-
-  .alert-toast {
-    padding: 12px 12px 14px;
-    border-radius: 14px;
-  }
-
-  @keyframes alert-toast-in {
-    from {
-      opacity: 0;
-      transform: translate3d(0, -16px, 0) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-  }
-
-  @keyframes alert-toast-out {
-    to {
-      opacity: 0;
-      transform: translate3d(0, -16px, 0) scale(0.98);
-    }
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .alert-toast,
   .alert-toast--leaving,
-  .alert-toast__icon,
   .alert-banner {
     animation-duration: 1ms;
-  }
-
-  .alert-toast__close:hover {
-    transform: none;
   }
 }
