@@ -1610,10 +1610,17 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
     // short, stable value) — DEALER_ACK_MISSING_ID is the one exception,
     // since err.message carries the PII-safe response-shape diagnostic
     // built above, which is exactly what an operator needs to see here.
+    // An authentication failure also carries the dealer's own words (for example
+    // "API key not authorised for this dealership"), so the activity log says why.
+    const dealerAuthDetail = err.code === 'AUTHENTICATION_FAILED'
+      ? [err.response?.status && `HTTP ${err.response.status}`, err.vendor?.detail || err.vendor?.title].filter(Boolean).join(' - ')
+      : '';
     const reason = (
       err.code === 'DEALER_ACK_MISSING_ID' && err.message
         ? `${err.code}: ${err.message}`
-        : (err.code || err.message || 'EXTERNAL_CRM_ERROR')
+        : dealerAuthDetail
+          ? `${err.code}: ${dealerAuthDetail}`
+          : (err.code || err.message || 'EXTERNAL_CRM_ERROR')
     ).slice(0, 500);
     // The Unhappy 3 critical alert must carry the whole outage picture,
     // not just this one lead: dealer, failure start, duration, affected
@@ -1667,12 +1674,10 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       reason: alertReason,
     });
 
-    if (err.response?.status === 401 || err.response?.status === 403) {
-      await catalystApp.datastore().table(DEALER_INTEGRATIONS_TABLE).updateRow({
-        ROWID: integration.ROWID,
-        status: 'ERROR',
-      });
-    }
+    // A 401/403 on one lead's delivery no longer flips the dealer to ERROR ("Not
+    // Connected"): it can be that lead's own dealership/location authorisation, and
+    // the dealer's real reason is kept on the failure (activity log and lead timeline).
+    // Only an explicit Test connection changes the connection status.
 
     logger.error('crmIntegrationService', `syncLeadToExternalCrm failed for dealer ${integration.dealer_code}`, err);
     throw err;
