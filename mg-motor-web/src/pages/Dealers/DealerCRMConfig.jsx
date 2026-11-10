@@ -2418,9 +2418,9 @@ export default function DealerCRMConfig() {
                                   <span className="dealer-crm-config__mapping-saved-text">
                                     {mapping.inbound_only ? (
                                       <>
-                                        {mapping.target_status}
-                                        <span className="dealer-crm-config__mapping-arrow-inline">→</span>
                                         {ourStatusLabel(mapping.source_status)}
+                                        <span className="dealer-crm-config__mapping-arrow-inline">←</span>
+                                        {mapping.target_status}
                                         <span className="dealer-crm-config__mapping-arrow-inline">(inbound only)</span>
                                       </>
                                     ) : mapping.outbound_only ? (
