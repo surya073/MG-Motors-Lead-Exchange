@@ -11,6 +11,17 @@
  * HTML and a plain-text part.
  */
 
+const path = require('path');
+
+// The MG logo (white lockup, made for a dark background). Mail sent over SMTP carries
+// it as an inline attachment (cid:mg-logo), which shows without "load images". The
+// Catalyst Email fallback cannot attach inline images, so it points at the same file
+// hosted with the web client (see logoUrlFor).
+const LOGO_CID = 'mg-logo';
+const LOGO_FILE = path.join(__dirname, '..', '..', 'assets', 'mg-email-logo.png');
+const LOGO_WIDTH = 132;
+const LOGO_HEIGHT = 46;
+
 const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif";
 
 const COLORS = {
@@ -21,7 +32,7 @@ const COLORS = {
   line: '#e5e7eb',
   canvas: '#f3f4f6',
   card: '#ffffff',
-  panel: '#f9fafb',
+  panel: '#f7f8fa',
   brandDark: '#16181c',
   brandRed: '#c8102e',
 };
@@ -39,6 +50,16 @@ const TONES = {
 // per environment; the default is this project's Development client.
 const APP_URL = process.env.LEAD_EXCHANGE_APP_URL
   || 'https://mg-motors-au-60069659585.development.catalystserverless.in/app/index.html#/lead-exchange';
+
+/** A hosted address for the logo, for senders that cannot attach it inline. */
+function logoUrlFor(appUrl = APP_URL) {
+  if (process.env.EMAIL_LOGO_URL) return process.env.EMAIL_LOGO_URL;
+  try {
+    return `${new URL(appUrl).origin}/app/mg-email-logo.png`;
+  } catch (err) {
+    return '';
+  }
+}
 
 /**
  * Per-path wording, from the Happy & Unhappy Path Register: a plain-English
@@ -191,13 +212,13 @@ function reasonPoints(reason) {
 }
 
 function badge(tone, text) {
-  return `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:${tone.bg};color:${tone.fg};font:600 11px/1.6 ${FONT};letter-spacing:.02em">${esc(text)}</span>`;
+  return `<span style="display:inline-block;padding:4px 12px;border-radius:999px;background:${tone.bg};color:${tone.fg};font:700 11px/1.5 ${FONT};letter-spacing:.04em;text-transform:uppercase">${esc(text)}</span>`;
 }
 
 function button(href, label) {
   return `<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
-    <td style="border-radius:6px;background:${COLORS.brandDark}">
-      <a href="${esc(href)}" target="_blank" style="display:inline-block;padding:11px 22px;font:600 14px/1.2 ${FONT};color:#ffffff;text-decoration:none;border-radius:6px">${esc(label)}</a>
+    <td style="border-radius:8px;background:${COLORS.brandRed}">
+      <a href="${esc(href)}" target="_blank" style="display:inline-block;padding:12px 26px;font:700 14px/1.2 ${FONT};color:#ffffff;text-decoration:none;border-radius:8px;letter-spacing:.01em">${esc(label)} &rarr;</a>
     </td></tr></table>`;
 }
 
@@ -206,15 +227,15 @@ function factRows(facts) {
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
     .map(([label, value], index) => `
       <tr>
-        <td style="padding:9px 14px;${index ? `border-top:1px solid ${COLORS.line};` : ''}width:38%;font:500 13px/1.5 ${FONT};color:${COLORS.muted};vertical-align:top">${esc(label)}</td>
-        <td style="padding:9px 14px;${index ? `border-top:1px solid ${COLORS.line};` : ''}font:600 13px/1.5 ${FONT};color:${COLORS.ink};vertical-align:top;word-break:break-word">${esc(value)}</td>
+        <td style="padding:10px 14px;${index ? `border-top:1px solid ${COLORS.line};` : ''}width:36%;background:${COLORS.panel};font:600 12px/1.5 ${FONT};color:${COLORS.muted};letter-spacing:.02em;vertical-align:top">${esc(label)}</td>
+        <td style="padding:10px 14px;${index ? `border-top:1px solid ${COLORS.line};` : ''}font:600 13px/1.5 ${FONT};color:${COLORS.ink};vertical-align:top;word-break:break-word">${esc(value)}</td>
       </tr>`)
     .join('');
 }
 
 function section(title, innerHtml) {
   return `<tr><td style="padding:0 32px 24px">
-    <div style="font:700 11px/1.4 ${FONT};color:${COLORS.muted};letter-spacing:.08em;text-transform:uppercase;margin:0 0 10px">${esc(title)}</div>
+    <div style="font:700 11px/1.4 ${FONT};color:${COLORS.ink};letter-spacing:.1em;text-transform:uppercase;margin:0 0 12px"><span style="display:inline-block;width:14px;height:3px;background:${COLORS.brandRed};vertical-align:middle;margin-right:8px;border-radius:2px"></span>${esc(title)}</div>
     ${innerHtml}
   </td></tr>`;
 }
@@ -228,8 +249,8 @@ function bulletList(items, color = COLORS.body) {
 }
 
 /**
- * The shared shell: preheader, dark MG header with red accent, severity
- * accent bar, content rows, footer.
+ * The shared shell: preheader, dark header with the MG logo and a red accent,
+ * a severity-tinted title block, content rows, footer.
  */
 function layout({ preheader, tone, eyebrow, title, summary, rowsHtml, width = 600 }) {
   return `<!doctype html>
@@ -244,25 +265,30 @@ function layout({ preheader, tone, eyebrow, title, summary, rowsHtml, width = 60
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${esc(preheader || summary || '')}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:${COLORS.canvas}">
 <tr><td align="center" style="padding:28px 12px">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:${width}px">
-    <tr><td style="background:${COLORS.brandDark};border-radius:10px 10px 0 0;padding:18px 32px">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:${width}px;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(17,20,24,.08)">
+    <tr><td style="background:${COLORS.brandDark};border-radius:14px 14px 0 0;padding:20px 32px">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-        <td style="font:800 16px/1 ${FONT};color:#ffffff;letter-spacing:.06em">MG <span style="font-weight:500;letter-spacing:.02em;color:#d1d5db">Lead Exchange</span></td>
-        <td align="right" style="font:500 11px/1 ${FONT};color:#9ca3af;letter-spacing:.04em">INTEGRATION ALERTS</td>
+        <td align="left" valign="middle"><img src="cid:${LOGO_CID}" width="${LOGO_WIDTH}" height="${LOGO_HEIGHT}" alt="MG Motor" style="display:block;border:0;outline:none;text-decoration:none;width:${LOGO_WIDTH}px;height:${LOGO_HEIGHT}px"></td>
+        <td align="right" valign="middle">
+          <div style="font:700 14px/1.3 ${FONT};color:#ffffff;letter-spacing:.04em">Lead Exchange</div>
+          <div style="font:500 11px/1.5 ${FONT};color:#9ca3af;letter-spacing:.08em;text-transform:uppercase">Integration alerts</div>
+        </td>
       </tr></table>
     </td></tr>
-    <tr><td style="height:3px;line-height:3px;font-size:0;background:${COLORS.brandRed}">&nbsp;</td></tr>
+    <tr><td style="height:4px;line-height:4px;font-size:0;background:${COLORS.brandRed}">&nbsp;</td></tr>
     <tr><td style="background:${COLORS.card};border-left:1px solid ${COLORS.line};border-right:1px solid ${COLORS.line}">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-        <tr><td style="padding:28px 32px 6px;border-left:4px solid ${tone.bar}">
-          <div style="margin:0 0 12px">${badge(tone, eyebrow)}</div>
-          <div style="font:700 21px/1.35 ${FONT};color:${COLORS.ink};margin:0 0 8px">${esc(title)}</div>
-          ${summary ? `<div style="font:400 15px/1.6 ${FONT};color:${COLORS.body};margin:0 0 20px">${esc(summary)}</div>` : ''}
+        <tr><td style="padding:28px 32px 22px;background:${tone.bg};border-bottom:1px solid ${COLORS.line}">
+          <div style="margin:0 0 14px">${badge({ bg: '#ffffff', fg: tone.fg }, eyebrow)}</div>
+          <div style="font:800 23px/1.3 ${FONT};color:${COLORS.ink};margin:0 0 ${summary ? '10px' : '0'};letter-spacing:-.01em">${esc(title)}</div>
+          ${summary ? `<div style="font:400 15px/1.6 ${FONT};color:${COLORS.body};margin:0">${esc(summary)}</div>` : ''}
         </td></tr>
+        <tr><td style="height:4px;line-height:4px;font-size:0;background:${tone.bar}">&nbsp;</td></tr>
+        <tr><td style="height:24px;line-height:24px;font-size:0">&nbsp;</td></tr>
         ${rowsHtml}
       </table>
     </td></tr>
-    <tr><td style="background:${COLORS.panel};border:1px solid ${COLORS.line};border-top:none;border-radius:0 0 10px 10px;padding:18px 32px">
+    <tr><td style="background:${COLORS.panel};border:1px solid ${COLORS.line};border-top:none;border-radius:0 0 14px 14px;padding:20px 32px">
       <div style="font:400 12px/1.6 ${FONT};color:${COLORS.muted}">This is an automated message from MG Lead Exchange. Please do not reply to this email.</div>
       <div style="font:400 12px/1.6 ${FONT};color:${COLORS.faint}">MG Motor Australia &middot; Lead Exchange middleware &middot; Operated with FI Digital</div>
     </td></tr>
@@ -492,4 +518,7 @@ module.exports = {
   TONES,
   APP_URL,
   PATH_GUIDE,
+  LOGO_CID,
+  LOGO_FILE,
+  logoUrlFor,
 };

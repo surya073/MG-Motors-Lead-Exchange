@@ -42,6 +42,13 @@ function getSmtpTransport() {
   return cachedTransport;
 }
 
+// The MG logo travels with the message as an inline image (cid:mg-logo), so it shows
+// without the reader choosing "load images". Added only when the HTML uses it.
+function logoAttachments(html) {
+  if (!html || !html.includes(`cid:${emailTemplates.LOGO_CID}`)) return [];
+  return [{ filename: 'mg-logo.png', path: emailTemplates.LOGO_FILE, cid: emailTemplates.LOGO_CID, contentDisposition: 'inline' }];
+}
+
 async function sendViaSmtp({ from, to, subject, content, html }) {
   const info = await getSmtpTransport().sendMail({
     from: `"MG Lead Exchange" <${from}>`,
@@ -51,6 +58,7 @@ async function sendViaSmtp({ from, to, subject, content, html }) {
     // text is what a phone notification preview or a text-only client shows.
     text: content,
     ...(html ? { html } : {}),
+    attachments: logoAttachments(html),
   });
   return { sent: true, channel: 'SMTP', messageId: info.messageId, accepted: info.accepted };
 }
@@ -87,7 +95,8 @@ async function sendConfiguredEmail(catalystApp, { subject, content, html, recipi
       from_email: fromEmail,
       to_email: recipients,
       subject,
-      content: html || content,
+      // Catalyst Email cannot attach an inline image, so the logo is linked instead.
+      content: html ? html.split(`cid:${emailTemplates.LOGO_CID}`).join(emailTemplates.logoUrlFor()) : content,
       html_mode: Boolean(html),
       display_name: 'MG Lead Exchange',
     });
