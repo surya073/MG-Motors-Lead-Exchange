@@ -1344,8 +1344,10 @@ export default function DealerCRMConfig() {
     Boolean(mapping.target_field) &&
     !editingFieldRows.has(index);
 
+  // An inbound-only row comes back from the server with reverse_ROWID but no ROWID
+  // (only the dealer-to-MG row exists), and is just as saved.
   const isStatusRowSaved = (mapping, index) =>
-    Boolean(mapping.ROWID) &&
+    Boolean(mapping.ROWID || mapping.reverse_ROWID) &&
     Boolean(mapping.source_status) &&
     Boolean(mapping.target_status) &&
     !editingStatusRows.has(index);
