@@ -442,7 +442,16 @@ export default function LeadExchangePage() {
   const refreshDetail = async () => {
     await loadLeads({ refreshFacets: true });
     if (leadId) {
-      const lead = await adminDashboardService.getLead(leadId).catch(() => null);
+      // Only a 404 means the lead is gone. Any other failure leaves the lead on screen and
+      // is reported to the caller (the Refresh button shows it), instead of turning the page
+      // into "Lead not found".
+      let lead;
+      try {
+        lead = await adminDashboardService.getLead(leadId);
+      } catch (err) {
+        if (err?.response?.status !== 404) throw err;
+        lead = null;
+      }
       setFetchedDetail({ id: leadId, lead, done: true });
     }
   };

@@ -1594,3 +1594,150 @@
 .lead-detail__delivery-message--error {
   color: var(--color-danger);
 }
+
+
+/* =========================================================
+   TOOLBAR: back, last-updated stamp and refresh
+   ========================================================= */
+
+.lead-detail__toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.lead-detail__toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lead-detail__updated {
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lead-detail__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-4);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast) var(--ease-premium),
+    border-color var(--transition-fast) var(--ease-premium);
+}
+
+.lead-detail__refresh:hover:not(:disabled) {
+  background-color: var(--color-surface-alt);
+  border-color: var(--color-text-secondary);
+}
+
+.lead-detail__refresh:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.lead-detail__refresh:disabled {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.lead-detail__refresh--spinning svg {
+  animation: lead-detail-spin 0.9s linear infinite;
+}
+
+@keyframes lead-detail-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* A thin moving bar under the toolbar while a refresh is running. */
+.lead-detail__loadbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--space-2) * -1);
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.lead-detail--refreshing .lead-detail__loadbar {
+  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: lead-detail-load 1s ease-in-out infinite;
+}
+
+@keyframes lead-detail-load {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+.lead-detail--refreshing .lead-detail__hero,
+.lead-detail--refreshing .lead-detail__infobar {
+  opacity: 0.85;
+  transition: opacity var(--transition-fast) var(--ease-premium);
+}
+
+/* =========================================================
+   ENQUIRY ID CHIP (hero)
+   ========================================================= */
+
+.lead-detail__idrow {
+  margin-top: var(--space-2);
+}
+
+.lead-detail__idchip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-3);
+  background-color: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+}
+
+.lead-detail__idchip-label {
+  color: var(--color-text-muted);
+  font-weight: var(--fw-medium);
+}
+
+.lead-detail__idchip-value {
+  color: var(--color-text-primary);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .lead-detail__toolbar-end {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lead-detail__refresh--spinning svg,
+  .lead-detail--refreshing .lead-detail__loadbar {
+    animation: none;
+  }
+}

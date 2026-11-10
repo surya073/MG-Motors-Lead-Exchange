@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { adminDashboardService } from "../../services/api/adminDashboardService";
 import { dealerCrmIntegrationService } from "../../services/api/dealerCrmIntegrationService";
 import { useAuth } from "../../contexts/AuthContext";
+import { useAlerts } from "../../ui/Alerts/Alerts";
 import { APP_ROLES } from "../../constants/auth.constants";
 import {
   ChevronLeftIcon,
@@ -887,7 +889,8 @@ function DeliveryActions({ lead, onDone }) {
     try {
       await action();
       setMessage({ tone: "success", text: done });
-      onDone?.();
+      // The action itself worked; a failed reload afterwards must not read as an action error.
+      Promise.resolve(onDone?.()).catch(() => {});
     } catch (err) {
       setMessage({ tone: "error", text: err?.response?.data?.error || "The action failed. Try again." });
     } finally {
@@ -957,19 +960,45 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [timelineOffcanvasOpen, setTimelineOffcanvasOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState(() => new Date());
+  const { showAlert } = useAlerts();
 
-  useEffect(() => {
+  // quiet = a refresh: keep showing the current timeline instead of the skeleton.
+  const loadTimeline = useCallback(async ({ quiet = false } = {}) => {
     if (!lead.crm_record_id) {
       setTimelineLoading(false);
       return;
     }
-    setTimelineLoading(true);
-    adminDashboardService
-      .getLeadTimeline(lead.crm_record_id)
-      .then((rows) => setTimeline(rows || []))
-      .catch(() => setTimeline([]))
-      .finally(() => setTimelineLoading(false));
+    if (!quiet) setTimelineLoading(true);
+    try {
+      const rows = await adminDashboardService.getLeadTimeline(lead.crm_record_id);
+      setTimeline(rows || []);
+    } catch (err) {
+      if (!quiet) setTimeline([]);
+      else throw err;
+    } finally {
+      setTimelineLoading(false);
+    }
   }, [lead.crm_record_id]);
+
+  useEffect(() => {
+    loadTimeline().catch(() => {});
+  }, [loadTimeline]);
+
+  // Reloads the lead (and the list behind it) and its activity timeline.
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([onLeadChanged?.(), loadTimeline({ quiet: true })]);
+      setUpdatedAt(new Date());
+    } catch (err) {
+      showAlert("error", "Couldn't refresh this lead. Try again.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Lock background scroll while the offcanvas is open.
   useEffect(() => {
@@ -1026,11 +1055,33 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
   };
 
   return (
-    <div className="lead-detail">
-      <button type="button" className="lead-detail__back" onClick={onBack}>
-        <ChevronLeftIcon size={16} />
-        Back to Leads
-      </button>
+    <div className={`lead-detail${refreshing ? " lead-detail--refreshing" : ""}`}>
+      <div className="lead-detail__toolbar">
+        <button type="button" className="lead-detail__back" onClick={onBack}>
+          <ChevronLeftIcon size={16} />
+          Back to Leads
+        </button>
+
+        <div className="lead-detail__toolbar-end">
+          <span className="lead-detail__updated" aria-live="polite">
+            {refreshing
+              ? "Refreshing..."
+              : `Updated ${updatedAt.toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`}
+          </span>
+          <button
+            type="button"
+            className={`lead-detail__refresh${refreshing ? " lead-detail__refresh--spinning" : ""}`}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh this lead"
+            title="Reload this lead and its activity timeline"
+          >
+            <RefreshCw size={15} strokeWidth={2.2} />
+            Refresh
+          </button>
+        </div>
+        <div className="lead-detail__loadbar" aria-hidden="true" />
+      </div>
 
       {/* ========================================================== HERO ========================================================== */}
       <div className="lead-detail__hero">
@@ -1070,6 +1121,24 @@ export default function LeadDetailView({ lead, onBack, onLeadChanged }) {
               </>
             )}
           </div>
+
+          {val("enquiry_id") !== "—" && (
+            <div className="lead-detail__idrow">
+              <span className="lead-detail__idchip">
+                <span className="lead-detail__idchip-label">Enquiry ID</span>
+                <span className="lead-detail__idchip-value">{val("enquiry_id")}</span>
+                <button
+                  type="button"
+                  className="lead-detail__copy-btn"
+                  onClick={() => handleCopy("enquiry", val("enquiry_id"))}
+                  aria-label="Copy enquiry ID"
+                >
+                  <CopyIcon />
+                </button>
+                {copied === "enquiry" && <span className="lead-detail__copied-tag">Copied</span>}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="lead-detail__vehicle-highlight">
