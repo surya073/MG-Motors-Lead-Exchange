@@ -73,10 +73,18 @@ const KEPT = [
   ['Not Contacted', 'Open', 'FUSION_STATUS_KEPT_MG_STATUS'],
   ['Contacted', 'open', 'FUSION_STATUS_KEPT_MG_STATUS'],
   ['Follow-up 2', 'Open', 'FUSION_STATUS_KEPT_MG_STATUS'],
-  ['Not Contacted', 'Won', 'FUSION_STATUS_NOT_APPLIED'],
-  ['Not Contacted', 'won', 'FUSION_STATUS_NOT_APPLIED'],
-  ['Contacted', 'Delivered', 'FUSION_STATUS_NOT_APPLIED'],
 ];
+
+// Won / Delivered keep the MG status and set the outcome to Retail Order ("Purchase").
+for (const [mg, fusion] of [['Not Contacted', 'Won'], ['Not Contacted', 'won'], ['Contacted', 'Delivered']]) {
+  test(`MG ${mg} + Fusion "${fusion}" → MG status unchanged, outcome Purchase`, async (t) => {
+    const harness = harnessAt(t, mg);
+    const result = await receive(harness, body(fusion));
+    assert.equal(result.ok, true);
+    assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Outcome: 'Purchase' } }]);
+    assert.equal(harness.db.tables.leads[0].lead_status, mg);
+  });
+}
 for (const [mg, fusion, reason] of KEPT) {
   test(`MG ${mg} + Fusion "${fusion}" → MG unchanged (${reason})`, async (t) => {
     const harness = harnessAt(t, mg);

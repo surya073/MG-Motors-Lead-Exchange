@@ -165,17 +165,22 @@ test('all flags on: Happy 1, Happy 2, ownership, changes-only, exactly-once and 
   assert.equal(patched.ok, true);
   assert.deepEqual(h.calls.update.at(-1), { 'contact.areaCode': '7000' });
 
-  // A Fusion echo of its own Lost, and Won / Delivered, change nothing in MG.
-  for (const status of ['Lost', 'Won', 'Delivered']) {
-    const echo = await h.fusionSends(status);
-    assert.equal(echo.status, 200, status);
-  }
+  // A Fusion echo of its own Lost changes nothing in MG.
+  const lostEcho = await h.fusionSends('Lost');
+  assert.equal(lostEcho.status, 200);
   assert.equal(h.mgWrites.length, writesBefore);
   assert.equal(h.lead().lead_status, 'Lost Lead');
+  // Won / Delivered never touch the status: they only set the Retail Order outcome.
+  const updatesBefore = h.calls.update.length;
+  const won = await h.fusionSends('Won');
+  assert.equal(won.status, 200);
+  assert.equal(h.lead().lead_status, 'Lost Lead');
+  assert.equal(h.calls.update.length, updatesBefore, 'nothing is sent back to Fusion for its own Won');
 
   // MG itself re-opens the lead: its own status change is sent.
+  // The lead now carries the Retail Order outcome, so it goes out as Won.
   await h.mgSync({ lead_status: 'Contacted' });
-  assert.deepEqual(h.calls.update.at(-1), { enquiryStatus: 'Open' });
+  assert.deepEqual(h.calls.update.at(-1), { enquiryStatus: 'Won' });
 });
 
 test('all flags on: a failed MG write is applied exactly once on Fusion\'s redelivery', async (t) => {

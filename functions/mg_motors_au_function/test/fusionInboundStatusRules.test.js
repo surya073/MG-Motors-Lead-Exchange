@@ -78,15 +78,38 @@ test('Fusion "Open" on a lead already at Not Contacted changes nothing', async (
   assert.equal(harness.oemWrites.length, 0);
 });
 
+// Fusion Won / Delivered set MG's Enquiry Outcome to Retail Order (stored "Purchase") and
+// leave the Enquiry Status alone, like Dealer Studio's converted / delivered.
 for (const status of ['Won', 'Delivered', 'won', ' DELIVERED ']) {
-  test(`Fusion "${status}" leaves MG unchanged, without a hold or alert (Q1)`, async (t) => {
+  test(`Fusion "${status}" sets the outcome to Retail Order and leaves the status, without a hold or alert`, async (t) => {
     const harness = buckby(t, 'Contacted');
     const result = await fusionStatus(harness, status);
+    assert.equal(result.ok, true);
+    assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Outcome: 'Purchase' } }]);
+    assert.equal(harness.db.tables.leads[0].lead_status, 'Contacted', 'the status is not touched');
+    assert.equal(harness.alerts.mock.callCount(), 0, 'no alert');
+    assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED', 'not held');
+  });
+}
+
+for (const outcome of ['Purchase', 'Fleet Order', 'On-Sold', 'Lost']) {
+  test(`Fusion "Won" never replaces an outcome the lead already has (${outcome})`, async (t) => {
+    const harness = buckby(t, 'Contacted');
+    harness.db.tables.leads[0].enquiry_outcome = outcome;
+    const result = await fusionStatus(harness, 'Won');
     assert.equal(result.skipped, true);
     assert.equal(result.reason, 'FUSION_STATUS_NOT_APPLIED');
     assertUntouched(harness, 'Contacted');
   });
 }
+
+test('Fusion "Won" does move a Test Drive outcome on to Retail Order', async (t) => {
+  const harness = buckby(t, 'Contacted');
+  harness.db.tables.leads[0].enquiry_outcome = 'Test Drive';
+  const result = await fusionStatus(harness, 'Won');
+  assert.equal(result.ok, true);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Outcome: 'Purchase' } }]);
+});
 
 test('Happy 2: Fusion "Lost" on a progressed lead moves MG to Lost Lead (MG\'s "Lost")', async (t) => {
   const harness = buckby(t, 'Contacted');

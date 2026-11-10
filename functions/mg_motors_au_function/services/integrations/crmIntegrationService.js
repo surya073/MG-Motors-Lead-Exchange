@@ -2682,6 +2682,8 @@ function keepsPendingOutboundRetry(mapping) {
 
 // Fusion enquiryStatus values with no MG meaning (Q1, 13 Oct 2026).
 const FUSION_UNAPPLIED_STATUSES = new Set(['won', 'delivered']);
+// MG's stored value for the Retail Order outcome (Enquiry_Outcome picklist).
+const FUSION_WON_OUTCOME = 'Purchase';
 
 function hasProgressedBeyondWaiting(mgStatus) {
   const status = String(mgStatus ?? '').trim();
@@ -2828,16 +2830,24 @@ async function attemptInboundLeadUpdate(
         { validDestinationValues: pathPolicy.getMgLeadStatusSet() }
       );
     } catch (err) {
-      // Fusion Won / Delivered leave MG unchanged (Q1) unless an admin adds
-      // an inbound row for them. Not held: a Fusion lead cannot be read
-      // back or replayed (no getLead), so a hold would never clear.
+      // Fusion Won / Delivered have no MG status. Like Dealer Studio's converted /
+      // delivered, they set MG's Enquiry Outcome to Retail Order (stored as
+      // "Purchase") and leave the Enquiry Status alone. An outcome the lead has
+      // already moved to (Retail, Fleet, On-Sold, Lost) is never replaced. Not
+      // held: a Fusion lead cannot be read back or replayed (no getLead), so a
+      // hold would never clear. An admin inbound row for them still takes
+      // precedence (it never reaches this catch).
       if (fusionV2 && FUSION_UNAPPLIED_STATUSES.has(pathPolicy.normalizeStatus(incomingStatusValue))) {
-        logger.info(
-          'crmIntegrationService',
-          `Fusion status "${incomingStatusValue}" for lead ${mapping.zoho_lead_id} (dealer ${integration.dealer_code}) leaves MG unchanged`
-        );
-        return { skipped: true, reason: 'FUSION_STATUS_NOT_APPLIED' };
-      }
+        if (!mayApplyTestDriveOutcome(existingLeadRow.enquiry_outcome)) {
+          logger.info(
+            'crmIntegrationService',
+            `Fusion status "${incomingStatusValue}" for lead ${mapping.zoho_lead_id} (dealer ${integration.dealer_code}) leaves MG unchanged: the outcome is already "${existingLeadRow.enquiry_outcome}"`
+          );
+          return { skipped: true, reason: 'FUSION_STATUS_NOT_APPLIED' };
+        }
+        mappedUpdate.enquiry_outcome = FUSION_WON_OUTCOME;
+        isStatusSync = false;
+      } else {
       const rawStatusScenario = pathPolicy.classifyDealerStatus(incomingStatusValue);
       const heldScenarioCode = rawStatusScenario?.code === 'Unhappy 9'
         ? 'Unhappy 9'
@@ -2881,6 +2891,7 @@ async function attemptInboundLeadUpdate(
         heldValue: incomingStatusValue,
         scenarioCode: heldScenarioCode,
       };
+      }
     }
   }
 

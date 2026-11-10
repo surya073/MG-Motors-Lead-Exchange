@@ -90,14 +90,20 @@ test('Happy 2: a signed "Prospect Lost" sets MG to Not Qualified', async (t) => 
   assert.deepEqual(h.oemWrites[0].fields, { Lead_Status: 'Not Qualified' });
 });
 
-test('a signed Fusion "Open" or "Won" for a progressed lead is acknowledged and changes nothing', async (t) => {
+test('a signed Fusion "Open" for a progressed lead is acknowledged and changes nothing', async (t) => {
   const h = await buckby(t);
-  for (const status of ['Open', 'Won', 'Delivered']) {
-    const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status }));
-    assert.equal(result.status, 200, status);
-  }
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Open' }));
+  assert.equal(result.status, 200);
   assert.equal(h.oemWrites.length, 0);
   assert.equal(h.logs().length, 0);
+  assert.equal(h.alerts.mock.callCount(), 0);
+});
+
+test('a signed Fusion "Won" is acknowledged and sets the outcome to Retail Order, not the status', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Won' }));
+  assert.equal(result.status, 200);
+  assert.deepEqual(h.oemWrites.map((w) => w.fields), [{ Enquiry_Outcome: 'Purchase' }]);
   assert.equal(h.alerts.mock.callCount(), 0);
 });
 
