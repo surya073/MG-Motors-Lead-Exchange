@@ -1,11 +1,12 @@
 import { useEffect } from "react";
+import CloseButton from "../CloseButton/CloseButton";
 import "./Modal.css";
 
 /**
  * Modal.jsx
  * -----------------------------------------------------------------------
  * Generic dialog shell. Business content (a form, a detail view) is
- * passed as children â€” this component only owns backdrop/escape/close
+ * passed as children; this component only owns backdrop/escape/close
  * behavior, same pattern as Table and Badge.
  */
 export default function Modal({ title, onClose, children, width = 480 }) {
@@ -22,9 +23,7 @@ export default function Modal({ title, onClose, children, width = 480 }) {
       <div className="modal" style={{ maxWidth: width }} onClick={(event) => event.stopPropagation()}>
         <div className="modal__header">
           <h2 className="modal__title">{title}</h2>
-          <button className="modal__close" onClick={onClose} aria-label="Close">
-            Ã—
-          </button>
+          <CloseButton onClick={onClose} />
         </div>
         <div className="modal__body">{children}</div>
       </div>
