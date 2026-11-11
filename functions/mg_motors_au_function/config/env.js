@@ -395,6 +395,23 @@ function getInboundReplayIdleSkipMinutes() {
 }
 
 /**
+ * FUSION_INBOUND_EDIT_FIELDS: the MG fields a Fusion SD webhook may edit, as a
+ * comma-separated list of MG field names (the mapping's source_field). Unset means
+ * first_name, last_name and postcode. "none" turns field edits off (status only, as
+ * before). Email and phone are left out because MG owns them (DEALER_PROTECTED_FIELDS:
+ * a dealer change is held as Unhappy 6), phone also differs only in formatting; model
+ * and enquiry fields carry Fusion's own wording; consent is MG's. Name them here to
+ * allow them. Read on every call.
+ */
+const DEFAULT_FUSION_INBOUND_EDIT_FIELDS = ['first_name', 'last_name', 'postcode'];
+function getFusionInboundEditFields() {
+  const text = String(process.env.FUSION_INBOUND_EDIT_FIELDS ?? '').trim();
+  if (!text) return DEFAULT_FUSION_INBOUND_EDIT_FIELDS;
+  if (text.toLowerCase() === 'none') return [];
+  return text.split(',').map((name) => name.trim()).filter(Boolean);
+}
+
+/**
  * USAGE_LOG: each request writes one `[usage]` log line with its Data Store
  * operation counts, CRM calls and token refreshes, and every log line carries
  * the request's id (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only, no
@@ -471,6 +488,7 @@ module.exports = {
   getFusionRequestTimeoutMs,
   getDealerListCacheSeconds,
   getInboundReplayIdleSkipMinutes,
+  getFusionInboundEditFields,
   isUsageLogEnabled,
   isUsageRollupEnabled,
   getCostDashboardKey,

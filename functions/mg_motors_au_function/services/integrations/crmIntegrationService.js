@@ -2098,6 +2098,8 @@ function resolveInboundRecord(integration, externalPayload, fieldMappings) {
       externalLeadId: translated.externalLeadId,
       record,
       hasStatus: Object.prototype.hasOwnProperty.call(translated.record, translated.statusTarget),
+      hasFieldEdits: translated.fieldTargets.length > 0,
+      syntheticMappings: translated.syntheticMappings,
     };
   }
   return { externalLeadId: externalPayload.id || externalPayload.leadId, record: externalPayload, hasStatus: true };
@@ -2249,8 +2251,8 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
   const fieldMappings = await getFieldMappings(catalystApp, integration.ROWID);
   const statusMappings = await getStatusMappings(catalystApp, integration.ROWID);
 
-  const { externalLeadId, record: externalRecord, hasStatus } = resolveInboundRecord(integration, externalPayload, fieldMappings);
-  if (externalLeadId && !hasStatus) {
+  const { externalLeadId, record: externalRecord, hasStatus, hasFieldEdits, syntheticMappings = [] } = resolveInboundRecord(integration, externalPayload, fieldMappings);
+  if (externalLeadId && !hasStatus && !hasFieldEdits) {
     // A status-like field we do not read (28 Oct 2026: Fusion renamed
     // `status` to `enquiryStatus` and five updates were acknowledged unread).
     // Raised as a mapping failure so it is noticed the same day; the stored
@@ -2308,7 +2310,7 @@ async function processInboundWebhook(catalystApp, integration, externalPayload, 
 
   return processResolvedInboundLead(
     catalystApp, integration, externalLeadId, externalRecord,
-    fieldMappings, statusMappings, requestReference, zohoCrmService
+    [...fieldMappings, ...syntheticMappings], statusMappings, requestReference, zohoCrmService
   );
 }
 

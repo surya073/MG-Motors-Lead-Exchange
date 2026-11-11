@@ -160,3 +160,48 @@ test('a webhook sent with a non-JSON content type is refused (401) and changes n
   assert.equal(h.oemWrites.length, 0);
   assert.equal(h.db.tables.webhook_events.length, 0);
 });
+
+test('a signed Fusion webhook with only corrected details edits the editable MG fields', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({
+    status: undefined, contact: { firstName: 'Corrected', lastName: 'Person', areaCode: '3999', phone: '0400999888' },
+  }));
+  assert.equal(result.status, 200);
+  assert.notEqual(result.body.result?.reason, 'NO_STATUS_IN_WEBHOOK');
+  const written = Object.assign({}, ...h.oemWrites.map((w) => w.fields));
+  assert.equal(written.First_Name, 'Corrected');
+  assert.equal(written.Last_Name, 'Person');
+  assert.equal(written.Postcode, '3999');
+  assert.ok(!Object.values(written).includes('0400999888'), 'phone is not an editable field');
+});
+
+test('a Fusion email change is not taken by default (MG owns it); nothing is written', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({
+    status: undefined, contact: { email: 'other@example.com' },
+  }));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.result.reason, 'NO_STATUS_IN_WEBHOOK');
+  assert.equal(h.oemWrites.length, 0);
+});
+
+test('FUSION_INBOUND_EDIT_FIELDS=none keeps Fusion webhooks status-only', async (t) => {
+  process.env.FUSION_INBOUND_EDIT_FIELDS = 'none';
+  t.after(() => { delete process.env.FUSION_INBOUND_EDIT_FIELDS; });
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({
+    status: undefined, contact: { firstName: 'Corrected' },
+  }));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.result.reason, 'NO_STATUS_IN_WEBHOOK');
+  assert.equal(h.oemWrites.length, 0);
+});
+
+test('a status and corrected details in one webhook apply both', async (t) => {
+  const h = await buckby(t);
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost', contact: { areaCode: '2000' } }));
+  assert.equal(result.status, 200);
+  const written = Object.assign({}, ...h.oemWrites.map((w) => w.fields));
+  assert.equal(written.Lead_Status, 'Lost Lead');
+  assert.equal(written.Postcode, '2000');
+});

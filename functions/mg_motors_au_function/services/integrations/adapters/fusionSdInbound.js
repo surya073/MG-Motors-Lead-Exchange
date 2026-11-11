@@ -25,7 +25,22 @@
  * name is read, the spec's first.
  */
 
+const { getFusionInboundEditFields } = require('../../../config/env');
+
 const DEFAULT_STATUS_TARGET = 'enquiryStatus';
+const CUSTOMER_NAME_TARGET = '__customerName';
+
+// Fusion's body is nested ({ contact: { firstName } }) while the mapping names the
+// field with a dotted path ("contact.firstName"); a flat dotted key is read too.
+function valueAtPath(body, path) {
+  if (Object.prototype.hasOwnProperty.call(body, path)) return body[path];
+  let current = body;
+  for (const part of String(path).split('.')) {
+    if (current === null || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) return undefined;
+    current = current[part];
+  }
+  return current;
+}
 
 function text(value) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
@@ -49,6 +64,33 @@ function translateFusionWebhook(payload, fieldMappings = []) {
   const pushedAt = text(body.pushed_at);
   if (pushedAt !== null && Object.keys(record).length > 0) record.modified_at = pushedAt;
 
+  // Field edits (contact details the dealer corrected). Only the fields allowed by
+  // FUSION_INBOUND_EDIT_FIELDS, only those the dealer's own map names, and only a
+  // real value: null or blank means unknown, not "clear it".
+  const editable = new Set(getFusionInboundEditFields());
+  const fieldTargets = [];
+  const syntheticMappings = [];
+  const nameParts = {};
+  for (const mapping of fieldMappings) {
+    if (!editable.has(mapping.source_field) || !mapping.target_field) continue;
+    const value = text(valueAtPath(body, mapping.target_field));
+    if (value === null) continue;
+    // MG holds one name (Zoho's First_Name and Last_Name are written from customer_name),
+    // so the two parts count only when both arrive in the same webhook.
+    if (mapping.source_field === 'first_name' || mapping.source_field === 'last_name') {
+      nameParts[mapping.source_field] = value;
+      continue;
+    }
+    record[mapping.target_field] = value;
+    fieldTargets.push(mapping.target_field);
+  }
+  if (nameParts.first_name && nameParts.last_name) {
+    record[CUSTOMER_NAME_TARGET] = `${nameParts.first_name} ${nameParts.last_name}`;
+    fieldTargets.push(CUSTOMER_NAME_TARGET);
+    syntheticMappings.push({ source_field: 'customer_name', target_field: CUSTOMER_NAME_TARGET, data_type: 'string', required: false });
+  }
+  if (pushedAt !== null && fieldTargets.length > 0 && !('modified_at' in record)) record.modified_at = pushedAt;
+
   // Why it was lost (28 Oct 2026). Kept apart from the mapped record: it is
   // written to MG's lost-reason fields only when the status lands as Lost.
   const lostReason = status !== null ? text(body.lostReason) : null;
@@ -59,6 +101,8 @@ function translateFusionWebhook(payload, fieldMappings = []) {
     dealerId: text(body.dealer_id),
     record,
     statusTarget,
+    fieldTargets,
+    syntheticMappings,
     lost: lostReason !== null ? { reason: lostReason, subReason: lostSubReason, at: pushedAt } : null,
   };
 }
