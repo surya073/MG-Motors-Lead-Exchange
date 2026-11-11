@@ -1,5 +1,9 @@
 'use strict';
 
+// These tests count Data Store reads of one full sweep, so the replay idle skip
+// (its two extra checks) is off here; test/inboundReplayIdleSkip.test.js covers it.
+process.env.INBOUND_REPLAY_IDLE_SKIP_MINUTES = '0';
+
 for (const key of ['ZOHO_CLIENT_ID', 'ZOHO_CLIENT_SECRET', 'ZOHO_REFRESH_TOKEN', 'ZOHO_WEBHOOK_TOKEN']) process.env[key] = process.env[key] || 'test-fixture';
 process.env.ZOHO_API_DOMAIN = process.env.ZOHO_API_DOMAIN || 'https://www.zohoapis.in';
 process.env.ZOHO_ACCOUNTS_DOMAIN = process.env.ZOHO_ACCOUNTS_DOMAIN || 'https://accounts.zoho.in';

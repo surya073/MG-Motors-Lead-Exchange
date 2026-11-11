@@ -1,6 +1,7 @@
 'use strict';
 
 const logger = require('../../utils/logger');
+const { getInboundReplayIdleSkipMinutes } = require('../../config/env');
 const crmIntegrationService = require('./crmIntegrationService');
 const crmAdapterFactory = require('./crmAdapterFactory');
 const { guardSweep } = require('./sweepOverlapGuard');
@@ -252,8 +253,75 @@ async function selectReplayCandidates(catalystApp, now = Date.now(), windowSeque
   return [...head, ...tailRows.filter((r) => !seen.has(r[INTEGRATION_LOGS_TABLE].ROWID))];
 }
 
+// Idle skip (cost). Most sweeps find the same held rows, all backed off or waiting
+// for a status mapping, and do nothing, yet each re-reads up to 200 of them. After
+// such a sweep the next ones on this instance only run two one-row checks (the
+// held-row count and the latest status-mapping change) and skip the full read while
+// both are unchanged, no backoff or retention time has arrived, and the memo is
+// younger than INBOUND_REPLAY_IDLE_SKIP_MINUTES. Anything else (a new or closed
+// held row, an edited status map, a due backoff) runs the full sweep as before. A
+// change this does not watch (a held lead's mapping resolving, a dealer becoming
+// replayable) is picked up when the memo expires.
+let idleMemo = null; // { count, mapVersion, until }
+
+function resetIdleMemo() {
+  idleMemo = null;
+}
+
+async function readIdleProbes(catalystApp) {
+  const countRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE}`
+  );
+  const mapRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT MODIFIEDTIME FROM ${STATUS_MAPPINGS_TABLE} ORDER BY MODIFIEDTIME DESC LIMIT 1`
+  );
+  return {
+    count: countFrom(countRows, INTEGRATION_LOGS_TABLE),
+    mapVersion: mapRows.length ? String(mapRows[0][STATUS_MAPPINGS_TABLE].MODIFIEDTIME || '') : '',
+  };
+}
+
+/** When this held record could next need a replay or expiry because time passed (ms; 0 = now). */
+function groupDueAt(logRows, state) {
+  if (state.retentionExceeded) return 0;
+  let due = Infinity;
+  if (logRows.every(isOutOfOrderHold) && state.heldSinceAt) {
+    due = state.heldSinceAt.getTime() + UNHAPPY_7_RETENTION_MINUTES * 60000;
+  }
+  if (!state.mappingFailuresOnly || readMappingAttempt(logRows[0])?.retry) {
+    const lastTriedAt = parseSystemTimestamp(logRows[0].MODIFIEDTIME);
+    if (!lastTriedAt) return 0;
+    const interval = Math.min(
+      MAX_REPLAY_INTERVAL_MINUTES,
+      Math.max(MIN_REPLAY_INTERVAL_MINUTES, Math.floor(state.waitedMinutes / 2))
+    );
+    due = Math.min(due, lastTriedAt.getTime() + interval * 60000);
+  }
+  return due;
+}
+
+function sweepWasIdle(results) {
+  return ['attempted', 'recovered', 'closedRows', 'closedUnreplayable', 'expired', 'terminal',
+    'failed', 'dealerBudgetExhausted', 'deferred'].every((key) => !results[key]);
+}
+
 async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequence } = {}) {
   if (budgetSpent(deadline)) return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
+  const idleSkipMinutes = getInboundReplayIdleSkipMinutes();
+  let probes = null;
+  if (idleSkipMinutes > 0) {
+    try {
+      probes = await readIdleProbes(catalystApp);
+      if (idleMemo && Date.now() < idleMemo.until
+        && idleMemo.count === probes.count && idleMemo.mapVersion === probes.mapVersion) {
+        return { skipped: true, reason: 'REPLAY_IDLE_UNCHANGED', held: probes.count };
+      }
+    } catch (err) {
+      probes = null;
+      logger.error('inboundReplayScheduler', 'Idle checks could not be read; running the full sweep', err);
+    }
+    idleMemo = null;
+  }
   const queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence);
   const results = {
     queued: queuedRows.length,
@@ -298,6 +366,8 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     groups.get(key).push(logRow);
   }
   results.leads = groups.size;
+  let nextDueAt = Infinity;
+  for (const logRows of groups.values()) nextDueAt = Math.min(nextDueAt, groupDueAt(logRows, holdState(logRows)));
 
   const integrationCache = new Map();
   const statusMapChangedAt = new Map();
@@ -522,6 +592,9 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     }
   }
 
+  if (probes && sweepWasIdle(results)) {
+    idleMemo = { ...probes, until: Math.min(nextDueAt, Date.now() + idleSkipMinutes * 60000) };
+  }
   logger.info('inboundReplayScheduler', `Sweep complete: ${JSON.stringify(results)}`);
   return results;
 }
@@ -530,4 +603,4 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
 // sweepOverlapGuard.js. Exported name/signature unchanged.
 const runInboundReplaySweep = guardSweep('inboundReplaySweep', withMappingCache(runInboundReplaySweepInternal));
 
-module.exports = { runInboundReplaySweep, _test: { selectReplayCandidates, HEAD_ROWS, TAIL_ROWS } };
+module.exports = { runInboundReplaySweep, _test: { selectReplayCandidates, HEAD_ROWS, TAIL_ROWS, resetIdleMemo } };

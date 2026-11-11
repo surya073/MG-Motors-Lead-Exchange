@@ -383,6 +383,18 @@ function getDealerListCacheSeconds() {
 }
 
 /**
+ * INBOUND_REPLAY_IDLE_SKIP_MINUTES: after an inbound replay sweep that did nothing,
+ * the next sweeps on that instance skip the full read of held rows while two cheap
+ * checks (held-row count, latest status-mapping change) are unchanged and no
+ * backoff or retention time has arrived, for at most this many minutes. Unset, or
+ * not a whole number, means 30; 0 turns it off. Read on every call.
+ */
+function getInboundReplayIdleSkipMinutes() {
+  const text = String(process.env.INBOUND_REPLAY_IDLE_SKIP_MINUTES ?? '').trim();
+  return /^\d+$/.test(text) ? Number(text) : 30;
+}
+
+/**
  * USAGE_LOG: each request writes one `[usage]` log line with its Data Store
  * operation counts, CRM calls and token refreshes, and every log line carries
  * the request's id (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only, no
@@ -458,6 +470,7 @@ module.exports = {
   getFusionTokenTimeoutMs,
   getFusionRequestTimeoutMs,
   getDealerListCacheSeconds,
+  getInboundReplayIdleSkipMinutes,
   isUsageLogEnabled,
   isUsageRollupEnabled,
   getCostDashboardKey,
