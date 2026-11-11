@@ -2222,13 +2222,41 @@ async function processInboundWebhookForDealerStudio(catalystApp, integration, ex
   ];
   const record = translated.lost ? { ...translated.record, [FUSION_LOST_DETAIL]: translated.lost } : translated.record;
 
+  // A cluster can hold several leads (Dealer Studio groups leads that share a contact
+  // detail) but carries ONE set of contact fields: the name, postcode, opt-in and car
+  // are those of the latest lead. Status and outcome belong to the cluster and go to
+  // every lead in it; the contact fields go only to the lead they belong to (the one
+  // MG's enquiry id names in `provider`), or to the only lead there is. With several
+  // leads and no way to tell, they are not applied: renaming the others was the bug
+  // (11 Nov 2026, "lead 17" written over leads 13, 15 and 16).
+  const editKeys = new Set(translated.fieldEdits.map(({ source }) =>
+    fieldMappings.find((m) => m.source_field === source)?.target_field || `__ds_${source}`));
+  let editOwners = null; // null = every target takes the edits
+  if (editKeys.size > 0 && targets.length > 1) {
+    const owners = await leadIdsByProviderId(catalystApp, integration, translated.provider);
+    editOwners = new Set(owners.filter((id) => targets.includes(id)));
+    if (editOwners.size === 0) {
+      logger.info(
+        'crmIntegrationService',
+        `Dealer Studio cluster ${translated.clusterId || 'unknown'} (dealer ${integration.dealer_code}) covers ${targets.length} leads and names no owner: contact field edits not applied`
+      );
+    }
+  }
+
   const results = [];
   for (const externalLeadId of targets) {
+    const leadRecord = { ...record };
+    if (editOwners && !editOwners.has(String(externalLeadId))) {
+      editKeys.forEach((key) => { delete leadRecord[key]; });
+      // Nothing left for this lead (only contact edits were in the post).
+      if (!Object.keys(leadRecord).some((key) => key !== 'modified_at')) continue;
+    }
     results.push(await processResolvedInboundLead(
-      catalystApp, integration, externalLeadId, { ...record },
+      catalystApp, integration, externalLeadId, leadRecord,
       inboundMappings, statusMappings, requestReference, zohoCrmService
     ));
   }
+  if (results.length === 0) return { ok: true, skipped: true, reason: 'CLUSTER_EDITS_NOT_ASSIGNED' };
   if (results.length === 1) return results[0];
   const pending = results.find((result) => result?.held && !result?.terminal);
   return {

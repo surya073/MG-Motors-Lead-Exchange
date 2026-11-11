@@ -696,3 +696,49 @@ test('missing contact values never clear anything in MG', async (t) => {
   assert.deepEqual(result, { ok: true, skipped: true, reason: 'NO_STATUS_IN_WEBHOOK' });
   assert.deepEqual(harness.oemWrites, []);
 });
+
+// ------------------------------------------- a cluster of several leads: contact edits go to one lead only
+
+// Dealer Studio groups leads that share a contact detail and posts ONE name for the group.
+// A second MG lead (ZL2, Dealer Studio lead 100002) is added to the cluster.
+function clusterHarness(t) {
+  const harness = harnessFor(t);
+  harness.db.tables.leads.push({ ...harness.db.tables.leads[0], crm_record_id: 'ZL2', enquiry_id: 'ENQ-2', customer_name: 'Other Person' });
+  harness.db.tables.lead_integrations.push({ ...harness.db.tables.lead_integrations[0], zoho_lead_id: 'ZL2', external_crm_lead_id: '100002' });
+  return harness;
+}
+const clusterPost = (body) => ({ id: 200001, leads: [{ id: DS_LEAD_ID }, { id: '100002' }], ...body });
+const nameOf = (harness, id) => harness.db.tables.leads.find((row) => row.crm_record_id === id).customer_name;
+
+test('cluster of two leads, no owner named: the status reaches both, the contact name reaches neither', async (t) => {
+  const harness = clusterHarness(t);
+  await receive(harness, clusterPost({ status_type: 'Working', contact: { first_name: 'Janet', last_name: 'Latest' } }));
+  assert.equal(harness.db.tables.leads.find((row) => row.crm_record_id === 'ZL1').lead_status, 'Contacted');
+  assert.equal(harness.db.tables.leads.find((row) => row.crm_record_id === 'ZL2').lead_status, 'Contacted');
+  assert.equal(nameOf(harness, 'ZL1'), 'Jane Citizen');
+  assert.equal(nameOf(harness, 'ZL2'), 'Other Person');
+});
+
+test('cluster of two leads: a contact-only post with no owner changes nothing and says so', async (t) => {
+  const harness = clusterHarness(t);
+  const result = await receive(harness, clusterPost({ contact: { first_name: 'Janet', last_name: 'Latest' } }));
+  assert.deepEqual(result, { ok: true, skipped: true, reason: 'CLUSTER_EDITS_NOT_ASSIGNED' });
+  assert.deepEqual(harness.oemWrites, []);
+});
+
+test('cluster of two leads: the lead named by the enquiry id takes the contact name, the other keeps its own', async (t) => {
+  const harness = clusterHarness(t);
+  await receive(harness, clusterPost({
+    provider: { name: 'MG Leads Exchange', provider_id: 'ENQ-2' },
+    status_type: 'Working', contact: { first_name: 'Janet', last_name: 'Latest' },
+  }));
+  assert.equal(nameOf(harness, 'ZL2'), 'Janet Latest');
+  assert.equal(nameOf(harness, 'ZL1'), 'Jane Citizen');
+  assert.equal(harness.db.tables.leads.find((row) => row.crm_record_id === 'ZL1').lead_status, 'Contacted');
+});
+
+test('a cluster of one lead still takes the contact name as before', async (t) => {
+  const harness = harnessFor(t);
+  await receive(harness, edited({ contact: { first_name: 'Janet', last_name: 'Solo' } }));
+  assert.equal(harness.db.tables.leads[0].customer_name, 'Janet Solo');
+});
