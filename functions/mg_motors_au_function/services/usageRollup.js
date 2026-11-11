@@ -84,6 +84,13 @@ function record(line, now = Date.now()) {
   if (!hourly.components[name]) hourly.components[name] = emptyComponent();
   addInto(hourly.components[name], line);
   for (const [org, value] of Object.entries(line.credits || {})) hourly.credits[org] = value;
+  // Data Store work per fast-recover stage, kept as "<route>#<stage>" components
+  // (requests 0, so request totals do not double count; ds is a subset of the route's).
+  for (const [stage, ds] of Object.entries(line.stages || {})) {
+    const key = `${name}#${stage}`;
+    if (!hourly.components[key]) hourly.components[key] = emptyComponent();
+    addInto(hourly.components[key], { requests: 0, ds });
+  }
   // The module's own insert is saved with the next real total; it never
   // starts a save by itself, or the module would keep saving its saves.
   if (name !== COST_MODULE) {
