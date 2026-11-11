@@ -144,6 +144,7 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
     stillFailing: 0,
     skippedNotDue: 0,
     skippedNoIntegrationOrLead: 0,
+    skippedPushPaused: 0,
     errored: 0,
     heldReasons: {},
   };
@@ -187,6 +188,18 @@ async function runOutboundRetrySweepInternal(catalystApp, options) {
   const processOne = async (mapping) => {
     try {
       const integration = await getIntegration(mapping.integration_id);
+
+      // A dealer whose Push leads switch is OFF takes no new leads, so a lead that was
+      // never delivered cannot be recovered until it is switched ON again. Passing it
+      // over here saves the lead read and the whole send path, which only ended in
+      // the same DEALER_PUSH_PAUSED hold, writing nothing. A lead that is already in
+      // the dealer CRM (it has a dealer lead id) is still retried: its updates keep
+      // flowing while paused. The integration row is read afresh each sweep, so
+      // switching Push ON again sends the held leads on the next run.
+      if (integration && crmIntegrationService.isDealerPushPaused(integration) && !mapping.external_crm_lead_id) {
+        results.skippedPushPaused += 1;
+        return;
+      }
 
       const leadRows = await catalystApp.zcql().executeZCQLQuery(
         `SELECT * FROM ${LEADS_TABLE} WHERE crm_record_id = '${safeQuoteForZcql(mapping.zoho_lead_id)}' LIMIT 1`

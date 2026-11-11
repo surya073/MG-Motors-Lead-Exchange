@@ -229,11 +229,11 @@ async function prefetchLeadMappings(catalystApp, holds) {
  *   - a replay that is still failing is silent (no new log, no new alert);
  *     the original Unhappy 4 stays the single open record.
  */
-async function selectReplayCandidates(catalystApp, now = Date.now(), windowSequence) {
+async function selectReplayCandidates(catalystApp, now = Date.now(), windowSequence, where = REPLAY_CANDIDATE_WHERE) {
   // ZCQL's LIMIT offset is effectively 1-based; offset + 1 is a true 0-based offset.
   const slice = (offset, size) =>
     catalystApp.zcql().executeZCQLQuery(
-      `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE} ORDER BY CREATEDTIME ASC, ROWID ASC LIMIT ${offset + 1}, ${size}`
+      `SELECT * FROM ${INTEGRATION_LOGS_TABLE} ${where} ORDER BY CREATEDTIME ASC, ROWID ASC LIMIT ${offset + 1}, ${size}`
     );
 
   const head = await slice(0, HEAD_ROWS);
@@ -241,7 +241,7 @@ async function selectReplayCandidates(catalystApp, now = Date.now(), windowSeque
 
   const total = countFrom(
     await catalystApp.zcql().executeZCQLQuery(
-      `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE}`
+      `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${where}`
     ),
     INTEGRATION_LOGS_TABLE
   );
@@ -251,6 +251,49 @@ async function selectReplayCandidates(catalystApp, now = Date.now(), windowSeque
   const tailRows = await slice(tail.offset, TAIL_ROWS);
   const seen = new Set(head.map((r) => r[INTEGRATION_LOGS_TABLE].ROWID));
   return [...head, ...tailRows.filter((r) => !seen.has(r[INTEGRATION_LOGS_TABLE].ROWID))];
+}
+
+// Held rows of a removed dealer can never be replayed: nothing is mapped to MG any more
+// (AU008 held 319 of 326 rows, some since 23 Sep, and each sweep re-read and re-tried
+// them). They are left out of the candidate query, not closed or rewritten. The set is
+// read afresh on every sweep, so a dealer that is brought back (no longer Removed) has
+// its held rows picked up again on the next sweep. A dealer is left out only when every
+// one of its dealer rows says Removed. If this cannot be read, nothing is left out and
+// the sweep runs as before.
+const MAX_EXCLUDED_INTEGRATIONS = 90;
+
+async function removedDealerIntegrationIds(catalystApp) {
+  try {
+    const removedRows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT dealer_code FROM dealers WHERE sync_status = 'Removed' LIMIT 1, 300`
+    );
+    const removedCodes = [...new Set(removedRows.map((wrapped) => String(wrapped.dealers?.dealer_code || '')).filter(Boolean))];
+    if (removedCodes.length === 0) return [];
+    const quoted = removedCodes.slice(0, MAX_EXCLUDED_INTEGRATIONS).map((code) => `'${safeQuoteForZcql(code)}'`).join(', ');
+    const allRows = (await catalystApp.zcql().executeZCQLQuery(
+      `SELECT dealer_code, sync_status FROM dealers WHERE dealer_code IN (${quoted})`
+    )).map((wrapped) => wrapped.dealers);
+    const stillActive = new Set(allRows
+      .filter((row) => String(row.sync_status || '').toLowerCase() !== 'removed')
+      .map((row) => String(row.dealer_code)));
+    const codes = removedCodes.filter((code) => !stillActive.has(code));
+    if (codes.length === 0) return [];
+    const integrationRows = await catalystApp.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM ${DEALER_INTEGRATIONS_TABLE} WHERE dealer_code IN (${codes.slice(0, MAX_EXCLUDED_INTEGRATIONS).map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`
+    );
+    return [...new Set(integrationRows
+      .map((wrapped) => String(wrapped[DEALER_INTEGRATIONS_TABLE]?.ROWID || '').replace(/\D/g, ''))
+      .filter(Boolean))].slice(0, MAX_EXCLUDED_INTEGRATIONS);
+  } catch (err) {
+    logger.error('inboundReplayScheduler', 'Could not read removed dealers; no dealer is left out of this sweep', err);
+    return [];
+  }
+}
+
+function replayWhere(excludedIntegrationIds) {
+  return excludedIntegrationIds.length
+    ? `${REPLAY_CANDIDATE_WHERE} AND integration_id NOT IN (${excludedIntegrationIds.map((id) => `'${id}'`).join(', ')})`
+    : REPLAY_CANDIDATE_WHERE;
 }
 
 // Idle skip (cost). Most sweeps find the same held rows, all backed off or waiting
@@ -268,9 +311,9 @@ function resetIdleMemo() {
   idleMemo = null;
 }
 
-async function readIdleProbes(catalystApp) {
+async function readIdleProbes(catalystApp, where = REPLAY_CANDIDATE_WHERE) {
   const countRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE}`
+    `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${where}`
   );
   const mapRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT MODIFIEDTIME FROM ${STATUS_MAPPINGS_TABLE} ORDER BY MODIFIEDTIME DESC LIMIT 1`
@@ -307,11 +350,12 @@ function sweepWasIdle(results) {
 
 async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequence } = {}) {
   if (budgetSpent(deadline)) return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
+  const where = replayWhere(await removedDealerIntegrationIds(catalystApp));
   const idleSkipMinutes = getInboundReplayIdleSkipMinutes();
   let probes = null;
   if (idleSkipMinutes > 0) {
     try {
-      probes = await readIdleProbes(catalystApp);
+      probes = await readIdleProbes(catalystApp, where);
       if (idleMemo && Date.now() < idleMemo.until
         && idleMemo.count === probes.count && idleMemo.mapVersion === probes.mapVersion) {
         return { skipped: true, reason: 'REPLAY_IDLE_UNCHANGED', held: probes.count };
@@ -322,7 +366,7 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     }
     idleMemo = null;
   }
-  const queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence);
+  const queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence, where);
   const results = {
     queued: queuedRows.length,
     leads: 0,

@@ -77,7 +77,7 @@ test('replay, live shape (30 awaiting a mapping, 20 backed off): 4 reads instead
   assert.equal(send.mock.callCount(), 0);
   assert.deepEqual(writes(ds), NO_WRITES);
   assert.deepEqual(db.tables, before);
-  assert.ok(ds.fetch <= 4, `fetches: ${ds.fetch}`);
+  assert.ok(ds.fetch <= 5, `fetches: ${ds.fetch}`); // 4 plus the removed-dealer lookup
 });
 
 test('replay: more than one IN-list chunk of mapping-only holds still decides each one correctly', async (t) => {
@@ -100,7 +100,7 @@ test('replay: holds of a missing integration wait without a mapping read each', 
   const { result, ds } = await counted(() => replay.runInboundReplaySweep(usageContext.instrument(db.app)));
   assert.equal(result.stillWaiting, 10);
   assert.deepEqual(writes(ds), NO_WRITES);
-  assert.ok(ds.fetch <= 2, `fetches: ${ds.fetch}`);
+  assert.ok(ds.fetch <= 3, `fetches: ${ds.fetch}`); // plus the removed-dealer lookup
 });
 
 test('replay: an out-of-order hold past retention re-reads its mapping before expiring it', async (t) => {

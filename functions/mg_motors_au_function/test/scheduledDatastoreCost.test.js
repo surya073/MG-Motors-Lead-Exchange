@@ -31,7 +31,7 @@ test('ordinary replay backoff avoids all mapping/dealer reads and writes', async
   assert.equal(result.backedOff, 1);
   assert.equal(send.mock.callCount(), 0);
   assert.deepEqual(db.tables, before);
-  assert.equal(db.queries.length, 1, 'only the durable queue is sampled');
+  assert.equal(db.queries.length, 2, 'the durable queue is sampled, after one lookup of removed dealers');
 });
 
 test('expiry bypasses ordinary replay backoff and closes a missing-link out-of-order hold', async (t) => {
