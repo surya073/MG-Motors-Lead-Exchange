@@ -6,6 +6,7 @@ const { toCatalystDateTime } = require('../utils/dateFormat');
 const logger = require('../utils/logger');
 const dashboardStats = require('./dashboardStatsService');
 const operationClaims = require('./integrations/integrationOperationClaimService');
+const dealerListCache = require('./dealerListCache');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_ROW_BOUND = 50000;
@@ -133,6 +134,7 @@ async function syncDealers(catalystApp, { trigger = 'Manual', triggeredBy = 'Sys
     recordsFailed: failed, status, errorDetails: errors.length > 0 ? errors : null,
   });
 
+  dealerListCache.clear();
   return { status, totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated, recordsFailed: failed, recordsRemoved: removed, errors };
 }
 

@@ -373,6 +373,16 @@ function getFusionRequestTimeoutMs() {
 }
 
 /**
+ * DEALER_LIST_CACHE_SECONDS: how long GET /admin/dealers may reuse its last answer
+ * in a function instance's memory. Unset, or not a whole number, means 60; 0 turns
+ * the cache off. Read on every call.
+ */
+function getDealerListCacheSeconds() {
+  const text = String(process.env.DEALER_LIST_CACHE_SECONDS ?? '').trim();
+  return /^\d+$/.test(text) ? Number(text) : 60;
+}
+
+/**
  * USAGE_LOG: each request writes one `[usage]` log line with its Data Store
  * operation counts, CRM calls and token refreshes, and every log line carries
  * the request's id (COST_OPTIMIZATION_PLAN.md, Batch 1). Logging only, no
@@ -447,6 +457,7 @@ module.exports = {
   isFusionTokenRetryEnabled,
   getFusionTokenTimeoutMs,
   getFusionRequestTimeoutMs,
+  getDealerListCacheSeconds,
   isUsageLogEnabled,
   isUsageRollupEnabled,
   getCostDashboardKey,

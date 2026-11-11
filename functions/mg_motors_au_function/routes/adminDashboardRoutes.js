@@ -24,6 +24,7 @@ const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
 const { withCrmApiLimit } = require('../services/integrations/crmApiConcurrencyLimiter');
 const aiAssistantToolService = require('../services/aiAssistantToolService');
 const logger = require('../utils/logger');
+const dealerListCache = require('../services/dealerListCache');
 const { adminSuggestions } = require('../services/searchSuggestionsService');
 
 const router = express.Router();
@@ -50,7 +51,9 @@ router.get('/admin/search-suggestions', requireAdminOrViewRole, async (req, res)
 // file stays on requireAdminRole, unchanged.
 router.get('/admin/dealers', requireAdminOrViewRole, async (req, res) => {
   try {
-    const dealers = await getAllDealersWithLeadCounts(res.locals.catalystApp);
+    const catalystApp = res.locals.catalystApp;
+    // Reused for DEALER_LIST_CACHE_SECONDS (60) so repeated opens do not re-read the table.
+    const dealers = await dealerListCache.getOrLoad(() => getAllDealersWithLeadCounts(catalystApp));
     res.status(200).json({ success: true, count: dealers.length, dealers });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'GET /admin/dealers failed', err);
@@ -347,6 +350,7 @@ router.delete('/admin/dealers/:dealerCode', requireAdminRole, async (req, res) =
   try {
     const catalystApp = res.locals.catalystApp;
     const result = await removeDealerUser(catalystApp, req.params.dealerCode);
+    dealerListCache.clear();
     res.status(200).json({ success: true, ...result });
   } catch (err) {
     logger.error('adminDashboardRoutes', 'DELETE /admin/dealers/:dealerCode failed', err);
