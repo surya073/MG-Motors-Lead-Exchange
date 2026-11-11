@@ -106,6 +106,24 @@ test('replay: a dealer with one Removed row and one Active row is not left out',
   assert.equal((await sweep(db)).result.queued, 15);
 });
 
+test('replay: held rows of a DELETED dealer (no dealer or integration row left) are retired once, then no longer read', async (t) => {
+  const db = replayDb();
+  const send = t.mock.method(crm, 'replayInboundLead', async () => ({ ok: true }));
+  db.tables.dealers = db.tables.dealers.filter((row) => row.dealer_code !== 'AU008');
+  db.tables.dealer_integrations = db.tables.dealer_integrations.filter((row) => row.dealer_code !== 'AU008');
+  // The in-memory ROWIDs are positional: the live dealer is now integration 1000, so rewrite the ids.
+  db.tables.integration_logs.forEach((row) => { if (row.integration_id === '1001') row.integration_id = '1000'; });
+  db.tables.lead_integrations.forEach((row) => { if (row.integration_id === '1001') row.integration_id = '1000'; });
+  db.tables.integration_logs.filter((row) => row.integration_id === '1000' && row.external_lead_id.startsWith('R')).forEach((row) => { row.integration_id = '4242'; });
+  const first = await sweep(db);
+  assert.equal(first.result.closedUnreplayable, 12);
+  assert.ok(db.tables.integration_logs.filter((row) => row.external_lead_id.startsWith('R')).every((row) => row.status === 'EXPIRED'));
+  assert.ok(db.tables.integration_logs.filter((row) => row.external_lead_id.startsWith('L')).every((row) => row.status === 'FAILED' || row.status === 'RECOVERED'));
+  const second = await sweep(db);
+  assert.ok(second.result.queued <= 3, `queued: ${second.result.queued}`);
+  assert.ok(send.mock.calls.every((call) => String(call.arguments[2]).startsWith('L')));
+});
+
 // ---------------------------------------------------------------- outbound: Push leads OFF
 
 function outboundDb({ pushEnabled, externalId = '' }) {

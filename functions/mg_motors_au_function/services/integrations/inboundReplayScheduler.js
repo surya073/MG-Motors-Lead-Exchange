@@ -496,6 +496,26 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
       if (!retentionExceeded) {
         let known;
         try { known = await getIntegration(integrationId); } catch (_) { known = undefined; }
+        if (known === null) {
+          // The dealer integration was deleted (read succeeded, no row): these rows can
+          // never be replayed, and a new connection gets a new id. Retire the replay
+          // references so every sweep stops re-reading them, as terminal rows are
+          // retired below; the audit rows and their original reason stay.
+          try {
+            for (const logRow of logRows) {
+              await catalystApp.datastore().table(INTEGRATION_LOGS_TABLE).updateRow({
+                ROWID: logRow.ROWID,
+                status: 'EXPIRED',
+                error_message: `${logRow.error_message || ''} | closed: dealer integration no longer exists`.slice(0, 500),
+              });
+              results.closedUnreplayable += 1;
+            }
+          } catch (closeErr) {
+            logger.error('inboundReplayScheduler', `Could not retire held rows of deleted integration ${integrationId}`, closeErr);
+            results.stillWaiting += 1;
+          }
+          continue;
+        }
         if (known !== undefined && !isReplayable(known)) {
           results.stillWaiting += 1;
           continue;

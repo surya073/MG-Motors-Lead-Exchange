@@ -93,13 +93,15 @@ test('replay: more than one IN-list chunk of mapping-only holds still decides ea
   assert.ok(ds.fetch <= 6, `fetches: ${ds.fetch}`);
 });
 
-test('replay: holds of a missing integration wait without a mapping read each', async (t) => {
+test('replay: holds of a deleted integration are retired without a mapping read each', async (t) => {
   _resetForTests();
   const db = liveQueue({ mappingOnly: 0, backedOff: 10, integrations: [] });
   db.tables.integration_logs.forEach((row) => { row.MODIFIEDTIME = systemTime(Date.now() - 120 * 60000); });
   const { result, ds } = await counted(() => replay.runInboundReplaySweep(usageContext.instrument(db.app)));
-  assert.equal(result.stillWaiting, 10);
-  assert.deepEqual(writes(ds), NO_WRITES);
+  assert.equal(result.closedUnreplayable, 10);
+  assert.equal(result.stillWaiting, 0);
+  assert.equal(ds.update, 10, 'one write per retired row');
+  assert.ok(db.tables.integration_logs.every((row) => row.status === 'EXPIRED' && /no longer exists/.test(row.error_message)));
   assert.ok(ds.fetch <= 3, `fetches: ${ds.fetch}`); // plus the removed-dealer lookup
 });
 
