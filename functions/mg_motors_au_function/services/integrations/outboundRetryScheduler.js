@@ -281,6 +281,8 @@ const MAX_ROUTING_HOLDS_PER_SWEEP = 20;
 // Each routable dealer's share of one sweep's budget in the first pass (fairness).
 const ROUTING_HOLDS_PER_DEALER_PER_SWEEP = 5;
 const UNROUTABLE_INTEGRATION_STATUSES = ['NOT_CONFIGURED', 'CONFIGURING', 'DISABLED'];
+// Dealer codes per held-lead count query (ZCQL IN lists of 99 values are verified).
+const ROUTING_HOLD_COUNT_CHUNK = 90;
 
 /**
  * Unhappy 5 is "held as a routing exception until the mapping is corrected,
@@ -311,22 +313,14 @@ async function reprocessRoutingHolds(catalystApp, { deadline } = {}) {
   // attempted either leaves the hold or is re-held (bumping its MODIFIEDTIME
   // past the integration's), so it drops out of the candidate set and the
   // budget moves on — nothing can sit at the front and block the rest.
-  const holdsByDealer = await stats.countGrouped(
-    catalystApp,
-    LEADS_TABLE,
-    ['dealer_code'],
-    ["sync_status = 'ROUTING_HOLD'"]
-  );
-  const dealerCodes = holdsByDealer.map((row) => row.dealer_code).filter(Boolean);
-  if (dealerCodes.length === 0) return summary;
-
-  // All integrations are read in one query: most dealers with held leads have
-  // no integration at all, and a lookup per dealer cost ~124 reads per idle
-  // run. Start the dealer order at a rotating position so no dealer is always
-  // served first.
-  const start = Math.floor(Date.now() / ROTATION_BUCKET_MS) % dealerCodes.length;
-  const rotated = [...dealerCodes.slice(start), ...dealerCodes.slice(0, start)];
-
+  //
+  // Cost (11 Nov 2026): counting the held leads of EVERY dealer read about 124 rows
+  // per run, nearly all of dealers that have no integration (so nothing to fix) and
+  // were then dropped. The integrations are read first (one query, a few dozen rows)
+  // and only dealers that can actually be served are counted: routable, with a
+  // setup change to compare against, and with Push leads ON. A dealer whose Push
+  // switch is OFF takes no new leads, so its held leads are not re-sent; switching
+  // it ON again brings them back on the next run (read afresh every run).
   let integrations;
   try {
     integrations = await crmIntegrationService.getIntegrationsByDealerCode(catalystApp);
@@ -334,6 +328,31 @@ async function reprocessRoutingHolds(catalystApp, { deadline } = {}) {
     logger.error('outboundRetryScheduler', 'Routing-hold reprocess could not read dealer integrations', err);
     return { ...summary, errored: 1 };
   }
+  const servableCodes = [...integrations.values()]
+    .filter((integration) => integration.dealer_code
+      && integration.integration_type === 'EXTERNAL_CRM'
+      && !UNROUTABLE_INTEGRATION_STATUSES.includes(integration.status)
+      && integration.MODIFIEDTIME
+      && !crmIntegrationService.isDealerPushPaused(integration))
+    .map((integration) => String(integration.dealer_code));
+  if (servableCodes.length === 0) return summary;
+
+  const holdsByDealer = [];
+  for (let i = 0; i < servableCodes.length; i += ROUTING_HOLD_COUNT_CHUNK) {
+    const chunk = servableCodes.slice(i, i + ROUTING_HOLD_COUNT_CHUNK);
+    holdsByDealer.push(...await stats.countGrouped(
+      catalystApp,
+      LEADS_TABLE,
+      ['dealer_code'],
+      ["sync_status = 'ROUTING_HOLD'", `dealer_code IN (${chunk.map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`]
+    ));
+  }
+  const dealerCodes = holdsByDealer.map((row) => row.dealer_code).filter(Boolean);
+  if (dealerCodes.length === 0) return summary;
+
+  // Start the dealer order at a rotating position so no dealer is always served first.
+  const start = Math.floor(Date.now() / ROTATION_BUCKET_MS) % dealerCodes.length;
+  const rotated = [...dealerCodes.slice(start), ...dealerCodes.slice(0, start)];
   const exhausted = new Set(); // dealers with nothing (more) to attempt this sweep
 
   // Two passes over the dealers: first each routable dealer gets a small share
