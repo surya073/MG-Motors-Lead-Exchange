@@ -24,6 +24,7 @@ const crmAdapterFactory = require('../services/integrations/crmAdapterFactory');
 const { withCrmApiLimit } = require('../services/integrations/crmApiConcurrencyLimiter');
 const aiAssistantToolService = require('../services/aiAssistantToolService');
 const logger = require('../utils/logger');
+const { getLeadActivityDetails } = require('../services/leadActivityDetailService');
 const dealerListCache = require('../services/dealerListCache');
 const { adminSuggestions } = require('../services/searchSuggestionsService');
 
@@ -206,7 +207,9 @@ router.get('/admin/leads/detail/:leadId', requireAdminOrViewRole, async (req, re
   try {
     const lead = await getLeadByIdentifier(res.locals.catalystApp, req.params.leadId);
     if (!lead) return res.status(404).json({ success: false, error: 'Lead not found' });
-    res.status(200).json({ success: true, lead });
+    // Connected CRM, Test Drive Date and Closed Date live in MG's Zoho; never fails the page.
+    const activity = await getLeadActivityDetails(res.locals.catalystApp, lead);
+    res.status(200).json({ success: true, lead: { ...lead, ...activity } });
   } catch (err) {
     logger.error('adminDashboardRoutes', `GET /admin/leads/detail/${req.params.leadId} failed`, err);
     res.status(502).json({ success: false, error: err.message });

@@ -3543,6 +3543,7 @@ module.exports = {
   dealerPushFloor,
   newLeadSkipReason,
   deliveryAcknowledgementFields,
+  connectedCrmLabel,
   leadActivityDateFields,
   linkUnresolvedLead,
   replayStoppedLead,

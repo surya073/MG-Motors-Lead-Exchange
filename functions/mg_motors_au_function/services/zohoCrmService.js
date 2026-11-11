@@ -117,6 +117,7 @@ const OEM_LEADS_FIELDS = [
   'First_Action_Date',
   'Test_Drive_Date',
   'Sold_Date',
+  'Connected_CRM',
   'Lead_Department',
   'Franchise',
   'Enq_ID',

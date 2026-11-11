@@ -311,11 +311,15 @@ export default function LeadExchangePage() {
   const [fetchedDetail, setFetchedDetail] = useState({ id: null, lead: null, done: false });
   const detail = useMemo(() => {
     if (!leadId) return null;
-    return (
+    const fetched = fetchedDetail.id === leadId ? fetchedDetail.lead : null;
+    const fromList =
       leads.find((l) => String(l.ROWID) === String(leadId)) ||
       leads.find((l) => l.crm_record_id && String(l.crm_record_id) === String(leadId)) ||
-      (fetchedDetail.id === leadId ? fetchedDetail.lead : null)
-    );
+      null;
+    // The list row opens the page at once; the fetched lead adds what only the detail
+    // endpoint has (Connected CRM, Test Drive Date, Closed Date) and wins where both exist.
+    if (fromList && fetched) return { ...fromList, ...fetched };
+    return fromList || fetched;
   }, [leadId, leads, fetchedDetail]);
   const detailNotFound = Boolean(leadId) && fetchedDetail.id === leadId && fetchedDetail.done && !detail;
 

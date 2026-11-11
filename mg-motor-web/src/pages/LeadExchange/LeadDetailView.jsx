@@ -252,6 +252,24 @@ function formatFieldName(key) {
     .join(" ");
 }
 
+// Activity dates arrive as plain yyyy-MM-dd (MG's Zoho date fields): shown as 20 Nov 2026,
+// without a timezone shift. Anything else is shown as it is.
+function formatActivityDate(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "—";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+  if (!match) return text;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+// MG stores a retail sale as "Purchase"; its picklist label is Retail Order.
+function formatEnquiryOutcome(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text === "-None-") return "—";
+  return text.toLowerCase() === "purchase" ? "Retail Order" : text;
+}
+
 function formatBoolean(value) {
   if (value === true || value === "true") return "Yes";
   if (value === false || value === "false") return "No";
@@ -736,6 +754,15 @@ function MoreDetailsCard({ val, lead }) {
   // Grouped so the long record IDs sit together, apart from the lead facts and
   // the consent flags. `mono` = identifier styling, `copy` = copy button.
   const sections = [
+    {
+      title: "Lead Exchange Activity",
+      items: [
+        { key: "connectedCrm", label: "Connected CRM", value: val("connected_crm"), icon: BuildingIcon },
+        { key: "outcome", label: "Enquiry Outcome", value: formatEnquiryOutcome(lead.enquiry_outcome), icon: ClipboardIcon },
+        { key: "testDrive", label: "Test Drive Date", value: formatActivityDate(lead.test_drive_date), icon: ClockIcon },
+        { key: "closed", label: "Closed Date", value: formatActivityDate(lead.closed_date), icon: ClockIcon },
+      ],
+    },
     {
       title: "Record IDs",
       className: "lead-detail__more-details-grid--ids",
