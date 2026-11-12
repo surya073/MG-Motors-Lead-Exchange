@@ -377,6 +377,14 @@ function getFusionRequestTimeoutMs() {
  * in a function instance's memory. Unset, or not a whole number, means 60; 0 turns
  * the cache off. Read on every call.
  */
+/**
+ * SKIP_EMPTY_WEBHOOK_SYNC_LOG: a webhook sync that changed nothing (mostly the echo of
+ * MG's own write-back) writes no sync_logs row. Unset means on; "false" brings the row back.
+ */
+function isSkipEmptyWebhookSyncLogEnabled() {
+  return String(process.env.SKIP_EMPTY_WEBHOOK_SYNC_LOG ?? '').trim().toLowerCase() !== 'false';
+}
+
 /** LEAD_FACETS_CACHE_SECONDS: how long the Lead Exchange filter data is reused (default 60, 0 off). */
 function getLeadFacetsCacheSeconds() {
   const text = String(process.env.LEAD_FACETS_CACHE_SECONDS ?? '').trim();
@@ -494,6 +502,7 @@ module.exports = {
   getFusionRequestTimeoutMs,
   getDealerListCacheSeconds,
   getLeadFacetsCacheSeconds,
+  isSkipEmptyWebhookSyncLogEnabled,
   getInboundReplayIdleSkipMinutes,
   getFusionInboundEditFields,
   isUsageLogEnabled,

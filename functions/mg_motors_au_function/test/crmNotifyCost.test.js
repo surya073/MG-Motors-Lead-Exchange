@@ -193,15 +193,31 @@ test('new lead whose routing read fails: inserted PENDING, Unhappy 1 recorded as
 
 // ---- no-change notifications --------------------------------------------------
 
-test('unchanged notification: no lead write, no claim, no dispatch, no log row (sync_logs row kept)', async (t) => {
+test('unchanged webhook notification: no lead write, no claim, no dispatch, no log row and no sync_logs row', async (t) => {
   const { db, leadWrites, delivered } = setup(t, { leads: [storedLead({ sync_status: 'SYNCED' })] });
   const { result, ds } = await sync(db);
   assert.equal(result.recordsUnchanged, 1);
   assert.deepEqual(leadWrites, []);
   assert.deepEqual(delivered, []);
   assert.deepEqual(logs(db), []);
-  assert.deepEqual({ fetch: ds.fetch, insert: ds.insert, update: ds.update, delete: ds.delete }, { fetch: 1, insert: 1, update: 0, delete: 0 });
-  assert.equal(db.tables.sync_logs.length, 1, 'kept by decision (22 Oct)');
+  assert.deepEqual({ fetch: ds.fetch, insert: ds.insert, update: ds.update, delete: ds.delete }, { fetch: 1, insert: 0, update: 0, delete: 0 });
+  assert.equal(db.tables.sync_logs.length, 0, 'an echo that changed nothing is not recorded (SKIP_EMPTY_WEBHOOK_SYNC_LOG)');
+});
+
+test('SKIP_EMPTY_WEBHOOK_SYNC_LOG=false keeps the sync_logs row of an unchanged notification', async (t) => {
+  process.env.SKIP_EMPTY_WEBHOOK_SYNC_LOG = 'false';
+  t.after(() => { delete process.env.SKIP_EMPTY_WEBHOOK_SYNC_LOG; });
+  const { db } = setup(t, { leads: [storedLead({ sync_status: 'SYNCED' })] });
+  const { ds } = await sync(db);
+  assert.equal(ds.insert, 1);
+  assert.equal(db.tables.sync_logs.length, 1);
+});
+
+test('a webhook that changed the lead still writes its sync_logs row', async (t) => {
+  const { db } = setup(t, { leads: [storedLead({ sync_status: 'SYNCED' })], integrations: [{ dealer_code: 'D1', integration_type: 'EXTERNAL_CRM', status: 'CONNECTED' }], record: crmRecord({ Lead_Status: 'Contacted' }) });
+  await sync(db);
+  assert.equal(db.tables.sync_logs.length, 1);
+  assert.equal(db.tables.sync_logs[0].records_updated, 1);
 });
 
 // ---- "Lead sync complete" summary (27 Oct 2026, reversing C10) -------------------

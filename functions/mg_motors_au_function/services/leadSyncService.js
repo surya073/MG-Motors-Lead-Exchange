@@ -6,7 +6,7 @@ const {
   fetchOemLeadsModifiedSince,
   updateOemLead,
 } = require('./zohoCrmService');
-const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled, isFullSyncStrictSnapshotEnabled } = require('../config/env');
+const { getLeadSyncSince, isLeadNamePartsEnabled, isDurableSyncCheckpointEnabled, isFullSyncStrictSnapshotEnabled, isSkipEmptyWebhookSyncLogEnabled } = require('../config/env');
 const { withMappingCache } = require('./integrations/mappingRunCache');
 const { recordSyncRun } = require('./syncLogService');
 const { toCatalystDateTime } = require('../utils/dateFormat');
@@ -973,12 +973,19 @@ async function runLeadSyncInternal(catalystApp, {
     });
   }
 
-  await recordSyncRun(catalystApp, {
-    syncType: 'Lead_Sync', syncTrigger: trigger, triggeredBy, startTime, endTime,
-    totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated,
-    recordsFailed: failed, status, errorDetails: errors.length > 0 ? errors : null,
-    scenarioCounts,
-  });
+  // A webhook that found nothing to change (mostly the echo of MG's own write-back) has
+  // nothing to record: about three quarters of all webhook sync_logs rows were these, one
+  // billed insert each. Anything that changed, failed or raised an Unhappy is still logged.
+  const nothingHappened = trigger === 'Webhook' && inserted === 0 && updated === 0 && failed === 0
+    && removed === 0 && unhappyCount === 0 && errors.length === 0;
+  if (!(nothingHappened && isSkipEmptyWebhookSyncLogEnabled())) {
+    await recordSyncRun(catalystApp, {
+      syncType: 'Lead_Sync', syncTrigger: trigger, triggeredBy, startTime, endTime,
+      totalRecordsFetched: crmRecords.length, recordsInserted: inserted, recordsUpdated: updated,
+      recordsFailed: failed, status, errorDetails: errors.length > 0 ? errors : null,
+      scenarioCounts,
+    });
+  }
 
   return {
     status,
