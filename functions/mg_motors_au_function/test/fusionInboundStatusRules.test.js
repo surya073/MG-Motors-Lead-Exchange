@@ -45,10 +45,10 @@ const fusionStatus = (harness, status) => crmIntegrationService.processInboundWe
   harness.db.app, harness.integration, fixtures.inboundFlatWebhookPayload({ status }), oemCrmService
 );
 
-function assertUntouched(harness, mgStatus) {
+function assertUntouched(harness, mgStatus, { dealerStatusRows = 0 } = {}) {
   assert.equal(harness.oemWrites.length, 0, 'nothing written to MG');
   assert.equal(harness.db.tables.leads[0].lead_status, mgStatus);
-  assert.equal(harness.logs().length, 0, 'no failure or hold logged');
+  assert.equal(harness.logs().length, dealerStatusRows, dealerStatusRows ? 'only the dealer status is recorded' : 'no failure or hold logged');
   assert.equal(harness.alerts.mock.callCount(), 0, 'no alert');
   assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED', 'not held');
 }
@@ -99,7 +99,9 @@ for (const outcome of ['Purchase', 'Fleet Order', 'On-Sold', 'Lost']) {
     const result = await fusionStatus(harness, 'Won');
     assert.equal(result.skipped, true);
     assert.equal(result.reason, 'FUSION_STATUS_NOT_APPLIED');
-    assertUntouched(harness, 'Contacted');
+    // MG is untouched; the one new row records the dealer's word (Won) for the lead page.
+    assertUntouched(harness, 'Contacted', { dealerStatusRows: 1 });
+    assert.equal(JSON.parse(harness.logs()[0].field_changes)[0].raw_dealer_value, 'Won');
   });
 }
 

@@ -90,7 +90,7 @@ const MODEL_BY_LOWER = canonical(MG_MODELS);
 const VARIANT_BY_LOWER = canonical(MG_VARIANTS);
 
 // MG outcomes a completed test drive may not replace: the lead has moved on.
-const OUTCOMES_OPEN_TO_TEST_DRIVE = new Set(['', '-none-', 'outcome pending', 'no outcome', 'test drive']);
+const OUTCOMES_OPEN_TO_TEST_DRIVE = new Set(['', '-none-', '(required)', 'outcome pending', 'no outcome', 'test drive']);
 
 function text(value, max = 500) {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);

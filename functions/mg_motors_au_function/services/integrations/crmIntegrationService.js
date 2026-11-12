@@ -27,6 +27,7 @@ const {
 const { applyDealerStudioPayloadRules } = require('./adapters/dealerStudioPayload');
 const { cachedForRun } = require('./mappingRunCache');
 const sentPayloadSnapshot = require('./sentPayloadSnapshot');
+const dealerStatusService = require('./dealerStatusService');
 
 const DEALERS_TABLE = 'dealers';
 const DEALER_INTEGRATIONS_TABLE = 'dealer_integrations';
@@ -1312,6 +1313,9 @@ async function attemptExternalCrmSync(catalystApp, integration, leadRow, zohoLea
       crmType: integration.crm_type,
       operation,
     });
+    if (integration.crm_type === 'FUSION_SD' && operation === 'UPDATE_LEAD') {
+      await keepFusionStatusAhead(catalystApp, payload, fieldMappings, zohoLeadId);
+    }
     const adapter = crmAdapterFactory.getAdapter(integration.crm_type);
     const enquiryIdFieldMapping = fieldMappings.find(
       (mapping) => mapping.source_field === 'enquiry_id' && mapping.target_field
@@ -2701,6 +2705,50 @@ async function recordDealerChangeAsSent(catalystApp, integration, mapping, leadA
   await sentPayloadSnapshot.store(catalystApp, mapping.ROWID, next);
 }
 
+
+// What a Fusion dealer reported as Won or Delivered. These have no MG status, so the first one
+// only sets the outcome (and is logged with the dealer's word); a later one (Won, then Delivered)
+// changes nothing in MG and used to leave no trace. It is now recorded once per change of word, so
+// the lead page can show Fusion's current status. Never fails the webhook.
+async function recordFusionDealerStatus(catalystApp, { integration, mapping, externalLeadId, existingLeadRow, status, requestReference }) {
+  try {
+    const latest = await dealerStatusService.readLatestDealerStatus(catalystApp, mapping.zoho_lead_id);
+    if (latest && dealerStatusService.same(latest.status, status)) return false;
+    await writeLog(catalystApp, {
+      integration_id: integration.ROWID,
+      dealer_code: integration.dealer_code,
+      direction: 'EXTERNAL_CRM_TO_ZOHO',
+      operation: 'UPDATE_LEAD',
+      zoho_lead_id: mapping.zoho_lead_id,
+      external_lead_id: externalLeadId,
+      status: 'SUCCESS',
+      request_reference: requestReference,
+      field_changes: JSON.stringify([{
+        field: 'dealer_status', from: latest?.status || '', to: status,
+        raw_dealer_value: status, received_at: new Date().toISOString(),
+      }]),
+    }, { scenarioCode: 'Happy 5', leadRow: existingLeadRow });
+    return true;
+  } catch (err) {
+    logger.error('crmIntegrationService', `Could not record Fusion status "${status}" for lead ${mapping?.zoho_lead_id}`, err);
+    return false;
+  }
+}
+
+// An order outcome goes to Fusion as Won. A dealer that has since marked the lead Delivered must not
+// be sent Won over it: the status goes out as Delivered (the dealer's own word) instead.
+async function keepFusionStatusAhead(catalystApp, payload, fieldMappings, zohoLeadId) {
+  try {
+    const statusMapping = fieldMappings.find((m) => m.source_field === 'lead_status' && m.target_field);
+    const target = statusMapping?.target_field;
+    if (!target || !dealerStatusService.same(payload[target], 'Won')) return;
+    const latest = await dealerStatusService.readLatestDealerStatus(catalystApp, zohoLeadId);
+    if (latest && dealerStatusService.same(latest.status, 'Delivered')) payload[target] = 'Delivered';
+  } catch (err) {
+    logger.error('crmIntegrationService', `Could not check the dealer's status for lead ${zohoLeadId}`, err);
+  }
+}
+
 // Mapping states in which an MG change has not reached the dealer yet and a
 // retry (or, once stopped, an admin replay) will send it. Only outbound
 // failures set them.
@@ -2850,6 +2898,7 @@ async function attemptInboundLeadUpdate(
   // map can erase the distinction. Captured here so it survives into
   // the log classification below.
   const rawDealerStatus = incomingStatusValue;
+  let fusionDealerStatus = null; // Fusion Won or Delivered that set the outcome on this event
 
   if (isStatusSync) {
     try {
@@ -2873,9 +2922,14 @@ async function attemptInboundLeadUpdate(
             'crmIntegrationService',
             `Fusion status "${incomingStatusValue}" for lead ${mapping.zoho_lead_id} (dealer ${integration.dealer_code}) leaves MG unchanged: the outcome is already "${existingLeadRow.enquiry_outcome}"`
           );
+          await recordFusionDealerStatus(catalystApp, {
+            integration, mapping, externalLeadId, existingLeadRow,
+            status: String(incomingStatusValue).trim(), requestReference,
+          });
           return { skipped: true, reason: 'FUSION_STATUS_NOT_APPLIED' };
         }
         mappedUpdate.enquiry_outcome = FUSION_WON_OUTCOME;
+        fusionDealerStatus = String(incomingStatusValue).trim();
         isStatusSync = false;
       } else {
       const rawStatusScenario = pathPolicy.classifyDealerStatus(incomingStatusValue);
@@ -3043,6 +3097,10 @@ async function attemptInboundLeadUpdate(
       ...(key === 'lead_status' ? {
         raw_dealer_value: rawDealerStatus,
         dealer_changed_at: externalRecord.Modified_Time || externalRecord.modified_at || null,
+        received_at: new Date().toISOString(),
+      } : {}),
+      ...(key === 'enquiry_outcome' && fusionDealerStatus ? {
+        raw_dealer_value: fusionDealerStatus,
         received_at: new Date().toISOString(),
       } : {}),
     }))

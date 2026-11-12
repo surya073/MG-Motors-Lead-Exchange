@@ -2,6 +2,7 @@
 
 const zohoCrmService = require('./zohoCrmService');
 const crmIntegrationService = require('./integrations/crmIntegrationService');
+const dealerStatusService = require('./integrations/dealerStatusService');
 const logger = require('../utils/logger');
 
 /**
@@ -11,10 +12,13 @@ const logger = require('../utils/logger');
  * from there when its detail page opens (one API call). If that read fails the page still
  * opens: the dates are left blank and Connected CRM falls back to the dealer's CRM type.
  *
- * @returns {Promise<{connected_crm: string, test_drive_date: string, closed_date: string}>}
+ * For a Fusion lead it also returns the dealer's current status as Fusion last reported it
+ * (Won, Delivered, Open, Lost, Prospect Lost), read from the lead's inbound log rows.
+ *
+ * @returns {Promise<{connected_crm: string, test_drive_date: string, closed_date: string, dealer_crm_status: string, dealer_crm_status_at: string}>}
  */
 async function getLeadActivityDetails(catalystApp, lead) {
-  const out = { connected_crm: '', test_drive_date: '', closed_date: '' };
+  const out = { connected_crm: '', test_drive_date: '', closed_date: '', dealer_crm_status: '', dealer_crm_status_at: '' };
   if (!lead?.crm_record_id) return out;
 
   try {
@@ -34,6 +38,18 @@ async function getLeadActivityDetails(catalystApp, lead) {
       out.connected_crm = integration ? crmIntegrationService.connectedCrmLabel(integration) : '';
     } catch (err) {
       logger.error('leadActivityDetailService', `Could not read the integration of dealer ${lead.dealer_code}`, err);
+    }
+  }
+
+  if (/fusion/i.test(out.connected_crm)) {
+    try {
+      const latest = await dealerStatusService.readLatestDealerStatus(catalystApp, lead.crm_record_id);
+      if (latest) {
+        out.dealer_crm_status = latest.status;
+        out.dealer_crm_status_at = latest.at || '';
+      }
+    } catch (err) {
+      logger.error('leadActivityDetailService', `Could not read the dealer status of lead ${lead.crm_record_id}`, err);
     }
   }
   return out;

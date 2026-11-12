@@ -761,6 +761,16 @@ function MoreDetailsCard({ val, lead }) {
         { key: "outcome", label: "Enquiry Outcome", value: formatEnquiryOutcome(lead.enquiry_outcome), icon: ClipboardIcon },
         { key: "testDrive", label: "Test Drive Date", value: formatActivityDate(lead.test_drive_date), icon: ClockIcon },
         { key: "closed", label: "Closed Date", value: formatActivityDate(lead.closed_date), icon: ClockIcon },
+        // Fusion cannot be read back, so this is the word Fusion last sent (Open, Won,
+        // Delivered, Lost, Prospect Lost). Shown only for leads connected to Fusion.
+        ...(/fusion/i.test(String(lead.connected_crm || ""))
+          ? [{
+              key: "fusionStatus",
+              label: "Fusion current status",
+              value: lead.dealer_crm_status || "Not reported yet",
+              icon: ClipboardIcon,
+            }]
+          : []),
       ],
     },
     {
