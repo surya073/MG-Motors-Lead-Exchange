@@ -3,6 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const leadList = require('../services/leadListService');
+const leadFacetsCache = require('../services/leadFacetsCache');
+
+test.beforeEach(() => { leadFacetsCache.clear(); });
 
 const { classifyTriple, buildWhere, buildPathCondition, normalizePaging, MAX_ANDS } = leadList._test;
 

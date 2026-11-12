@@ -372,6 +372,7 @@ export default function LeadExchangePage() {
         showRemoved,
         sortBy,
         includeFacets: refreshFacets || !facets,
+        freshFacets: refreshFacets ? true : undefined,
       });
       if (seq !== requestSeq.current) return;
 

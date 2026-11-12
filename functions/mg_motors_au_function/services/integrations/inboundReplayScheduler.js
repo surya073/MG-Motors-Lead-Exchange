@@ -290,6 +290,37 @@ async function removedDealerIntegrationIds(catalystApp) {
   }
 }
 
+// Small queue (cost). When fewer rows are held than one read can return, every held
+// row is read anyway, so whether their dealers were removed is checked only for the
+// integrations those rows name (a handful of rows) instead of listing every removed
+// dealer (about 50 rows) on every run. The rule is the same as removedDealerIntegrationIds:
+// a dealer counts as removed only when every one of its dealer rows says Removed.
+async function removedAmongIntegrations(catalystApp, integrationIds) {
+  const ids = [...new Set(integrationIds.map((id) => String(id || '').replace(/\D/g, '')).filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  const integrationRows = await catalystApp.zcql().executeZCQLQuery(
+    `SELECT ROWID, dealer_code FROM ${DEALER_INTEGRATIONS_TABLE} WHERE ROWID IN (${ids.map((id) => `'${id}'`).join(', ')})`
+  );
+  const codeOf = new Map(integrationRows.map((wrapped) => [
+    String(wrapped[DEALER_INTEGRATIONS_TABLE]?.ROWID || '').replace(/\D/g, ''),
+    String(wrapped[DEALER_INTEGRATIONS_TABLE]?.dealer_code || ''),
+  ]));
+  const codes = [...new Set([...codeOf.values()].filter(Boolean))];
+  if (codes.length === 0) return new Set();
+  const dealerRows = (await catalystApp.zcql().executeZCQLQuery(
+    `SELECT dealer_code, sync_status FROM dealers WHERE dealer_code IN (${codes.map((code) => `'${safeQuoteForZcql(code)}'`).join(', ')})`
+  )).map((wrapped) => wrapped.dealers);
+  const byCode = new Map();
+  for (const row of dealerRows) {
+    const code = String(row.dealer_code);
+    const removed = String(row.sync_status || '').toLowerCase() === 'removed';
+    byCode.set(code, (byCode.get(code) ?? true) && removed);
+  }
+  const removedIds = new Set();
+  for (const [id, code] of codeOf) if (byCode.get(code) === true) removedIds.add(id);
+  return removedIds;
+}
+
 function replayWhere(excludedIntegrationIds) {
   return excludedIntegrationIds.length
     ? `${REPLAY_CANDIDATE_WHERE} AND integration_id NOT IN (${excludedIntegrationIds.map((id) => `'${id}'`).join(', ')})`
@@ -311,15 +342,15 @@ function resetIdleMemo() {
   idleMemo = null;
 }
 
-async function readIdleProbes(catalystApp, where = REPLAY_CANDIDATE_WHERE) {
-  const countRows = await catalystApp.zcql().executeZCQLQuery(
-    `SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${where}`
-  );
+async function readIdleProbes(catalystApp, where = REPLAY_CANDIDATE_WHERE, knownCount = null) {
+  const countRows = knownCount === null
+    ? await catalystApp.zcql().executeZCQLQuery(`SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${where}`)
+    : null;
   const mapRows = await catalystApp.zcql().executeZCQLQuery(
     `SELECT MODIFIEDTIME FROM ${STATUS_MAPPINGS_TABLE} ORDER BY MODIFIEDTIME DESC LIMIT 1`
   );
   return {
-    count: countFrom(countRows, INTEGRATION_LOGS_TABLE),
+    count: knownCount === null ? countFrom(countRows, INTEGRATION_LOGS_TABLE) : knownCount,
     mapVersion: mapRows.length ? String(mapRows[0][STATUS_MAPPINGS_TABLE].MODIFIEDTIME || '') : '',
   };
 }
@@ -350,12 +381,24 @@ function sweepWasIdle(results) {
 
 async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequence } = {}) {
   if (budgetSpent(deadline)) return { skipped: true, reason: 'WORK_BUDGET_EXHAUSTED', deferredUnknown: true };
-  const where = replayWhere(await removedDealerIntegrationIds(catalystApp));
+  // One count decides the path. Fewer held rows than one read returns: read them all and
+  // look up only their own dealers. Otherwise exclude every removed dealer in the query.
+  let heldCount = null;
+  try {
+    heldCount = countFrom(
+      await catalystApp.zcql().executeZCQLQuery(`SELECT COUNT(ROWID) FROM ${INTEGRATION_LOGS_TABLE} ${REPLAY_CANDIDATE_WHERE}`),
+      INTEGRATION_LOGS_TABLE
+    );
+  } catch (err) {
+    logger.error('inboundReplayScheduler', 'Held-row count could not be read; using the full removed-dealer lookup', err);
+  }
+  const smallQueue = heldCount !== null && heldCount < HEAD_ROWS;
+  const where = smallQueue ? REPLAY_CANDIDATE_WHERE : replayWhere(await removedDealerIntegrationIds(catalystApp));
   const idleSkipMinutes = getInboundReplayIdleSkipMinutes();
   let probes = null;
   if (idleSkipMinutes > 0) {
     try {
-      probes = await readIdleProbes(catalystApp, where);
+      probes = await readIdleProbes(catalystApp, where, smallQueue ? heldCount : null);
       if (idleMemo && Date.now() < idleMemo.until
         && idleMemo.count === probes.count && idleMemo.mapVersion === probes.mapVersion) {
         return { skipped: true, reason: 'REPLAY_IDLE_UNCHANGED', held: probes.count };
@@ -366,7 +409,19 @@ async function runInboundReplaySweepInternal(catalystApp, { deadline, windowSequ
     }
     idleMemo = null;
   }
-  const queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence, where);
+  let queuedRows = await selectReplayCandidates(catalystApp, Date.now(), windowSequence, where);
+  if (smallQueue && queuedRows.length) {
+    try {
+      const removedIds = await removedAmongIntegrations(
+        catalystApp, queuedRows.map((wrapped) => wrapped[INTEGRATION_LOGS_TABLE].integration_id)
+      );
+      if (removedIds.size) {
+        queuedRows = queuedRows.filter((wrapped) => !removedIds.has(String(wrapped[INTEGRATION_LOGS_TABLE].integration_id || '').replace(/\D/g, '')));
+      }
+    } catch (err) {
+      logger.error('inboundReplayScheduler', 'Could not check the dealers of the held rows; none is left out of this sweep', err);
+    }
+  }
   const results = {
     queued: queuedRows.length,
     leads: 0,

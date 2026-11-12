@@ -377,6 +377,12 @@ function getFusionRequestTimeoutMs() {
  * in a function instance's memory. Unset, or not a whole number, means 60; 0 turns
  * the cache off. Read on every call.
  */
+/** LEAD_FACETS_CACHE_SECONDS: how long the Lead Exchange filter data is reused (default 60, 0 off). */
+function getLeadFacetsCacheSeconds() {
+  const text = String(process.env.LEAD_FACETS_CACHE_SECONDS ?? '').trim();
+  return /^\d+$/.test(text) ? Number(text) : 60;
+}
+
 function getDealerListCacheSeconds() {
   const text = String(process.env.DEALER_LIST_CACHE_SECONDS ?? '').trim();
   return /^\d+$/.test(text) ? Number(text) : 60;
@@ -487,6 +493,7 @@ module.exports = {
   getFusionTokenTimeoutMs,
   getFusionRequestTimeoutMs,
   getDealerListCacheSeconds,
+  getLeadFacetsCacheSeconds,
   getInboundReplayIdleSkipMinutes,
   getFusionInboundEditFields,
   isUsageLogEnabled,

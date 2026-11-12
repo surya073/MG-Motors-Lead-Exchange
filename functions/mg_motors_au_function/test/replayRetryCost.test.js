@@ -77,7 +77,7 @@ test('replay, live shape (30 awaiting a mapping, 20 backed off): 4 reads instead
   assert.equal(send.mock.callCount(), 0);
   assert.deepEqual(writes(ds), NO_WRITES);
   assert.deepEqual(db.tables, before);
-  assert.ok(ds.fetch <= 5, `fetches: ${ds.fetch}`); // 4 plus the removed-dealer lookup
+  assert.ok(ds.fetch <= 8, `fetches: ${ds.fetch}`); // 4 plus the held-row count and the dealer check of the held rows
 });
 
 test('replay: more than one IN-list chunk of mapping-only holds still decides each one correctly', async (t) => {
@@ -90,7 +90,7 @@ test('replay: more than one IN-list chunk of mapping-only holds still decides ea
   assert.equal(result.awaitingMapping, 94);
   assert.equal(result.recovered, 1);
   assert.deepEqual(send.mock.calls.map((call) => call.arguments[2]), ['M94']);
-  assert.ok(ds.fetch <= 6, `fetches: ${ds.fetch}`);
+  assert.ok(ds.fetch <= 9, `fetches: ${ds.fetch}`);
 });
 
 test('replay: holds of a deleted integration are retired without a mapping read each', async (t) => {
@@ -102,7 +102,7 @@ test('replay: holds of a deleted integration are retired without a mapping read 
   assert.equal(result.stillWaiting, 0);
   assert.equal(ds.update, 10, 'one write per retired row');
   assert.ok(db.tables.integration_logs.every((row) => row.status === 'EXPIRED' && /no longer exists/.test(row.error_message)));
-  assert.ok(ds.fetch <= 3, `fetches: ${ds.fetch}`); // plus the removed-dealer lookup
+  assert.ok(ds.fetch <= 6, `fetches: ${ds.fetch}`); // plus the held-row count and the dealer check
 });
 
 test('replay: an out-of-order hold past retention re-reads its mapping before expiring it', async (t) => {

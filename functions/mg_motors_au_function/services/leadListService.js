@@ -1,5 +1,7 @@
 'use strict';
 
+const leadFacetsCache = require('./leadFacetsCache');
+
 /**
  * leadListService.js
  * -----------------------------------------------------------------------
@@ -465,13 +467,20 @@ async function getLeadsPage(catalystApp, query = {}) {
   let groups = null;
   // Happy/Unhappy alone is a fixed rule. Only scenario filters and facets
   // need the global triple groups; ordinary path pages avoid that read.
-  if (query.scenario || query.includeFacets) groups = await loadTripleGroups(catalystApp);
+  // Facets are reused for LEAD_FACETS_CACHE_SECONDS unless freshFacets asks for new ones.
+  const fresh = String(query.freshFacets).toLowerCase() === 'true';
+  const cachedFacets = query.includeFacets && !fresh ? leadFacetsCache.peek() : null;
+  if (query.scenario || (query.includeFacets && !cachedFacets)) groups = await loadTripleGroups(catalystApp);
 
   const pathCondition = wantsPathFilter
     ? buildPathCondition(groups || [], { path: query.path, scenario: query.scenario })
     : undefined;
 
-  const facetsPromise = query.includeFacets ? getLeadFacets(catalystApp, groups) : null;
+  const facetsPromise = !query.includeFacets
+    ? null
+    : cachedFacets
+      ? Promise.resolve(cachedFacets)
+      : getLeadFacets(catalystApp, groups).then((value) => leadFacetsCache.store(value));
 
   const emptyPage = async () => ({
     leads: [],
