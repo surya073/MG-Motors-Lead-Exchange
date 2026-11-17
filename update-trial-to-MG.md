@@ -14,12 +14,15 @@ what is still open.
 | Area | What changed | Where |
 |---|---|---|
 | Code | Dealer CRM ID and Middleware ID written to MG Zoho on delivery; Fusion webhook waits out a busy lead lock; Fusion Lost also sets Enquiry Outcome = Lost | commit `a7d153c` on `main`, **deployed to the trial project** |
+| Code (new, 17 Nov) | A Fusion **Won** (and Delivered) on a lead MG still has waiting (Not Contacted / Update Pending) now also sets MG's status to **Contacted**, besides the Enquiry Outcome "Retail Order" (stored "Purchase"); a lead MG has already progressed keeps its status | **local only: tested, not yet committed or deployed** |
+| Webhook fix (17 Nov) | The first deploy overwrote the live `ZOHO_WEBHOOK_TOKEN` with a stale value, so Zoho's instant lead notifications were rejected (401) from about 10:25 to 15:50 IST. Original value restored, function redeployed, missed leads caught up with `/cron/sync-modified-leads` | trial function (see section 6b) |
 | Function settings | `ESCALATION_TRANSIENT_ONLY=true`, `INBOUND_EVENT_STORE=true` | trial function (via `catalyst-config.json`, 39 variables) |
 | MG Zoho data | 3 leads reset from "Dealer Unavailable"; Connected CRM, Dealer CRM ID, Middleware ID on all 138 pushed Fusion leads; Lead Exchanged on all 138; Enquiry Outcome "Lost" on 12 Lost leads; First Action Date (7) and Closed Date (5) | MG Zoho CRM, read back after writing |
 | Tooling | AU Catalyst MCP added to the Claude config (user-scope server `catalyst-au-dc`); a read-only monitor for Fusion updates on the 32 leads | Claude Code, this session |
 | Documents | `Fusion_SD_32_Leads.xlsx` (outside git); this file | `C:\Users\surya\OneDrive\Desktop\catalyst\` and the repo root |
 
 **Not updated yet**
+- The **Won to Contacted** change (code and tests done locally; needs a commit and a deploy).
 - The **AU (MG) project**: no code deployed, no data copied, nothing configured.
 - The wipe-vs-merge decision for the existing AU rows.
 - Fusion-side settings (lead updates for Hillcrest and Indooroopilly), the "pendingLost" status mapping, and two leads with an empty email.
@@ -171,9 +174,19 @@ All in `functions/mg_motors_au_function/services/integrations/crmIntegrationServ
    reopening a Lost lead in Zoho by changing only the status sends nothing to Fusion; the outcome must be
    cleared too; (b) a later Fusion "Won" no longer replaces a Lost outcome. Both are covered by tests.
 
-Tests: backend suite is **1,294 of 1,294**; frontend build succeeds; ESLint 0 errors. About 20
-expectations were updated and new tests added for the lock-wait, the failed ID write and the
-Lost-outcome behaviour.
+4. **Fusion Won sets the status to Contacted (new, local only).** Before: a Fusion "Won" (or "Delivered")
+   set only the Enquiry Outcome to "Retail Order" (stored "Purchase") and left MG's status alone. Now, when
+   MG's status is one that is still waiting for the dealer (Not Contacted or Update Pending, or empty), the
+   status also becomes **Contacted**, logged as a Happy 2 status change. A lead MG has already progressed
+   (Contacted, Follow-up 1/2, Lost, ...) keeps its own status, so a Won never moves a lead backwards, and an
+   outcome the lead already holds (Purchase, Fleet, On-Sold, Lost) is still never replaced. "Delivered" follows
+   the same rule as "Won". An admin-added `Won` status mapping still takes precedence, as before.
+   Change: `crmIntegrationService.js` (`FUSION_WON_STATUS`, in the unmapped-status branch for Won/Delivered).
+
+Tests: backend suite was **1,294 of 1,294** at the first deploy and is **1,301 of 1,301** with the Won change
+(an occasional run trips the known flaky concurrency test); frontend build succeeds; ESLint 0 errors. About 20
+expectations were updated and new tests added for the lock-wait, the failed ID write, the Lost-outcome
+behaviour and the Won to Contacted rule.
 
 ### Deploy
 - `catalyst deploy --only functions` to the **trial** project: successful. A post-deploy check confirmed
@@ -184,6 +197,8 @@ Lost-outcome behaviour.
   `INBOUND_EVENT_STORE=true` (39 variables now).
 - Do not use the MCP "Update/Create Environment Variable" tools to add one variable: they **replace the
   whole list**.
+- The function was deployed **twice** on 17 Nov: first with the code above (about 10:25 IST), then again at
+  about 15:50 IST to restore the original `ZOHO_WEBHOOK_TOKEN` (section 6b).
 
 ---
 
@@ -233,6 +248,32 @@ to the four dealers since 1 Nov; contains customer names, kept out of git).
   Studio dealers have one (421501: 1231, 302901: 1989, 315602: 4878, 275002: 1095, 215402: 6033); the MG
   test dealer 654321 (slug `mg-test`) has none. MG's Zoho `Dealers` module has no such field, so the dealer
   sync cannot fill it, and the main `dealers` table has no column for it.
+
+---
+
+## 6b. Incident: Zoho's instant lead notification rejected after the first deploy (17 Nov)
+
+- **Symptom:** a lead created in the MG Zoho CRM did not reach the middleware. Zoho was calling
+  `/webhooks/crm-notify` (for example at 15:06 and 15:07 IST) and the function answered **401** every time
+  (50 of 50 in the log read); the last call that worked was at 10:24 IST.
+- **Cause:** the function checks the token Zoho sends against its `ZOHO_WEBHOOK_TOKEN` setting. The first
+  deploy (about 10:25 IST) applied the variables from the local `catalyst-config.json`, and that file held a
+  stale `ZOHO_WEBHOOK_TOKEN` (36 characters instead of the live 33). Zoho's active channel (valid until
+  17:29 UTC) had been registered with a token derived from the old value, so it no longer matched. Only that
+  one of the 37 original variables differed.
+- **Impact:** new leads arrived only through the hourly incremental sync, so each was delayed by up to an
+  hour, from about 10:25 to 15:50 IST. Nothing was lost, and Fusion webhooks (a different route) were not
+  affected.
+- **Fix:** the original value was restored in the local config and the function redeployed. A no-op test
+  call confirmed the endpoint accepts the token Zoho registered (HTTP 202) and still rejects a wrong one
+  (401). The missed leads were then caught up by running `POST /cron/sync-modified-leads` (2 leads fetched
+  and inserted).
+- **Result for the two leads:** "FusionTests lead new 9" was routed to the test dealer 568026 and pushed
+  (Happy 1, HTTP 201); "Julianne Royce" (postcode 2211) was assigned to dealer 220002, which has no Lead
+  Exchange integration, so it was held (Unhappy 5, ROUTING_HOLD).
+- **Lesson:** before **any** backend deploy, diff **every** variable in `catalyst-config.json` (secrets
+  included) against the live function. The first check compared only the non-secret values. This is also
+  saved in the project memory.
 
 ---
 
@@ -296,5 +337,8 @@ to the four dealers since 1 Nov; contains customer names, kept out of git).
 - Time columns differ by table: `webhook_events.received_at` and `lead_integrations.last_synced_at` are UTC,
   while `integration_logs`, `leads` and `sync_logs` `CREATEDTIME` show IST (UTC+5:30). Convert before
   comparing; Git Bash's `date` ignores `TZ`, so add 19,800 seconds to UTC by hand.
+- Before every backend deploy, diff all of `catalyst-config.json`'s variables against the live function
+  (names and lengths are enough to print; never print values). Run one-off Zoho jobs through the app's own
+  endpoints (for example `/cron/sync-modified-leads` with `X-Cron-Secret`) rather than ad-hoc scripts.
 - When writing IDs to MG Zoho in bulk, validate the format first (Zoho lead ids are 17 digits). One run used
   ids with a dropped zero; Zoho rejected all of them as invalid and wrote nothing, but it was avoidable.

@@ -75,14 +75,21 @@ const KEPT = [
   ['Follow-up 2', 'Open', 'FUSION_STATUS_KEPT_MG_STATUS'],
 ];
 
-// Won / Delivered keep the MG status and set the outcome to Retail Order ("Purchase").
-for (const [mg, fusion] of [['Not Contacted', 'Won'], ['Not Contacted', 'won'], ['Contacted', 'Delivered']]) {
-  test(`MG ${mg} + Fusion "${fusion}" → MG status unchanged, outcome Purchase`, async (t) => {
+// Won / Delivered set the outcome to Retail Order ("Purchase"). A lead MG still has waiting for the dealer
+// also becomes Contacted (17 Nov 2026); a lead MG has already progressed keeps its status.
+for (const [mg, fusion, expectedStatus] of [
+  ['Not Contacted', 'Won', 'Contacted'], ['Not Contacted', 'won', 'Contacted'], ['Update Pending', 'Won', 'Contacted'],
+  ['Not Contacted', 'Delivered', 'Contacted'], ['Contacted', 'Delivered', 'Contacted'], ['Follow-up 2', 'Won', 'Follow-up 2'],
+]) {
+  test(`MG ${mg} + Fusion "${fusion}" → MG ${expectedStatus}, outcome Purchase`, async (t) => {
     const harness = harnessAt(t, mg);
     const result = await receive(harness, body(fusion));
     assert.equal(result.ok, true);
-    assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Enquiry_Outcome: 'Purchase' } }]);
-    assert.equal(harness.db.tables.leads[0].lead_status, mg);
+    const fields = expectedStatus !== mg
+      ? { Lead_Status: expectedStatus, Enquiry_Outcome: 'Purchase' }
+      : { Enquiry_Outcome: 'Purchase' };
+    assert.deepEqual(harness.oemWrites.map((w) => w.fields), [fields]);
+    assert.equal(harness.db.tables.leads[0].lead_status, expectedStatus);
   });
 }
 for (const [mg, fusion, reason] of KEPT) {

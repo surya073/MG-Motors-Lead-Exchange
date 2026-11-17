@@ -92,6 +92,31 @@ for (const status of ['Won', 'Delivered', 'won', ' DELIVERED ']) {
   });
 }
 
+// 17 Nov 2026: a dealer that marks the lead Won has worked it, so a lead MG still has waiting
+// for the dealer (Not Contacted / Update Pending) also becomes Contacted, as a Happy 2 status change.
+for (const mgStatus of ['Not Contacted', 'Update Pending']) {
+  test(`Fusion "Won" on an MG lead at ${mgStatus} sets Contacted and the Retail Order outcome (Happy 2)`, async (t) => {
+    const harness = buckby(t, mgStatus);
+    const result = await fusionStatus(harness, 'Won');
+    assert.equal(result.ok, true);
+    assert.equal(result.scenarioCode, 'Happy 2');
+    assert.deepEqual(harness.oemWrites.map((w) => w.fields), [{ Lead_Status: 'Contacted', Enquiry_Outcome: 'Purchase' }]);
+    assert.equal(harness.db.tables.leads[0].lead_status, 'Contacted');
+    assert.equal(harness.alerts.mock.callCount(), 0, 'no alert');
+    assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED', 'not held');
+  });
+}
+
+for (const mgStatus of ['Follow-up 1', 'Follow-up 2']) {
+  test(`Fusion "Won" never moves a progressed MG lead (${mgStatus}) back to Contacted; the outcome is still set`, async (t) => {
+    const harness = buckby(t, mgStatus);
+    const result = await fusionStatus(harness, 'Won');
+    assert.equal(result.ok, true);
+    assert.deepEqual(harness.oemWrites.map((w) => w.fields), [{ Enquiry_Outcome: 'Purchase' }]);
+    assert.equal(harness.db.tables.leads[0].lead_status, mgStatus);
+  });
+}
+
 for (const outcome of ['Purchase', 'Fleet Order', 'On-Sold', 'Lost']) {
   test(`Fusion "Won" never replaces an outcome the lead already has (${outcome})`, async (t) => {
     const harness = buckby(t, 'Contacted');

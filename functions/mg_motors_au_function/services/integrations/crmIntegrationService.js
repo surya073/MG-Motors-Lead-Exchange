@@ -2791,6 +2791,8 @@ function keepsPendingOutboundRetry(mapping) {
 const FUSION_UNAPPLIED_STATUSES = new Set(['won', 'delivered']);
 // MG's stored value for the Retail Order outcome (Enquiry_Outcome picklist).
 const FUSION_WON_OUTCOME = 'Purchase';
+// MG's status for a lead the dealer has marked Won (only for a lead MG still has waiting).
+const FUSION_WON_STATUS = 'Contacted';
 // Fusion "Lost" sets MG's status to Lost Lead and its Enquiry Outcome to Lost, unless
 // the lead already has an order outcome (those are final and are never replaced).
 const FUSION_LOST_STATUS = 'Lost Lead';
@@ -2964,7 +2966,15 @@ async function attemptInboundLeadUpdate(
         }
         mappedUpdate.enquiry_outcome = FUSION_WON_OUTCOME;
         fusionDealerStatus = String(incomingStatusValue).trim();
-        isStatusSync = false;
+        // A dealer that marks the lead Won has worked it, so a lead MG still has waiting
+        // for the dealer (Not Contacted / Update Pending) also becomes Contacted
+        // (MG, 17 Nov 2026). A lead MG has already progressed keeps its own status.
+        if (!hasProgressedBeyondWaiting(existingLeadRow.lead_status)) {
+          mappedUpdate.lead_status = FUSION_WON_STATUS;
+          isStatusSync = true;
+        } else {
+          isStatusSync = false;
+        }
       } else {
       const rawStatusScenario = pathPolicy.classifyDealerStatus(incomingStatusValue);
       const heldScenarioCode = rawStatusScenario?.code === 'Unhappy 9'
