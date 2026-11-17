@@ -139,7 +139,8 @@ test('all flags on: Happy 1, Happy 2, ownership, changes-only, exactly-once and 
   // Fusion "Open" for a lead MG holds at Not Contacted: no change, no MG write.
   const open = await h.fusionSends('Open');
   assert.equal(open.status, 200);
-  assert.equal(h.mgWrites.filter((w) => w.fields.Lead_Status !== 'Not Contacted').length, 0);
+  // (the delivery's Dealer_CRM_ID / Middleware_ID write carries no status)
+  assert.equal(h.mgWrites.filter((w) => 'Lead_Status' in w.fields && w.fields.Lead_Status !== 'Not Contacted').length, 0);
 
   // Happy 2: the dealer marks the lead Lost.
   const clockBefore = h.mapping().last_dealer_action_at;
@@ -147,8 +148,8 @@ test('all flags on: Happy 1, Happy 2, ownership, changes-only, exactly-once and 
   assert.equal(lost.status, 200);
   assert.equal(lost.body.result.scenarioCode, 'Happy 2');
   assert.equal(h.lead().lead_status, 'Lost Lead');
-  assert.deepEqual(h.mgWrites.at(-1).fields, { Lead_Status: 'Lost Lead' });
-  assert.equal(snapshot.read(h.mapping()).enquiryStatus, 'Prospect Lost', 'recorded as what Fusion holds');
+  assert.deepEqual(h.mgWrites.at(-1).fields, { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' });
+  assert.equal(snapshot.read(h.mapping()).enquiryStatus, 'Lost', 'recorded as what Fusion holds');
   assert.ok(h.mapping().last_dealer_action_at >= clockBefore, 'dealer clock restarted');
   const stored = h.db.tables.webhook_events.find((e) => e.event_id === 'msg_lost');
   assert.equal(stored.processing_status, 'SUCCESS');
@@ -170,17 +171,18 @@ test('all flags on: Happy 1, Happy 2, ownership, changes-only, exactly-once and 
   assert.equal(lostEcho.status, 200);
   assert.equal(h.mgWrites.length, writesBefore);
   assert.equal(h.lead().lead_status, 'Lost Lead');
-  // Won / Delivered never touch the status: they only set the Retail Order outcome.
+  // Won / Delivered never touch the status. The Lost outcome the dealer's Lost set is
+  // final (like Retail, Fleet and On-Sold), so a later Won does not replace it.
   const updatesBefore = h.calls.update.length;
   const won = await h.fusionSends('Won');
   assert.equal(won.status, 200);
   assert.equal(h.lead().lead_status, 'Lost Lead');
+  assert.equal(h.lead().enquiry_outcome, 'Lost');
   assert.equal(h.calls.update.length, updatesBefore, 'nothing is sent back to Fusion for its own Won');
 
-  // MG itself re-opens the lead: its own status change is sent.
-  // The lead now carries the Retail Order outcome, so it goes out as Won.
-  await h.mgSync({ lead_status: 'Contacted' });
-  assert.deepEqual(h.calls.update.at(-1), { enquiryStatus: 'Won' });
+  // MG itself re-opens the lead (status and outcome): its own change is sent.
+  await h.mgSync({ lead_status: 'Contacted', enquiry_outcome: '' });
+  assert.deepEqual(h.calls.update.at(-1), { enquiryStatus: 'Open' });
 });
 
 test('all flags on: a failed MG write is applied exactly once on Fusion\'s redelivery', async (t) => {

@@ -62,7 +62,7 @@ for (const [mg, fusion, expected] of APPLIED) {
     assert.equal(result.ok, true);
     assert.equal(result.held, undefined);
     const lost = expected === 'Lost Lead'
-      ? { Reason_for_Lost: 'Bought Other Make', Reason_For_Loss_Other: 'Dealer (Fusion): Bought Another Brand', Lost_Date: '2026-10-28' }
+      ? { Enquiry_Outcome: 'Lost', Reason_for_Lost: 'Bought Other Make', Reason_For_Loss_Other: 'Dealer (Fusion): Bought Another Brand', Lost_Date: '2026-10-28' }
       : {};
     assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: expected, ...lost } }]);
     assert.equal(harness.db.tables.leads[0].lead_status, expected);
@@ -113,7 +113,7 @@ test('a body with only leadId (no lead_id) is still applied', async (t) => {
   const { lead_id: _omit, ...rest } = body('Lost');
   const result = await receive(harness, rest);
   assert.equal(result.ok, true);
-  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead' });
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' });
 });
 
 test('after a Fusion Lost is applied, MG\'s own notification ("Lost" label) is not pushed back to Fusion', async (t) => {
@@ -175,7 +175,7 @@ for (const [reason, sub, mgReason, text] of REASONS) {
     const harness = harnessAt(t, 'Not Contacted');
     await receive(harness, body('Lost', { lostReason: reason, lostSubReason: sub, pushed_at: '2026-10-28T05:20:24.046Z' }));
     assert.deepEqual(harness.oemWrites[0].fields, {
-      Lead_Status: 'Lost Lead', Reason_for_Lost: mgReason, Reason_For_Loss_Other: text, Lost_Date: '2026-10-28',
+      Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost', Reason_for_Lost: mgReason, Reason_For_Loss_Other: text, Lost_Date: '2026-10-28',
     });
   });
 }
@@ -189,7 +189,7 @@ test('the dealer\'s date is used: late evening UTC is the next day in Australia'
 test('Lost without a reason writes only the status', async (t) => {
   const harness = harnessAt(t, 'Not Contacted');
   await receive(harness, body('Lost'));
-  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead' });
+  assert.deepEqual(harness.oemWrites[0].fields, { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' });
 });
 
 test('a reason sent with Prospect Lost or Open is not written (Fusion applies it only to Lost)', async (t) => {
@@ -206,7 +206,28 @@ test('a lead the dealer accepts is marked Lead Exchanged in MG, with the acknowl
   harness.db.tables.integration_status_mappings.splice(0, Infinity, ...STATUS_PRESET);
   fakeAdapter(t, { createLead: async () => ({ externalLeadId: 'lead_new', httpStatus: 201, raw: {} }) });
   await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted', Lead_Exchanged: true, Connected_CRM: 'Fusion SD' } }]);
+  assert.deepEqual(harness.oemWrites, [
+    { zohoLeadId: 'ZL1', fields: { Lead_Status: 'Not Contacted', Lead_Exchanged: true, Connected_CRM: 'Fusion SD' } },
+    // MG's Dealer CRM ID and Middleware ID (17 Nov 2026), written apart from the acknowledgement.
+    { zohoLeadId: 'ZL1', fields: { Dealer_CRM_ID: 'lead_new', Middleware_ID: String(harness.leadRow().ROWID) } },
+  ]);
+});
+
+test('a failed Dealer_CRM_ID / Middleware_ID write does not undo the delivery or the acknowledgement', async (t) => {
+  withFlag(t);
+  const harness = setupOutbound(t, { mapping: null, lead: { lead_status: 'Update Pending', sync_status: 'PENDING' } });
+  harness.db.tables.integration_field_mappings.splice(0, Infinity, ...FIELD_PRESET);
+  harness.db.tables.integration_status_mappings.splice(0, Infinity, ...STATUS_PRESET);
+  fakeAdapter(t, { createLead: async () => ({ externalLeadId: 'lead_new', httpStatus: 201, raw: {} }) });
+  const oemCrmService = require('../services/zohoCrmService');
+  const original = oemCrmService.updateOemLead;
+  t.mock.method(oemCrmService, 'updateOemLead', async (id, fields) => {
+    if ('Dealer_CRM_ID' in fields) throw new Error('INVALID_DATA: no such field');
+    return original(id, fields);
+  });
+  await crmIntegrationService.syncLeadToExternalCrm(harness.db.app, harness.integration, harness.leadRow());
+  assert.equal(harness.db.tables.lead_integrations[0].sync_status, 'SYNCED');
+  assert.equal(harness.db.tables.leads[0].lead_status, 'Not Contacted');
 });
 
 test('a lead the dealer refuses is not marked Lead Exchanged', async (t) => {

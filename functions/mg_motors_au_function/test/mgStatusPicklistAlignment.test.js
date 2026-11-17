@@ -52,7 +52,7 @@ test('Fusion "Lost" comes back as MG Lost Lead (what MG\'s "Lost" label stores)'
     harness.db.app, harness.integration, fixtures.inboundFlatWebhookPayload({ status: 'Lost' }), oemCrmService
   );
   assert.equal(result.scenarioCode, 'Happy 2');
-  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
+  assert.deepEqual(harness.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' } }]);
 });
 
 test('an MG lead at Lost Lead, echoed back by Fusion as Lost, is no change', async (t) => {

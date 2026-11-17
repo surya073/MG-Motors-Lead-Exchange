@@ -75,7 +75,7 @@ test('Happy 2: a signed Fusion "Lost" reaches MG; the event is stored under its 
   const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost', first_name: 'Other', lead_source: 'Walk In' }));
   assert.equal(result.status, 200);
   assert.equal(result.body.result.scenarioCode, 'Happy 2');
-  assert.deepEqual(h.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead' } }]);
+  assert.deepEqual(h.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' } }]);
   assert.equal(h.db.tables.leads[0].nature_of_enquiry, 'Test Drive');
   assert.equal(h.logs().find((log) => log.status === 'SUCCESS').happy_unhappy_path_name, 'Happy 2');
   const event = h.db.tables.webhook_events[0];
@@ -159,6 +159,49 @@ test('a webhook sent with a non-JSON content type is refused (401) and changes n
   assert.equal(result.status, 401);
   assert.equal(h.oemWrites.length, 0);
   assert.equal(h.db.tables.webhook_events.length, 0);
+});
+
+// 17 Nov 2026: one save in Fusion can post two webhooks in the same second. The
+// second used to lose the lead's lock and was held, so its status change was lost.
+const outboundSyncClaimService = require('../services/integrations/outboundSyncClaimService');
+const crmIntegrationService = require('../services/integrations/crmIntegrationService');
+
+// The lead's lock reads as busy for the first `busyCalls` attempts (Infinity = never
+// freed), then the real lock is used. Returns how many attempts were made.
+function lockBusyFor(t, busyCalls) {
+  const real = outboundSyncClaimService.withOutboundSyncClaim;
+  const state = { attempts: 0 };
+  outboundSyncClaimService.withOutboundSyncClaim = async (...args) => {
+    state.attempts += 1;
+    if (state.attempts <= busyCalls) return { skipped: true, reason: 'CONCURRENT_SYNC_IN_PROGRESS' };
+    return real(...args);
+  };
+  t.after(() => { outboundSyncClaimService.withOutboundSyncClaim = real; });
+  return state;
+}
+
+test('a Fusion webhook that lands while the lead is locked waits and is applied, not held', async (t) => {
+  const h = await buckby(t);
+  crmIntegrationService._test.setDealerStudioClaimRetryDelays([5, 5, 5]);
+  t.after(() => crmIntegrationService._test.setDealerStudioClaimRetryDelays([700, 1200, 1500]));
+  const lock = lockBusyFor(t, 2); // busy twice, free on the third attempt
+  const result = await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost' }));
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.result.scenarioCode, 'Happy 2');
+  assert.equal(lock.attempts, 3);
+  assert.deepEqual(h.oemWrites, [{ zohoLeadId: 'ZL1', fields: { Lead_Status: 'Lost Lead', Enquiry_Outcome: 'Lost' } }]);
+  assert.equal(h.db.tables.integration_logs.filter((row) => row.error_message === 'CONCURRENT_UPDATE_IN_PROGRESS').length, 0);
+});
+
+test('a Fusion lock that is never freed still ends as a held webhook once the waits run out', async (t) => {
+  const h = await buckby(t);
+  crmIntegrationService._test.setDealerStudioClaimRetryDelays([5, 5]);
+  t.after(() => crmIntegrationService._test.setDealerStudioClaimRetryDelays([700, 1200, 1500]));
+  const lock = lockBusyFor(t, Infinity);
+  await h.deliver(fixtures.inboundFlatWebhookPayload({ status: 'Lost' }));
+  assert.equal(lock.attempts, 3); // the first try plus the two waits
+  assert.equal(h.oemWrites.length, 0);
+  assert.equal(h.db.tables.integration_logs.filter((row) => row.error_message === 'CONCURRENT_UPDATE_IN_PROGRESS').length, 1);
 });
 
 test('a signed Fusion webhook with only corrected details edits the editable MG fields', async (t) => {

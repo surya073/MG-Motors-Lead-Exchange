@@ -53,7 +53,7 @@ test('the dealer\'s Lost is not overwritten by a later MG edit of another field'
   const applied = await dealerSets('Lost');     // MG becomes Lost Lead
   assert.equal(applied.ok, true);
   assert.equal(harness.db.tables.leads[0].lead_status, 'Lost Lead');
-  assert.equal(snapshot.read(harness.db.tables.lead_integrations[0]).enquiryStatus, 'Prospect Lost');
+  assert.equal(snapshot.read(harness.db.tables.lead_integrations[0]).enquiryStatus, 'Lost');
   await mgEdit({ postcode: '7000' });
   assert.deepEqual(calls.update.at(-1), { 'contact.areaCode': '7000' });
 });
@@ -62,15 +62,25 @@ test('a status MG itself changes afterwards is still sent (MG\'s own change wins
   const { calls, mgEdit, dealerSets } = buckby(t);
   await mgEdit();
   await dealerSets('Lost');
-  await mgEdit({ lead_status: 'Contacted' });
+  // MG re-opens the lead: status and the Lost outcome the dealer's Lost set.
+  await mgEdit({ lead_status: 'Contacted', enquiry_outcome: '' });
   assert.deepEqual(calls.update.at(-1), { enquiryStatus: 'Open' });
+});
+
+test('a Lost outcome decides what Fusion is told: re-opening only the status sends nothing (17 Nov 2026)', async (t) => {
+  const { calls, mgEdit, dealerSets } = buckby(t);
+  await mgEdit();
+  await dealerSets('Lost');
+  const sentBefore = calls.update.length;
+  await mgEdit({ lead_status: 'Contacted' }); // outcome still Lost: Fusion already holds Lost
+  assert.equal(calls.update.length, sentBefore);
 });
 
 test('a lead with no snapshot records only what the dealer changed; the next MG edit sends the rest, never the status', async (t) => {
   const { harness, calls, mgEdit, dealerSets } = buckby(t);
   assert.equal(snapshot.read(harness.db.tables.lead_integrations[0]), null);
   await dealerSets('Lost');
-  assert.deepEqual(snapshot.read(harness.db.tables.lead_integrations[0]), { enquiryStatus: 'Prospect Lost' });
+  assert.deepEqual(snapshot.read(harness.db.tables.lead_integrations[0]), { enquiryStatus: 'Lost' });
   await mgEdit({ postcode: '7000' });
   const sent = calls.update.at(-1);
   assert.equal(sent['contact.areaCode'], '7000');
@@ -97,7 +107,7 @@ test('flag off: the later MG edit re-sends the full lead, status included, as be
   await mgEdit();
   await dealerSets('Lost');
   await mgEdit({ postcode: '7000' });
-  assert.equal(calls.update.at(-1).enquiryStatus, 'Prospect Lost');
+  assert.equal(calls.update.at(-1).enquiryStatus, 'Lost');
   assert.equal(calls.update.at(-1)['contact.areaCode'], '7000');
 });
 
